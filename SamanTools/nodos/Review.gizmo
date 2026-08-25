@@ -1,0 +1,135 @@
+Group {
+ inputs 2
+ name Comparacion
+ label "De dos Elementos"
+ selected true
+ xpos 303
+ ypos -18
+ addUserKnob {20 tab}
+ addUserKnob {26 text l "" +STARTLINE T " "}
+ addUserKnob {41 box T Crop1.box}
+ addUserKnob {41 reset l Reset T Crop1.reset}
+ addUserKnob {41 reformat -STARTLINE T Crop1.reformat}
+ addUserKnob {26 text_1 l " "}
+ addUserKnob {26 text_3 l Comparación T " "}
+ addUserKnob {22 SidebySide l "Side by Side Horizontal" t "Sets the Switch to input 0" -STARTLINE T nuke.toNode('Switch1').knob('which').setValue(0)}
+ addUserKnob {22 python_button l "Side by Side Vertical" t "Sets the Switch to input 3" -STARTLINE T nuke.toNode('Switch1').knob('which').setValue(3)}
+ addUserKnob {26 text_2 l " " T " "}
+ addUserKnob {26 text_4 l Visualización: T " "}
+ addUserKnob {22 setInput3 l "Input 1" t "Sets the Switch to input 2" -STARTLINE T nuke.toNode('Switch1').knob('which').setValue(2)}
+ addUserKnob {22 setInput2 l "Input 2" t "Sets the Switch to input 1" -STARTLINE T nuke.toNode('Switch1').knob('which').setValue(1)}
+ addUserKnob {22 setDiferente l Diferente t "Sets the Switch to input 4 (Difference)" -STARTLINE T nuke.toNode('Switch1').knob('which').setValue(4)}
+ addUserKnob {22 swapInputs l "Invertir 1<->2" t "Intercambia la posición de Input 1 e Input 2" -STARTLINE T "s1 = nuke.toNode('Switch_Swap1')\ns2 = nuke.toNode('Switch_Swap2')\nval = 1 - int(s1\['which'].value())\ns1\['which'].setValue(val)\ns2\['which'].setValue(val)"}
+ addUserKnob {41 which +INVISIBLE T Switch1.which}
+}
+ Input {
+  inputs 0
+  name Input2
+  xpos 732
+  ypos 100
+  number 1
+ }
+set N54f32e00 [stack 0]
+ Input {
+  inputs 0
+  name Input1
+  xpos 871
+  ypos 100
+ }
+set N54f32800 [stack 0]
+ Switch {
+  inputs 2
+  name Switch_Swap1
+  xpos 871
+  ypos 150
+ }
+ Crop {
+  box {0 0 2048 1556}
+  reformat true
+  crop false
+  name Crop1
+  xpos 871
+  ypos 223
+ }
+ set Cf12e9400 [stack 0]
+set Nf12e9400 [stack 0]
+push $N54f32800
+push $N54f32e00
+ Switch {
+  inputs 2
+  name Switch_Swap2
+  xpos 732
+  ypos 150
+ }
+clone $Cf12e9400 {
+  xpos 732
+  ypos 230
+  selected false
+ }
+set N54f34e00 [stack 0]
+ Merge2 {
+  inputs 2
+  operation difference
+  name MergeDiff
+  xpos 1060
+  ypos 320
+ }
+push $Nf12e9400
+push $N54f34e00
+ ContactSheet {
+  inputs 2
+  width {{(Crop1.box.r-Crop1.box.x)*1}}
+  height {{(Crop1.box.t-Crop1.box.y)*2}}
+  rows 2
+  columns 1
+  name ContactSheet1
+  xpos 949
+  ypos 320
+ }
+set N54ffca00 [stack 0]
+push $Nf12e9400
+push $N54f34e00
+push $Nf12e9400
+push $N54f34e00
+ ContactSheet {
+  inputs 2
+  width {{(Crop1.box.r-Crop1.box.x)*2}}
+  height {{(Crop1.box.t-Crop1.box.y)*1}}
+  rows 1
+  columns 2
+  name ContactSheet2
+  xpos 832
+  ypos 311
+ }
+ Switch {
+  inputs 5
+  name Switch1
+  xpos 695
+  ypos 379
+ }
+ Crop {
+  name Crop2
+  xpos 695
+  ypos 403
+ }
+ Reformat {
+  name Reformat1
+  xpos 695
+  ypos 427
+ }
+ Output {
+  name Output1
+  xpos 821
+  ypos 466
+ }
+push $N54ffca00
+ Viewer {
+  frame_range 1-214
+  fps 23.97602463
+  render_settings_schema false
+  monitorOutNDISenderName "NukeX - DPCP_EP_101_0042_comp_DGTV_V001 - Viewer1"
+  name Viewer1
+  xpos 1015
+  ypos 384
+ }
+end_group

@@ -1,0 +1,177 @@
+set cut_paste_input [stack 0]
+version 17.1 v1
+push $cut_paste_input
+Group {
+ name Breakdown
+ label "Para Review"
+ selected true
+ xpos 313
+ ypos -77
+ addUserKnob {20 User l Breakdown}
+ addUserKnob {1 frame_data l "" +STARTLINE +INVISIBLE}
+ frame_data "\[\{\"frame\": 10, \"brillo\": false, \"muzzle\": false, \"humo\": false, \"impacto\": false, \"sangre\": false\}, \{\"frame\": 20, \"brillo\": true, \"muzzle\": false, \"humo\": false, \"impacto\": false, \"sangre\": false\}, \{\"frame\": 30, \"brillo\": false, \"muzzle\": true, \"humo\": false, \"impacto\": false, \"sangre\": false\}]"
+ addUserKnob {26 sep l "" +STARTLINE}
+ addUserKnob {52 table_ui l "" -STARTLINE T __import__('frame_manager').FrameManagerKnob()}
+ addUserKnob {22 Agregar l "+ Agregar" T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.agregar()" +STARTLINE}
+ addUserKnob {22 Eliminar -STARTLINE T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.eliminar()"}
+ addUserKnob {22 Arriba l ▲ -STARTLINE T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.subir()"}
+ addUserKnob {22 Abajo l ▼ -STARTLINE T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.bajar()"}
+ addUserKnob {22 Generar -STARTLINE T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.generar()"}
+ addUserKnob {26 Espacio l " " T "  "}
+ addUserKnob {3 Desfase t "Desfaza en tiempo real todos los frames generados."}
+ addUserKnob {26 Espacio_1 l "  " -STARTLINE T "    "}
+ addUserKnob {6 VerTexto l "Ver Overlay Texto" -STARTLINE}
+ VerTexto true
+}
+ Input {
+  inputs 0
+  name Input1
+  xpos -504
+  ypos 186
+ }
+ Dot {
+  name Dot1
+  xpos -470
+  ypos 226
+ }
+set N8fa63a00 [stack 0]
+ FrameHold {
+  firstFrame {{"30 + parent.Desfase"}}
+  name FrameHold_Auto_3
+ }
+ Text2 {
+  font_size_toolbar 100
+  font_width_toolbar 100
+  font_height_toolbar 100
+  message "Frame: \[value FrameHold_Auto_3.firstFrame]"
+  old_message {
+   {70 114 97 109 101 58 32 51 48}
+  }
+  old_expression_markers {
+   {7 8}
+  }
+  box {{0} {0} {input.width} {input.height}}
+  transforms {
+   {0 2}
+  }
+  autofit_bbox false
+  group_animations {
+   {0}
+   imported:
+   0
+   selected:
+   0
+   items:
+   "root transform/"
+  }
+  animation_layers {
+   {1 11 1024 778 0 0 1 1 0 0 0 0}
+  }
+  name Text_Auto_3
+  disable {{!parent.VerTexto}}
+ }
+push $N8fa63a00
+ FrameHold {
+  firstFrame {{"20 + parent.Desfase"}}
+  name FrameHold_Auto_2
+ }
+ Text2 {
+  font_size_toolbar 100
+  font_width_toolbar 100
+  font_height_toolbar 100
+  message "Frame: \[value FrameHold_Auto_2.firstFrame]"
+  old_message {
+   {70 114 97 109 101 58 32 50 48}
+  }
+  old_expression_markers {
+   {7 8}
+  }
+  box {{0} {0} {input.width} {input.height}}
+  transforms {
+   {0 2}
+  }
+  autofit_bbox false
+  group_animations {
+   {0}
+   imported:
+   0
+   selected:
+   0
+   items:
+   "root transform/"
+  }
+  animation_layers {
+   {1 11 1024 778 0 0 1 1 0 0 0 0}
+  }
+  name Text_Auto_2
+  disable {{!parent.VerTexto}}
+ }
+push $N8fa63a00
+ FrameHold {
+  firstFrame {{"10 + parent.Desfase"}}
+  name FrameHold_Auto_1
+ }
+ Text2 {
+  font_size_toolbar 100
+  font_width_toolbar 100
+  font_height_toolbar 100
+  message "Frame: \[value FrameHold_Auto_1.firstFrame]"
+  old_message {
+   {70 114 97 109 101 58 32 49 48}
+  }
+  old_expression_markers {
+   {7 8}
+  }
+  box {{0} {0} {input.width} {input.height}}
+  transforms {
+   {0 2}
+  }
+  autofit_bbox false
+  group_animations {
+   {0}
+   imported:
+   0
+   selected:
+   0
+   items:
+   "root transform/"
+  }
+  animation_layers {
+   {1 11 1024 778 0 0 1 1 0 0 0 0}
+  }
+  name Text_Auto_1
+  disable {{!parent.VerTexto}}
+ }
+ ContactSheet {
+  inputs 3
+  width {{input.width*columns*resMult}}
+  height {{input.height*rows*resMult}}
+  rows {{"\[expr \{int( (sqrt( \[numvalue inputs] ) ) )\} ] * \[expr \{int( ceil ( (\[numvalue inputs] /(sqrt( \[numvalue inputs] ) ) )) )\} ] < \[numvalue inputs] ? \[expr \{int( (sqrt( \[numvalue inputs] ) ) )\} ] +1 : \[expr \{int( (sqrt( \[numvalue inputs] ) ) )\} ]"}}
+  columns {{"\[expr \{int( ceil ( (\[numvalue inputs] /(sqrt( \[numvalue inputs] )) )) )\} ]"}}
+  center true
+  roworder TopBottom
+  name ContactSheetAuto
+  tile_color 0xff69f7ff
+  xpos -504
+  ypos 411
+  addUserKnob {20 Settings}
+  addUserKnob {7 resMult l "Resolution Multiplier" R 0.1 2}
+  resMult 1
+ }
+ Crop {
+  box {0 0 {parent.ContactSheetAuto.width} {parent.ContactSheetAuto.height}}
+  name Crop1
+  xpos -504
+  ypos 435
+ }
+ Reformat {
+  name Reformat2
+  xpos -504
+  ypos 468
+ }
+ Output {
+  name Output1
+  xpos -504
+  ypos 568
+ }
+end_group
