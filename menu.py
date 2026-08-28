@@ -27,9 +27,11 @@ if REPO_DIR not in sys.path:
 
 # Exponer los nodos (Breakdown.gizmo, Review.gizmo, Rutas.*) para que
 # nuke.createNode('Breakdown') los encuentre en el buscador TAB.
+# NOTA: NO usar addToMenuBar=False — no es soportado por la version de Nuke
+# del estudio (TypeError). pluginAddPath() basico funciona en todas.
 NODOS_DIR = os.path.join(REPO_DIR, "SamanTools", "nodos")
 if os.path.isdir(NODOS_DIR):
-    nuke.pluginAddPath(NODOS_DIR, addToMenuBar=False)
+    nuke.pluginAddPath(NODOS_DIR)
 
 try:
     from SamanTools.registro import instalar
