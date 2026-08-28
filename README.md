@@ -28,9 +28,10 @@ saman-nuke-tools/
 
 ### Opción C — Auto-update via GitHub (RECOMENDADA para artistas)
 
-Los artistas ejecutan **una sola vez** el setup y a partir de ahí las
-actualizaciones les llegan solas al reiniciar Nuke (git pull silencioso,
-máximo 1 vez cada 6 h). No tocan nada nunca más.
+Los artistas ejecutan **una sola vez** el setup y a partir de ahí reciben una
+**alerta cuando hay una actualización disponible** y un botón **Actualizar
+SamanTools...** en el menú. El artista decide cuándo actualizar; nada se aplica
+sin su consentimiento. No tocan archivos nunca.
 
 **Requisito:** el repo debe estar publicado en GitHub (público o con acceso de
 lectura para los artistas). El `menu.py` bootstrap vive en `bootstrap/menu.py`.
@@ -44,11 +45,17 @@ setup_artista.bat https://github.com/TU_ORG/saman-nuke-tools.git
 ```
 
 **Para actualizar a todos los artistas:** el mantenedor hace commit + push a
-`main`. Los artistas reciben el cambio en su próximo arranque de Nuke.
+`main`. Cada artista verá la alerta en algún arranque de Nuke (máx. 1 alerta
+cada 6 h) y decidirá si actualiza.
 
 > ¿Cómo funciona? `~/.nuke/menu.py` (bootstrap mínimo) clona el repo a
-> `~/.nuke/SamanTools`, hace `git pull` con rate-limit de 6 h, y carga el
-> `menu.py` real del checkout. Si no hay red, usa la copia local sin romper Nuke.
+> `~/.nuke/SamanTools`. En cada arranque hace `git fetch` (no modifica nada)
+> y compara contra la rama remota:
+> - **Hay versión nueva** → alerta "¿Querés actualizar ahora?" (Sí/No).
+> - El botón **SamanTools ▸ Actualizar SamanTools...** hace lo mismo a demanda.
+> - **Solo con consentimiento** se ejecuta `git pull --ff-only`.
+> - Si no hay red, usa la copia local sin romper Nuke. Una versión rota no
+>   afecta a quienes no actualizaron: quedan en la estable.
 
 ### Opción A — Clonar + NUKE_PATH (sin copiar)
 
