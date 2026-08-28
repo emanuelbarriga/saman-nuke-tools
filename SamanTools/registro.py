@@ -49,8 +49,14 @@ def _insertar_breakdown():
 
 def _acerca_de():
     """Muestra información del desarrollador y versión de SamanTools."""
+    try:
+        from . import __version__
+        version = __version__
+    except Exception:
+        version = "desconocida"
     nuke.message(
         "SamanTools — Herramientas globales de Nuke para el estudio\n\n"
+        "Versión instalada: %s\n\n"
         "Contenido: Breakdown, Review, Rutas y utilidades de producción.\n\n"
         "Desarrollado por Emanuel Barriga — Samán Estudio\n"
         "Sitio web: https://samanestudio.com/\n"
@@ -59,6 +65,7 @@ def _acerca_de():
         "Repositorio: https://github.com/emanuelbarriga/saman-nuke-tools\n\n"
         "¿Encontraste un error o falta una herramienta?\n"
         "Escribime: tus datos están arriba."
+        % version
     )
 
 
