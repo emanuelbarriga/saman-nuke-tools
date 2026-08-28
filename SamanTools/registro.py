@@ -47,6 +47,16 @@ def _insertar_breakdown():
     nuke.nodePaste(ruta_archivo)
 
 
+def _acerca_de():
+    """Muestra información del desarrollador y versión de SamanTools."""
+    nuke.message(
+        "SamanTools — Herramientas globales de Nuke para el estudio\n\n"
+        "Contenido: Breakdown, Review, Rutas y utilidades de producción.\n\n"
+        "Desarrollado por Emanuel Barriga (Samán Estudio).\n"
+        "Repositorio: https://github.com/emanuelbarriga/saman-nuke-tools"
+    )
+
+
 def _inyectar_frame_manager():
     """
     Asegura que `frame_manager` (widget global de Breakdown) sea importable.
@@ -95,6 +105,12 @@ def instalar():
     sub_nodos.addCommand(
         "Breakdown (frames por tabla)",
         _insertar_breakdown,
+    )
+
+    # --- Información ---
+    menu.addCommand(
+        "Acerca de SamanTools...",
+        _acerca_de,
     )
 
     # Carga automatica si el proyecto ya esta disponible al arrancar.
