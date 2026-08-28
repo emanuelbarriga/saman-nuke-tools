@@ -236,17 +236,25 @@ def _agregar_boton_menu():
 
 
 def _clonar_si_falta():
-    """Primera vez: clona el repo a TOOLS_DIR (solo si no hay checkout)."""
-    if not _tiene_checkout() and _hay_git():
-        try:
-            os.makedirs(TOOLS_DIR, exist_ok=True)
-            subprocess.run(
-                ["git", "clone", "--depth", "1", "--branch", BRANCH, REPO_URL, TOOLS_DIR],
-                capture_output=True,
-                timeout=180,
-            )
-        except Exception:
-            pass
+    """Primera vez: clona el repo a TOOLS_DIR (solo si no hay checkout).
+
+    Devuelve True si el checkout quedó disponible (existía o se clonó),
+    False si no hay checkout y no se pudo clonar (sin git o sin red).
+    """
+    if _tiene_checkout():
+        return True
+    if not _hay_git():
+        return False
+    try:
+        os.makedirs(TOOLS_DIR, exist_ok=True)
+        r = subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", BRANCH, REPO_URL, TOOLS_DIR],
+            capture_output=True,
+            timeout=180,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 def _checkout_completo():
@@ -281,10 +289,16 @@ def _cargar_menu_real():
     """
     repo_menu = os.path.join(TOOLS_DIR, "menu.py")
 
+    # Estado 'desinstalado': el checkout no existe (fue movido a respaldo por
+    # Desinstalar). No es un error: el bootstrap sigue instalado y muestra
+    # los botones de mantenimiento (para reinstalar), pero no debe gritar
+    # un "error" cada arranque.
+    if not _tiene_checkout() and not _clonar_si_falta():
+        return False
+
     if not _checkout_completo():
         _reparar_checkout()
-        # segundo intento: si el repo bajo incompleto, clonar limpio lleva
-        # muchisimo mas; reset suele bastar
+
     if _checkout_completo() and os.path.isfile(repo_menu):
         try:
             with open(repo_menu, "r") as f:
