@@ -24,9 +24,33 @@ saman-nuke-tools/
 └── .gitignore
 ```
 
-## Instalación (2 opciones)
+## Instalación — 3 opciones
 
-### Opción A — Clonar + NUKE_PATH (recomendada, sin copiar)
+### Opción C — Auto-update via GitHub (RECOMENDADA para artistas)
+
+Los artistas ejecutan **una sola vez** el setup y a partir de ahí las
+actualizaciones les llegan solas al reiniciar Nuke (git pull silencioso,
+máximo 1 vez cada 6 h). No tocan nada nunca más.
+
+**Requisito:** el repo debe estar publicado en GitHub (público o con acceso de
+lectura para los artistas). El `menu.py` bootstrap vive en `bootstrap/menu.py`.
+
+```bash
+# macOS/Linux — una sola vez por artista
+bash setup_artista.sh https://github.com/TU_ORG/saman-nuke-tools.git
+
+# Windows — una sola vez por artista
+setup_artista.bat https://github.com/TU_ORG/saman-nuke-tools.git
+```
+
+**Para actualizar a todos los artistas:** el mantenedor hace commit + push a
+`main`. Los artistas reciben el cambio en su próximo arranque de Nuke.
+
+> ¿Cómo funciona? `~/.nuke/menu.py` (bootstrap mínimo) clona el repo a
+> `~/.nuke/SamanTools`, hace `git pull` con rate-limit de 6 h, y carga el
+> `menu.py` real del checkout. Si no hay red, usa la copia local sin romper Nuke.
+
+### Opción A — Clonar + NUKE_PATH (sin copiar)
 
 1. Clona el repo donde quieras:
    ```bash

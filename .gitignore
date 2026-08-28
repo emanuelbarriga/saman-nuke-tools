@@ -12,3 +12,6 @@ config_local.example.py.bak
 
 # Backups de instalacion
 menu.py.bak.*
+
+# Marcador de ultima actualizacion (rate-limit del auto-update)
+.last_update
