@@ -21,7 +21,7 @@ import subprocess
 import traceback
 
 # --- Configuracion: ajusta solo si cambias de cuenta/repo --------------------
-REPO_URL = "https://github.com/TU_ORG/saman-nuke-tools.git"
+REPO_URL = "https://github.com/emanuelbarriga/saman-nuke-tools.git"
 BRANCH = "main"
 # -----------------------------------------------------------------------------
 
