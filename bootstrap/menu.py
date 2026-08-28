@@ -249,10 +249,43 @@ def _clonar_si_falta():
             pass
 
 
+def _checkout_completo():
+    """El checkout está usable solo si existe el paquete real.
+
+    Un clone o pull a medias deja `menu.py` pero sin `SamanTools/SamanTools/`,
+    lo que produce ModuleNotFoundError al cargar. Verificamos el archivo
+    clave del paquete antes de intentar nada.
+    """
+    return os.path.isfile(os.path.join(TOOLS_DIR, "SamanTools", "SamanTools", "registro.py"))
+
+
+def _reparar_checkout():
+    """Si el checkout es git pero está incompleto, lo repara con reset --hard.
+
+    NO borra el respaldo de desinstalación: solo alinea el checkout con origin.
+    Devuelve True si quedó completo.
+    """
+    if not _tiene_checkout() or not _hay_git():
+        return False
+    # Alinear con la rama remota aunque el arbol este sucio o a medias
+    _ejecutar_git(["fetch", "origin", BRANCH], timeout=90)
+    _ejecutar_git(["reset", "--hard", "origin/" + BRANCH], timeout=90)
+    return _checkout_completo()
+
+
 def _cargar_menu_real():
-    """Carga el menu.py del checkout (el código real vive en el repo)."""
+    """Carga el menu.py del checkout (el código real vive en el repo).
+
+    Antes de cargar verifica que el checkout esté completo; si está a medias
+    (clone/pull interrumpido) lo repara. Solo falla si no hay red ni git.
+    """
     repo_menu = os.path.join(TOOLS_DIR, "menu.py")
-    if os.path.isfile(repo_menu):
+
+    if not _checkout_completo():
+        _reparar_checkout()
+        # segundo intento: si el repo bajo incompleto, clonar limpio lleva
+        # muchisimo mas; reset suele bastar
+    if _checkout_completo() and os.path.isfile(repo_menu):
         try:
             with open(repo_menu, "r") as f:
                 codigo = f.read()
@@ -266,6 +299,11 @@ def _cargar_menu_real():
                 )
             else:
                 traceback.print_exc()
+    elif nuke.GUI:
+        nuke.message(
+            "No se pudo cargar SamanTools (checkout incompleto y sin red).\n"
+            "Revisá la conexión o ejecutá nuevamente el instalador."
+        )
     return False
 
 
