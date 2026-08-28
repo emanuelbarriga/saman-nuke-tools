@@ -116,12 +116,31 @@ def _aplicar_update():
 
 
 def _actualizar_ahora():
-    """Botón manual: consulta y actualiza si hay version nueva."""
+    """Botón manual: instalación o actualización, según el estado.
+
+    - Sin checkout: instala (clone limpio desde GitHub).
+    - Con checkout: consulta y actualiza si hay version nueva.
+    """
     if not _hay_git():
-        nuke.message("Git no está instalado en este equipo.\nNo se puede actualizar.")
+        nuke.message("Git no está instalado en este equipo.\nNo se puede instalar.")
         return
+
     if not _tiene_checkout():
-        nuke.message("SamanTools aún no está instalado.\nEjecutá setup_artista.")
+        if nuke.ask(
+            "SamanTools no está instalado en este equipo.\n\n"
+            "¿Querés instalarlo ahora (descargando desde GitHub)?"
+        ):
+            if _clonar_si_falta():
+                _auto_actualizar_bootstrap()
+                nuke.message(
+                    "SamanTools instalado correctamente.\n\n"
+                    "Reiniciá Nuke para que aparezca el menú."
+                )
+            else:
+                nuke.message(
+                    "No se pudo instalar SamanTools.\n"
+                    "Verificá la conexión a internet e intentá de nuevo."
+                )
         return
 
     estado = _estado_update()
@@ -168,31 +187,37 @@ def _alerta_automatica():
 
 
 def _desinstalar_ahora():
-    """Desinstala SamanTools: mueve checkout y bootstrap a un respaldo.
+    """Desinstala SamanTools de forma definitiva: BORRA (no respalda).
 
-    NO borra archivos: renombra la carpeta de checkout y el menu.py con
-    sufijo .desinstalado_<fecha>, para que el artista pueda recuperarlo.
-    El Nuke actual sigue funcionando; el cambio se aplica al reiniciar.
+    Elimina:
+      - el checkout ~/.nuke/SamanTools y cualquier respaldo .desinstalado_*,
+      - el bootstrap ~/.nuke/menu.py (si es el nuestro).
+    Los nodos ya insertados en proyectos NO se borran (pero el widget global
+    del Breakdown dejará de estar disponible en equipos sin el paquete).
     """
     if not nuke.ask(
         "¿Desinstalar SamanTools?\n\n"
-        "Se quitará el menú y las herramientas globales de este equipo "
-        "(los nodos ya insertados en proyectos NO se borran).\n\n"
-        "Los archivos se respaldan con sufijo .desinstalado_<fecha>."
+        "Se BORRARÁN todos los archivos de SamanTools de este equipo:\n"
+        "  - ~/.nuke/SamanTools (herramientas + respaldos)\n"
+        "  - ~/.nuke/menu.py (bootstrap)\n\n"
+        "Los nodos ya insertados en proyectos NO se borran.\n\n"
+        "¿Confirmás?"
     ):
         return
 
-    ts = time.strftime("%Y%m%d%H%M%S")
+    padre = os.path.dirname(TOOLS_DIR)
+    nombre = os.path.basename(TOOLS_DIR)
     hechos = []
 
-    # 1) Checkout del repo
-    if os.path.isdir(TOOLS_DIR):
-        destino = TOOLS_DIR + ".desinstalado_" + ts
-        try:
-            os.rename(TOOLS_DIR, destino)
-            hechos.append("Checkout movido a: %s" % destino)
-        except Exception as e:
-            hechos.append("No se pudo mover el checkout: %s" % e)
+    # 1) Checkout + respaldos de desinstalación (basura de ciclos previos)
+    try:
+        for item in os.listdir(padre):
+            if item == nombre or item.startswith(nombre + ".desinstalado_"):
+                ruta = os.path.join(padre, item)
+                shutil.rmtree(ruta, ignore_errors=True)
+                hechos.append("Eliminado: %s" % item)
+    except Exception as e:
+        hechos.append("No se pudo limpiar la carpeta: %s" % e)
 
     # 2) menu.py bootstrap (solo si es el nuestro: contiene un marcador claro)
     boot_local = os.path.abspath(__file__)
@@ -201,20 +226,18 @@ def _desinstalar_ahora():
             contenido_boot = f.read()
     except Exception:
         contenido_boot = ""
-    if "SamanTools" in contenido_boot and "bootstrap de artista" in contenido_boot:
-        destino_m = boot_local + ".desinstalado_" + ts
+    if "SamanTools" in contenido_boot and "bootstrap de artista" in contenido_boot.lower():
         try:
-            os.rename(boot_local, destino_m)
-            hechos.append("Bootstrap movido a: %s" % destino_m)
+            os.remove(boot_local)
+            hechos.append("Eliminado: %s" % os.path.basename(boot_local))
         except Exception as e:
-            hechos.append("No se pudo mover el bootstrap: %s" % e)
+            hechos.append("No se pudo borrar el bootstrap: %s" % e)
     elif os.path.isfile(boot_local):
         hechos.append("menu.py NO se tocó (no parece ser el bootstrap de SamanTools).")
 
     nuke.message(
         "SamanTools desinstalado de este equipo.\n\n" + "\n".join(hechos) +
-        "\n\nReiniciá Nuke para que desaparezca del menú.\n"
-        "Ningún proyecto se ve afectado."
+        "\n\nNo queda ningún archivo de SamanTools. Reiniciá Nuke."
     )
 
 
@@ -236,24 +259,35 @@ def _agregar_boton_menu():
 
 
 def _clonar_si_falta():
-    """Primera vez: clona el repo a TOOLS_DIR (solo si no hay checkout).
+    """Clona el repo a TOOLS_DIR usando un directorio temporal y rename.
 
-    Devuelve True si el checkout quedó disponible (existía o se clonó),
-    False si no hay checkout y no se pudo clonar (sin git o sin red).
+    Nunca deja un checkout parcial: si el clone falla (sin red), el temporal
+    se borra y TOOLS_DIR queda sin tocar. Devuelve True si quedó disponible.
+
+    IMPORTANTE: esto NO se ejecuta en el arranque (evita el ciclo de intentos
+    fallidos sin red). Solo lo llaman el botón Actualizar o el instalador.
     """
     if _tiene_checkout():
         return True
     if not _hay_git():
         return False
+    padre = os.path.dirname(TOOLS_DIR)
+    os.makedirs(padre, exist_ok=True)
+    tmp = os.path.join(padre, ".saman_clone_tmp_" + time.strftime("%Y%m%d%H%M%S"))
     try:
-        os.makedirs(TOOLS_DIR, exist_ok=True)
         r = subprocess.run(
-            ["git", "clone", "--depth", "1", "--branch", BRANCH, REPO_URL, TOOLS_DIR],
+            ["git", "clone", "--depth", "1", "--branch", BRANCH, REPO_URL, tmp],
             capture_output=True,
             timeout=180,
         )
-        return r.returncode == 0
+        if r.returncode != 0:
+            shutil.rmtree(tmp, ignore_errors=True)
+            return False
+        shutil.rmtree(TOOLS_DIR, ignore_errors=True)   # elimina cualquier resto
+        os.rename(tmp, TOOLS_DIR)
+        return True
     except Exception:
+        shutil.rmtree(tmp, ignore_errors=True)
         return False
 
 
@@ -284,17 +318,16 @@ def _reparar_checkout():
 def _cargar_menu_real():
     """Carga el menu.py del checkout (el código real vive en el repo).
 
-    Antes de cargar verifica que el checkout esté completo; si está a medias
-    (clone/pull interrumpido) lo repara. Solo falla si no hay red ni git.
+    Regla: si no hay checkout (desinstalado / nunca instalado / sin red),
+    NO intenta clonar y NO muestra error — silencio total. En ese estado el
+    bootstrap solo deja los botones de mantenimiento (Actualizar re-instala,
+    Desinstalar confirma/borra). Si hay checkout pero está incompleto, lo
+    repara silenciosamente.
     """
-    repo_menu = os.path.join(TOOLS_DIR, "menu.py")
+    if not _tiene_checkout():
+        return False  # desinstalado o nunca instalado: silencio
 
-    # Estado 'desinstalado': el checkout no existe (fue movido a respaldo por
-    # Desinstalar). No es un error: el bootstrap sigue instalado y muestra
-    # los botones de mantenimiento (para reinstalar), pero no debe gritar
-    # un "error" cada arranque.
-    if not _tiene_checkout() and not _clonar_si_falta():
-        return False
+    repo_menu = os.path.join(TOOLS_DIR, "menu.py")
 
     if not _checkout_completo():
         _reparar_checkout()
@@ -313,11 +346,6 @@ def _cargar_menu_real():
                 )
             else:
                 traceback.print_exc()
-    elif nuke.GUI:
-        nuke.message(
-            "No se pudo cargar SamanTools (checkout incompleto y sin red).\n"
-            "Revisá la conexión o ejecutá nuevamente el instalador."
-        )
     return False
 
 
@@ -352,7 +380,9 @@ def _auto_actualizar_bootstrap():
 
 def instalar():
     _auto_actualizar_bootstrap()
-    _clonar_si_falta()
+    # NO se clona en el arranque: si no hay checkout (desinstalado / sin red),
+    # el bootstrap queda en silencio con solo los botones de mantenimiento.
+    # La instalacion la hace el boton Actualizar o el instalador de setup.
     _cargar_menu_real()
     _agregar_boton_menu()
     _alerta_automatica()
