@@ -52,8 +52,13 @@ def _acerca_de():
     nuke.message(
         "SamanTools — Herramientas globales de Nuke para el estudio\n\n"
         "Contenido: Breakdown, Review, Rutas y utilidades de producción.\n\n"
-        "Desarrollado por Emanuel Barriga (Samán Estudio).\n"
-        "Repositorio: https://github.com/emanuelbarriga/saman-nuke-tools"
+        "Desarrollado por Emanuel Barriga — Samán Estudio\n"
+        "Sitio web: https://samanestudio.com/\n"
+        "Teléfono: +57 3014532504\n"
+        "Correo: emanuel.barriga@samanestudio.com\n\n"
+        "Repositorio: https://github.com/emanuelbarriga/saman-nuke-tools\n\n"
+        "¿Encontraste un error o falta una herramienta?\n"
+        "Escribime: tus datos están arriba."
     )
 
 

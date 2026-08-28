@@ -165,18 +165,70 @@ def _alerta_automatica():
             _aplicar_update()
 
 
+def _desinstalar_ahora():
+    """Desinstala SamanTools: mueve checkout y bootstrap a un respaldo.
+
+    NO borra archivos: renombra la carpeta de checkout y el menu.py con
+    sufijo .desinstalado_<fecha>, para que el artista pueda recuperarlo.
+    El Nuke actual sigue funcionando; el cambio se aplica al reiniciar.
+    """
+    if not nuke.ask(
+        "¿Desinstalar SamanTools?\n\n"
+        "Se quitará el menú y las herramientas globales de este equipo "
+        "(los nodos ya insertados en proyectos NO se borran).\n\n"
+        "Los archivos se respaldan con sufijo .desinstalado_<fecha>."
+    ):
+        return
+
+    ts = time.strftime("%Y%m%d%H%M%S")
+    hechos = []
+
+    # 1) Checkout del repo
+    if os.path.isdir(TOOLS_DIR):
+        destino = TOOLS_DIR + ".desinstalado_" + ts
+        try:
+            os.rename(TOOLS_DIR, destino)
+            hechos.append("Checkout movido a: %s" % destino)
+        except Exception as e:
+            hechos.append("No se pudo mover el checkout: %s" % e)
+
+    # 2) menu.py bootstrap (solo si es el nuestro: contiene un marcador claro)
+    boot_local = os.path.abspath(__file__)
+    try:
+        with open(boot_local, "r") as f:
+            contenido_boot = f.read()
+    except Exception:
+        contenido_boot = ""
+    if "SamanTools" in contenido_boot and "bootstrap de artista" in contenido_boot:
+        destino_m = boot_local + ".desinstalado_" + ts
+        try:
+            os.rename(boot_local, destino_m)
+            hechos.append("Bootstrap movido a: %s" % destino_m)
+        except Exception as e:
+            hechos.append("No se pudo mover el bootstrap: %s" % e)
+    elif os.path.isfile(boot_local):
+        hechos.append("menu.py NO se tocó (no parece ser el bootstrap de SamanTools).")
+
+    nuke.message(
+        "SamanTools desinstalado de este equipo.\n\n" + "\n".join(hechos) +
+        "\n\nReiniciá Nuke para que desaparezca del menú.\n"
+        "Ningún proyecto se ve afectado."
+    )
+
+
 def _agregar_boton_menu():
-    """Añade 'Actualizar SamanTools...' dentro del menú SamanTools existente.
+    """Añade los botones de mantenimiento dentro del menú SamanTools.
 
     Se ejecuta DESPUÉS de cargar el menú real; si el menú no existe (por una
-    versión rota), se crea un menú mínimo con solo el botón de actualizar,
-    para que el artista siempre pueda recuperarse.
+    versión rota), se crea un menú mínimo con los botones de mantenimiento,
+    para que el artista siempre pueda actualizar o desinstalar.
     """
     try:
         menu = nuke.menu("Nuke").findItem("SamanTools")
         if menu is None:
             menu = nuke.menu("Nuke").addMenu("SamanTools")
         menu.addCommand("Actualizar SamanTools...", _actualizar_ahora)
+        menu.addCommand("Desinstalar SamanTools...", _desinstalar_ahora)
     except Exception:
         pass
 
