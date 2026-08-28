@@ -23,6 +23,8 @@ import nuke
 import os
 import sys
 import time
+import hashlib
+import shutil
 import subprocess
 import traceback
 
@@ -267,7 +269,37 @@ def _cargar_menu_real():
     return False
 
 
+def _auto_actualizar_bootstrap():
+    """Mantiene el menu.py instalado sincronizado con el bootstrap del repo.
+
+    El menu.py bootstrap se copia a ~/.nuke SOLO al instalar; si el bootstrap
+    del repo cambia (ej. nuevos botones de mantenimiento), este paso lo
+    reemplaza en cada arranque. Se compara por contenido, no por fecha.
+    """
+    try:
+        local = os.path.abspath(__file__)
+        repo_boot = os.path.join(TOOLS_DIR, "bootstrap", "menu.py")
+        if not os.path.isfile(repo_boot):
+            return
+        if os.path.abspath(repo_boot) == local:
+            return
+
+        def _hash(p):
+            try:
+                with open(p, "rb") as f:
+                    return hashlib.md5(f.read()).hexdigest()
+            except Exception:
+                return None
+
+        h_local, h_repo = _hash(local), _hash(repo_boot)
+        if h_local is not None and h_repo is not None and h_local != h_repo:
+            shutil.copy2(repo_boot, local)
+    except Exception:
+        pass
+
+
 def instalar():
+    _auto_actualizar_bootstrap()
     _clonar_si_falta()
     _cargar_menu_real()
     _agregar_boton_menu()
