@@ -407,6 +407,90 @@ def test_canjear_codigo_autorizacion_error_google(monkeypatch):
     assert exc.value.codigo == "http"
 
 
+def test_canjear_codigo_autorizacion_incluye_secret_si_config(monkeypatch):
+    peticiones = {}
+
+    def capturar(req, timeout=None):
+        peticiones["datos"] = req.data
+        return RespuestaFalsa(
+            json.dumps(
+                {
+                    "access_token": "at1",
+                    "expires_in": 3600,
+                    "id_token": "idtoken_google",
+                    "refresh_token": "refreshtoken_google",
+                    "token_type": "Bearer",
+                    "scope": "email profile openid",
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(vfxflow_auth, "_abrir", capturar)
+    r = vfxflow_auth.canjear_codigo_autorizacion(
+        "codigo123",
+        "http://127.0.0.1:45000",
+        "verifier123",
+        "cliente-escritorio",
+        config={"google_client_secret": "GOCSPX-SECRETO"},
+    )
+    assert r["id_token"] == "idtoken_google"
+    # El cuerpo debe incluir client_secret cuando esta configurado.
+    cuerpo = peticiones["datos"]
+    assert isinstance(cuerpo, bytes)
+    assert "client_secret=GOCSPX-SECRETO" in cuerpo.decode()
+
+
+def test_canjear_codigo_autorizacion_no_envia_secret_si_falta(monkeypatch):
+    peticiones = {}
+
+    def capturar(req, timeout=None):
+        peticiones["datos"] = req.data
+        return RespuestaFalsa(
+            json.dumps(
+                {
+                    "access_token": "at1",
+                    "expires_in": 3600,
+                    "id_token": "idtoken_google",
+                    "refresh_token": "x",
+                    "token_type": "Bearer",
+                    "scope": "email profile openid",
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(vfxflow_auth, "_abrir", capturar)
+    vfxflow_auth.canjear_codigo_autorizacion(
+        "codigo123",
+        "http://127.0.0.1:45000",
+        "verifier123",
+        "cliente-escritorio",
+        config={},
+    )
+    cuerpo = peticiones["datos"].decode()
+    assert "client_secret" not in cuerpo
+
+
+def test_canjear_codigo_autorizacion_error_secret_faltante_explica_config(monkeypatch):
+    _urlopen_responde_secuencia(
+        monkeypatch,
+        [
+            (
+                {
+                    "error": "invalid_request",
+                    "error_description": "client_secret is missing.",
+                },
+                400,
+            )
+        ],
+    )
+    with pytest.raises(VfxFlowAuthError) as exc:
+        vfxflow_auth.canjear_codigo_autorizacion(
+            "codigo123", "http://127.0.0.1:45000", "verifier123", "cliente"
+        )
+    assert exc.value.codigo == "config"
+    assert "google_client_secret" in str(exc.value)
+
+
 def test_obtener_client_id_escritorio_sin_config():
     with pytest.raises(VfxFlowAuthError) as exc:
         vfxflow_auth.obtener_client_id_escritorio(

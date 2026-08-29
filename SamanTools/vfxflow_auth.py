@@ -936,20 +936,36 @@ def canjear_codigo_autorizacion(
             "Falta el código de autorización para canjear.", codigo="respuesta"
         )
 
-    respuesta = _post_form(
-        URL_GOOGLE_TOKEN,
-        {
-            "client_id": client_id,
-            "code": code,
-            "code_verifier": code_verifier,
-            "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri,
-        },
-    )
+    # Google exige el client_secret del cliente "Desktop app" en el canje
+    # (PKCE no alcanza). El secret NUNCA va versionado: se lee de la config
+    # efectiva (config_local.py gitignored -> clave "google_client_secret").
+    secret = (cfg or {}).get("google_client_secret", "") or ""
+    cuerpo = {
+        "client_id": client_id,
+        "code": code,
+        "code_verifier": code_verifier,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+    }
+    if secret:
+        cuerpo["client_secret"] = secret
+
+    respuesta = _post_form(URL_GOOGLE_TOKEN, cuerpo)
     if respuesta["estado"] == "error":
+        codigo_error = respuesta["codigo"]
+        if codigo_error == "invalid_request" and "secret" in (
+            respuesta.get("mensaje") or ""
+        ):
+            raise VfxFlowAuthError(
+                "Google exige el client_secret del cliente 'Desktop app' para "
+                "el canje. Configuralo en config_local.py: "
+                "VFXFLOW_LOCAL_CONFIG = {'google_client_secret': 'GOCSPX-...'} "
+                "(nunca en el repo ni en el disco compartido).",
+                codigo="config",
+            )
         raise VfxFlowAuthError(
             "Google rechazó el canje del código de autorización (%s)."
-            % respuesta["codigo"],
+            % codigo_error,
             codigo="http",
         )
     datos = respuesta["datos"]
