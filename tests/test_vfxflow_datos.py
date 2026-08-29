@@ -711,3 +711,102 @@ def test_obtener_colores_estados_error_devuelve_vacio(monkeypatch):
         )
         == {}
     )
+
+
+def test_obtener_estados_lista(monkeypatch):
+    transporte = _TransporteRunQuery(
+        {
+            "projectStates": _respuesta_runquery(
+                [
+                    _doc(
+                        NOMBRE_PROYECTO + "/projectStates/st1",
+                        {
+                            "projectId": "lxYgN96Zk8zyhsFEABOf",
+                            "name": "APROBADO",
+                            "color": "#f59e0b",
+                        },
+                    ),
+                    _doc(
+                        NOMBRE_PROYECTO + "/projectStates/st2",
+                        {"projectId": "lxYgN96Zk8zyhsFEABOf", "name": "ENTREGA"},
+                    ),
+                ]
+            )
+        }
+    )
+    _parchar_abrir(monkeypatch, transporte)
+
+    res = vfxflow_datos.obtener_estados(
+        "lxYgN96Zk8zyhsFEABOf", "TOKEN_ID", config=_CONFIG
+    )
+    assert res == [
+        {"id": "st1", "name": "APROBADO", "color": "#f59e0b"},
+        {"id": "st2", "name": "ENTREGA"},
+    ]
+
+
+def test_obtener_estados_error_devuelve_vacio(monkeypatch):
+    """Ante error el combo queda deshabilitado ([]), nunca rompe."""
+    _parchar_abrir(monkeypatch, _TransporteRunQuery({"projectStates": 401}))
+    assert (
+        vfxflow_datos.obtener_estados(
+            "lxYgN96Zk8zyhsFEABOf", "TOKEN_ID", config=_CONFIG
+        )
+        == []
+    )
+
+
+# --------------------------------------------------------------------------
+# transporte de escritura (v1.7.0): PATCH y media upload
+# --------------------------------------------------------------------------
+
+
+def test_patch_json_bearer_401_lanza_token(monkeypatch):
+    def _fake(req, *args, **kwargs):
+        raise _error_http(401, {"error": {"message": "x"}})
+
+    _parchar_abrir(monkeypatch, _fake)
+    with pytest.raises(VfxFlowAuthError) as exc:
+        vfxflow_auth._patch_json_bearer(
+            "https://x/shots/sid", {"fields": {}}, "TOKEN_ID"
+        )
+    assert exc.value.codigo == "token"
+
+
+def test_patch_json_bearer_ok(monkeypatch):
+    cuerpo = json.dumps({"name": "shot"}).encode("utf-8")
+
+    def _fake(req, *args, **kwargs):
+        assert req.method == "PATCH"
+        return RespuestaFalsa(cuerpo)
+
+    _parchar_abrir(monkeypatch, _fake)
+    res = vfxflow_auth._patch_json_bearer(
+        "https://x/shots/sid", {"fields": {}}, "TOKEN_ID"
+    )
+    assert res == {"name": "shot"}
+
+
+def test_upload_media_bearer_ok(monkeypatch):
+    cuerpo = json.dumps({"name": "obj"}).encode("utf-8")
+
+    def _fake(req, *args, **kwargs):
+        assert req.method == "POST"
+        assert req.data == b"DATA"
+        return RespuestaFalsa(cuerpo)
+
+    _parchar_abrir(monkeypatch, _fake)
+    res = vfxflow_auth._upload_media_bearer(
+        "https://x/o?uploadType=media", b"DATA", "TOKEN_ID", "image/jpeg"
+    )
+    assert res == {"name": "obj"}
+
+
+def test_upload_media_bearer_red_lanza_codigo_red(monkeypatch):
+    def _fake(req, *args, **kwargs):
+        raise socket.timeout("timed out")
+
+    _parchar_abrir(monkeypatch, _fake)
+    with pytest.raises(VfxFlowAuthError) as exc:
+        vfxflow_auth._upload_media_bearer("https://x/o", b"", "TOKEN_ID")
+    assert exc.value.codigo == "red"

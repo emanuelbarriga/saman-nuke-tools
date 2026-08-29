@@ -350,3 +350,36 @@ def obtener_colores_estados(project_id, id_token, config=None):
         if doc_id and color:
             colores[doc_id] = str(color)
     return colores
+
+
+def obtener_estados(project_id, id_token, config=None):
+    """Lista de {id, name, color} de los projectStates del proyecto.
+
+    Como `obtener_colores_estados` pero expone además el `name` (para poblar
+    el combo de estado del panel). Devuelve [] ante fallo/ausencia (el combo
+    queda deshabilitado), nunca rompe la UI.
+    """
+    try:
+        cfg = config or vfxflow_config.obtener_config_efectiva()
+        resultados = _buscar_por_campo(
+            "projects/{0}/projectStates".format(project_id),
+            "projectId",
+            project_id,
+            id_token,
+            config=cfg,
+            limite=100,
+        )
+    except Exception:
+        return []
+    estados = []
+    for resultado in resultados:
+        doc_id = resultado.get("id")
+        if not doc_id:
+            continue
+        campos = resultado.get("campos") or {}
+        item = {"id": doc_id}
+        for clave in ("name", "color"):
+            if campos.get(clave):
+                item[clave] = str(campos[clave])
+        estados.append(item)
+    return estados

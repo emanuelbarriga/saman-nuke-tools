@@ -536,6 +536,68 @@ def _post_json_bearer(url, payload, id_token):
         )
 
 
+def _patch_json_bearer(url, payload, id_token):
+    """PATCH JSON con `Authorization: Bearer <id_token>` (v1.7.0).
+
+    Mismo patron de errores que `_post_json_bearer`: HTTP 401 -> codigo
+    "token", HTTP 404 -> None, otros HTTPError -> codigo "http", URLError/
+    timeout -> codigo "red", JSON invalido -> codigo "respuesta". Se usa para
+    actualizar el doc del shot (PATCH con updateMask) al cambiar de estado.
+    """
+    cuerpo = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=cuerpo, method="PATCH")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", "Bearer {0}".format(id_token))
+
+    try:
+        with _abrir(req, timeout=TIMEOUT_SEGUNDOS) as respuesta:
+            texto = respuesta.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        return _levantar_error_http(e, es_firestore=True)
+    except (urllib.error.URLError, socket.timeout):
+        _levantar_error_red(
+            "No se pudo contactar VFXFlow (revisá tu conexión a internet)."
+        )
+
+    try:
+        return json.loads(texto)
+    except (ValueError, TypeError):
+        raise VfxFlowAuthError(
+            "VFXFlow respondió con un JSON inválido.", codigo="respuesta"
+        )
+
+
+def _upload_media_bearer(url, datos, id_token, content_type="application/octet-stream"):
+    """POST media (bytes crudos) con Bearer, para el upload de storage.
+
+    Body = los bytes tal cual (p.ej. jpg); `content_type` va en el header.
+    Devuelve el JSON parseado de la respuesta (el upload responde con el
+    metadata del objeto). Errores igual que el resto: 401 -> "token",
+    404 -> None, otros HTTPError -> "http", URLError/timeout -> "red".
+    """
+    req = urllib.request.Request(url, data=datos, method="POST")
+    req.add_header("Authorization", "Bearer {0}".format(id_token))
+    req.add_header("Content-Type", content_type)
+
+    try:
+        with _abrir(req, timeout=TIMEOUT_SEGUNDOS) as respuesta:
+            texto = respuesta.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        return _levantar_error_http(e, es_firestore=True)
+    except (urllib.error.URLError, socket.timeout):
+        _levantar_error_red(
+            "No se pudo contactar el storage de VFXFlow (revisá tu conexión)."
+        )
+
+    try:
+        return json.loads(texto)
+    except (ValueError, TypeError):
+        raise VfxFlowAuthError(
+            "El storage de VFXFlow respondió con un JSON inválido.",
+            codigo="respuesta",
+        )
+
+
 def _levantar_error_http(e, es_firestore=False):
     """Convierte un HTTPError de urllib en un VfxFlowAuthError con codigo."""
     mensaje_servidor = ""

@@ -30,6 +30,7 @@ import hashlib
 import html
 import os
 import re
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -40,11 +41,11 @@ from datetime import datetime, timezone
 import nuke
 
 try:
-    from PySide2 import QtCore, QtWidgets
+    from PySide2 import QtCore, QtGui, QtWidgets
     # PySide2: los enums cuelgan directo de Qt (Qt.AlignCenter, Qt.Checked).
     QtAlignment = QtCore.Qt
 except ImportError:
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
     # PySide6/Nuke 14+: enums con namespace explícito.
     QtAlignment = QtCore.Qt.AlignmentFlag
 
@@ -91,6 +92,9 @@ _MENSAJE_COMP_SIN_GUARDAR = "Guardá el comp antes de importar referencias."
 
 # Timeout de cada descarga individual de referencia (URL firmada de storage).
 _REFS_TIMEOUT_SEGUNDOS = 10
+
+# Campos que se codifican como timestampValue en los payloads de escritura.
+_CAMPOS_TIMESTAMP = ("createdAt", "updatedAt", "timestamp")
 
 # Intervalo del QTimer que observa el resultado del fetch de actividad.
 _COMENTARIOS_POLL_MS = 500
@@ -261,6 +265,13 @@ QToolButton#botonRespuestas {
 }
 QToolButton#botonRespuestas:hover {
     color: #f1f5f9;
+}
+QToolButton#botonResponder {
+    color: #7dd3fc;
+    border: none;
+    background: transparent;
+    padding: 2px 6px;
+    font-weight: bold;
 }
 QScrollArea {
     background: transparent;
@@ -761,6 +772,189 @@ def _html_archivos(actividad):
     return "<br/>".join(_escapar_y_linkificar(l) for l in lineas)
 
 
+# ----------------------------------------------------- helpers v1.7.0 (puros)
+
+def _iso_ahora():
+    """Timestamp ISO actual en UTC (para los campos timestampValue). Puro."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+
+def _encode_valor_firestore(valor):
+    """Codifica un valor Python a un Value Firestore REST (tipado). Puro.
+
+    None -> nullValue, bool -> booleanValue, numero -> integerValue, dict ->
+    mapValue (recursivo), list -> arrayValue (recursivo), resto -> stringValue.
+    Los map/array se filtran para no escribir claves None (Firestore no acepta
+    campos con nullValue dentro de mapValue).
+    """
+    if valor is None:
+        return {"nullValue": None}
+    if isinstance(valor, bool):
+        return {"booleanValue": valor}
+    if isinstance(valor, (int, float)):
+        return {"integerValue": str(int(valor))}
+    if isinstance(valor, dict):
+        campos = {
+            k: _encode_valor_firestore(v)
+            for k, v in valor.items()
+            if v is not None
+        }
+        return {"mapValue": {"fields": campos}}
+    if isinstance(valor, list):
+        return {
+            "arrayValue": {
+                "values": [_encode_valor_firestore(v) for v in valor]
+            }
+        }
+    return {"stringValue": str(valor)}
+
+
+def _payload_actividad(campos, timestamp_campos=None):
+    """Arma los `fields` REST de Firestore de una actividad (escritura). Puro.
+
+    Las claves en `timestamp_campos` (default createdAt/updatedAt/timestamp)
+    se codifican como timestampValue; el resto con `_encode_valor_firestore`.
+    Devuelve el dict listo para el body de createDocument.
+    """
+    timestamp_campos = timestamp_campos or _CAMPOS_TIMESTAMP
+    fields = {}
+    for clave, valor in campos.items():
+        if clave in timestamp_campos:
+            fields[clave] = {"timestampValue": str(valor)}
+        else:
+            fields[clave] = _encode_valor_firestore(valor)
+    return fields
+
+
+def _nombre_usuario_sesion(sesion):
+    """userName razonable desde la sesión (local part del email). Puro."""
+    sesion = sesion or {}
+    nombre = (sesion.get("userName") or "").strip()
+    if nombre:
+        return nombre
+    email = sesion.get("email") or ""
+    return email.split("@")[0].strip() or "artista"
+
+
+def _rol_sesion(sesion):
+    """Rol de la sesión para el payload ("artist" por defecto). Puro."""
+    sesion = sesion or {}
+    return (sesion.get("role") or sesion.get("userRole") or "artist")
+
+
+def _base_campos_actividad(project_id, shot_id, sesion, tipo, contenido):
+    """Campos comunes de una actividad de escritura (v1.7.0). Puro."""
+    sesion = sesion or {}
+    ahora = _iso_ahora()
+    nombre = _nombre_usuario_sesion(sesion)
+    rol = _rol_sesion(sesion)
+    return {
+        "type": tipo,
+        "content": contenido or "",
+        "shotId": shot_id,
+        "projectId": project_id,
+        "userId": sesion.get("local_id") or "",
+        "userName": nombre,
+        "userRole": rol,
+        "role": rol,
+        "isPrivate": False,
+        "createdAt": ahora,
+        "updatedAt": ahora,
+        "timestamp": ahora,
+        "metadata": {},
+        "parentId": None,
+        "quotedCommentId": None,
+    }
+
+
+def _campos_status_change(project_id, shot_id, sesion, previo_id, previo_nombre,
+                          nuevo_id, nuevo_nombre):
+    """Campos de la actividad status_change (con nombres sintetizados). Puro."""
+    campos = _base_campos_actividad(
+        project_id,
+        shot_id,
+        sesion,
+        "status_change",
+        "Estado cambiado de '{0}' a '{1}'".format(previo_nombre, nuevo_nombre),
+    )
+    campos.update(
+        {
+            "previousState": previo_id,
+            "previousStateName": previo_nombre,
+            "newState": nuevo_id,
+            "newStateName": nuevo_nombre,
+        }
+    )
+    return campos
+
+
+def _rect_crop_central(src_w, src_h, tgt_ratio=16.0 / 9.0):
+    """Crop central (x, y, w, h) con aspect `tgt_ratio` dentro de la fuente.
+
+    Devuelve el rectángulo central más grande con la ratio pedida (16/9 por
+    defecto) contenido en la fuente. Si la fuente ya tiene esa ratio, devuelve
+    el rect completo. Usa tuplas (no QRect) para poder testear sin
+    QApplication. Puro.
+    """
+    ancho = int(src_w)
+    alto = int(src_h)
+    if ancho <= 0 or alto <= 0 or tgt_ratio <= 0:
+        return (0, 0, ancho, alto)
+    if abs(ancho / float(alto) - tgt_ratio) < 1e-6:
+        return (0, 0, ancho, alto)
+    if ancho / float(alto) > tgt_ratio:
+        w = int(alto * tgt_ratio)
+        return ((ancho - w) // 2, 0, w, alto)
+    h = int(ancho / tgt_ratio)
+    return (0, (alto - h) // 2, ancho, h)
+
+
+def _ruta_jpg_temporal():
+    """Ruta temporal para el jpg 1280×720 de la subida (nunca colisiona)."""
+    return os.path.join(
+        tempfile.gettempdir(),
+        "ref_upload_{0}_{1}.jpg".format(int(time.time() * 1000), threading.get_ident()),
+    )
+
+
+def _convertir_jpg_1280x720(ruta_origen, ruta_destino, calidad=90):
+    """Crop central 16:9 + escala exacta a 1280×720 y guarda jpg.
+
+    Sin Pillow: usa QImage de QtGui (funciona sin QApplication, son objetos de
+    datos). Devuelve `ruta_destino` en éxito o None si no pudo leer/guardar.
+    Puede correr en el hilo principal (rápido) o en un worker.
+    """
+    try:
+        imagen = QtGui.QImage(ruta_origen)
+        if imagen.isNull():
+            return None
+        x, y, w, h = _rect_crop_central(imagen.width(), imagen.height())
+        imagen = imagen.copy(x, y, w, h)
+        imagen = imagen.scaled(
+            1280, 720, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation
+        )
+        if not imagen.save(ruta_destino, "JPG", calidad):
+            return None
+        return ruta_destino
+    except Exception:
+        return None
+
+
+def _debe_mostrar_boton_importar(adjunto, imagenes):
+    """True si el adjunto de imagen lleva botón "⬇ Importar" SIEMPRE.
+
+    El botón se muestra por cada adjunto image con url aunque el thumbnail
+    falle (cache ausente/pixmap nulo): el usuario siempre puede descargar la
+    imagen del comentario. `imagenes` no es determinante (solo decide si hay
+    preview). Puro.
+    """
+    if not isinstance(adjunto, dict):
+        return False
+    if adjunto.get("type") != "image":
+        return False
+    return bool(adjunto.get("url"))
+
+
 def _cuerpo_actividad(actividad):
     """Cuerpo de una card según el type (HTML seguro) + extras. Puro.
 
@@ -939,6 +1133,21 @@ class PanelComentarios(QtWidgets.QWidget):
         self._adjunto_trabajo = None
         self._adjunto_trabajo_en_curso = False
 
+        # Escritura (v1.7.0): comentario/reply, estado y subida corren en un
+        # worker y `_poll_escritura` aplica en el hilo principal.
+        self._escritura_trabajo = None
+        self._escritura_trabajo_en_curso = False
+
+        # Modo respuesta: si `_reply_padre_id` es truthy, el input envía reply.
+        self._reply_padre_id = None
+        self._reply_padre_autor = ""
+
+        # Última resolución del plano (worker) para escribir (ids + stateId).
+        self._plano_resuelto = None
+        # Estados reales del proyecto para el combo de estado.
+        self._estados_combo = {}
+        self._estado_actual_id = ""
+
         self._construir_ui()
         self._arrancar_poll_plano()
         self._mostrar_plano_activo()
@@ -995,7 +1204,7 @@ class PanelComentarios(QtWidgets.QWidget):
         seccion_comentarios = QtWidgets.QGroupBox("Actividad por Plano", self)
         lay_comentarios = QtWidgets.QVBoxLayout(seccion_comentarios)
 
-        # Header (v1.6.1): plano identificado + combo de estado deshabilitado.
+        # Header (v1.6.1): plano identificado + combo de estado (v1.7 activo).
         fila_header = QtWidgets.QHBoxLayout()
         self._header_plano = QtWidgets.QLabel("—", seccion_comentarios)
         self._header_plano.setStyleSheet("font-weight: bold;")
@@ -1003,19 +1212,45 @@ class PanelComentarios(QtWidgets.QWidget):
         fila_header.addStretch(1)
         self._combo_estado = QtWidgets.QComboBox(seccion_comentarios)
         self._combo_estado.addItem("Estado")
-        self._combo_estado.setEnabled(False)  # v1.6.2 lo activa (solo lectura ahora)
+        self._combo_estado.setEnabled(False)
+        self._combo_estado.activated.connect(self._on_cambio_estado)
         fila_header.addWidget(self._combo_estado)
         lay_comentarios.addLayout(fila_header)
 
-        # Input de comentario (v1.6.1 SOLO LECTURA: el envío es v1.6.2).
+        # Fila de modo respuesta (v1.7): "Respondiendo a <autor> — [Cancelar]".
+        fila_respuesta = QtWidgets.QHBoxLayout()
+        self._label_modo_respuesta = QtWidgets.QLabel("", seccion_comentarios)
+        self._label_modo_respuesta.setObjectName("verboActividad")
+        fila_respuesta.addWidget(self._label_modo_respuesta)
+        fila_respuesta.addStretch(1)
+        self._boton_cancelar_respuesta = QtWidgets.QToolButton(seccion_comentarios)
+        self._boton_cancelar_respuesta.setText("Cancelar")
+        self._boton_cancelar_respuesta.clicked.connect(
+            self._cancelar_modo_respuesta
+        )
+        fila_respuesta.addWidget(self._boton_cancelar_respuesta)
+        self._fila_respuesta = QtWidgets.QWidget(seccion_comentarios)
+        self._fila_respuesta.setLayout(fila_respuesta)
+        self._fila_respuesta.setVisible(False)
+        lay_comentarios.addWidget(self._fila_respuesta)
+
+        # Input de comentario (v1.7.0 habilitado con sesión + plano).
         fila_input = QtWidgets.QHBoxLayout()
         self._input_comentario = QtWidgets.QLineEdit(seccion_comentarios)
         self._input_comentario.setPlaceholderText("Escribe comentario.")
         self._input_comentario.setEnabled(False)
+        self._input_comentario.returnPressed.connect(self._on_enviar_comentario)
         fila_input.addWidget(self._input_comentario)
         self._boton_enviar = QtWidgets.QPushButton("➔", seccion_comentarios)
         self._boton_enviar.setEnabled(False)
+        self._boton_enviar.setToolTip("Publicar comentario")
+        self._boton_enviar.clicked.connect(self._on_enviar_comentario)
         fila_input.addWidget(self._boton_enviar)
+        self._boton_subir_imagen = QtWidgets.QPushButton("🖼", seccion_comentarios)
+        self._boton_subir_imagen.setEnabled(False)
+        self._boton_subir_imagen.setToolTip("Subir imagen de referencia 1280×720")
+        self._boton_subir_imagen.clicked.connect(self._on_subir_imagen)
+        fila_input.addWidget(self._boton_subir_imagen)
         lay_comentarios.addLayout(fila_input)
 
         # Feed header: título + botón de refs (v1.6.4) + botón de refresco.
@@ -1066,6 +1301,9 @@ class PanelComentarios(QtWidgets.QWidget):
 
         # Estado inicial: sin sesión, se muestra el login (la sesión se oculta).
         self._aplicar_estado_sesion_ui()
+
+        # Habilitar escritura según sesión + plano identificado (v1.7).
+        self._actualizar_habilitacion_escritura()
 
         # Tema oscuro acorde a Nuke, SOLO en este widget (nunca global).
         self.setStyleSheet(_ESTILO_PANEL)
@@ -1181,6 +1419,7 @@ class PanelComentarios(QtWidgets.QWidget):
         self._root_anterior = nombre
         self._plano_anterior = self._plano_activo()
         self._mostrar_plano_activo()
+        self._actualizar_habilitacion_escritura()
         if getattr(self, "_comentarios_trabajo_en_curso", False):
             return  # no molestar mientras hay un worker de actividad en vuelo
         sesion = getattr(self, "sesion", None)
@@ -1607,6 +1846,7 @@ class PanelComentarios(QtWidgets.QWidget):
         self._seccion_sesion.setVisible(conectado)
         if conectado:
             self._label_conectado.setText(self.sesion["email"])
+        self._actualizar_habilitacion_escritura()
 
     def _on_desconectar(self):
         """Cierra la sesión local (y la persistida) y vuelve al login.
@@ -1799,11 +2039,21 @@ class PanelComentarios(QtWidgets.QWidget):
                 imagenes = _cargar_imagenes_adjuntas(actividad)
             except Exception:
                 imagenes = {}
+            # Estados reales para el combo (v1.7): [] no rompe el feed.
+            try:
+                estados = vfxflow_datos.obtener_estados(
+                    resuelto["project_id"], token
+                )
+            except Exception:
+                estados = []
+            self._plano_resuelto = resuelto
             self._comentarios_trabajo = {
                 "estado": "ok",
                 "comentarios": actividad,
                 "colores_estados": colores,
                 "imagenes": imagenes,
+                "estados": estados,
+                "estado_actual": (resuelto.get("shot") or {}).get("stateId") or "",
             }
         except vfxflow_auth.VfxFlowAuthError as e:
             self._comentarios_trabajo = {
@@ -1838,6 +2088,10 @@ class PanelComentarios(QtWidgets.QWidget):
 
         self._comentarios_trabajo_en_curso = False
         if estado == "ok":
+            self._poblar_combo_estado(
+                trabajo.get("estados") or [],
+                trabajo.get("estado_actual") or "",
+            )
             self._publicar_actividad(
                 trabajo.get("comentarios") or [],
                 colores_estados=trabajo.get("colores_estados") or {},
@@ -2003,6 +2257,21 @@ class PanelComentarios(QtWidgets.QWidget):
             label_version = QtWidgets.QLabel(cuerpo["versiones"], card)
             label_version.setObjectName("versionActividad")
             lay_card.addWidget(label_version)
+        # Botón "Responder" (v1.7) en cards padre comentables (comment/file).
+        if not es_respuesta and actividad.get("type") in ("comment", "file_upload"):
+            fila_acciones = QtWidgets.QHBoxLayout()
+            fila_acciones.addStretch(1)
+            boton_responder = QtWidgets.QToolButton(card)
+            boton_responder.setText("Responder")
+            boton_responder.setObjectName("botonResponder")
+            autor = actividad.get("userName") or "Anónimo"
+            padre_id = actividad.get("id") or ""
+            boton_responder.clicked.connect(
+                lambda checked=False, a=autor, p=padre_id:
+                self._iniciar_modo_respuesta(a, p)
+            )
+            fila_acciones.addWidget(boton_responder)
+            lay_card.addLayout(fila_acciones)
         return card
 
     def _agregar_fila_estados(self, cuerpo, colores, card, lay_card):
@@ -2044,63 +2313,58 @@ class PanelComentarios(QtWidgets.QWidget):
     # ------------------------------------------------- adjuntos (v1.6.5)
 
     def _render_adjuntos(self, actividad, parent, imagenes):
-        """Widgets de adjuntos: thumbnails (imagen cacheada) o filas de texto.
+        """Widgets de adjuntos: thumbnails/texto + botón importar por imagen.
 
-        Las imagenes con cache se muestran como thumbnail (click → zoom, botón
-        "Importar"). El resto (archivos o imagenes sin cache) cae a filas de
-        texto con su tamaño. Sin adjuntos devuelve [].
+        Cada adjunto image lleva SIEMPRE el botón "⬇ Importar"
+        (`_debe_mostrar_boton_importar`), aunque el thumbnail falle (cache
+        ausente o QPixmap nulo por codecs): el usuario siempre puede bajar la
+        imagen. Los adjuntos file caen a filas de texto con su tamaño.
         """
         adjuntos = [
             a for a in (actividad.get("attachments") or []) if isinstance(a, dict)
         ]
         if not adjuntos:
             return []
-        previews = []
-        resto = []
-        for adj in adjuntos:
-            url = adj.get("url")
-            if adj.get("type") == "image" and url and imagenes.get(str(url)):
-                previews.append(adj)
-            else:
-                resto.append(adj)
         widgets = []
-        if resto:
-            lineas = "<br/>".join(
-                _escapar_y_linkificar(_linea_adjunto_texto(a)) for a in resto
-            )
-            label = QtWidgets.QLabel(lineas, parent)
-            label.setWordWrap(True)
-            label.setTextFormat(QtCore.Qt.RichText)
-            label.setOpenExternalLinks(True)
-            widgets.append(label)
-        for adj in previews:
-            widgets.append(
-                self._crear_thumbnail_adjunto(
-                    adj, imagenes.get(str(adj.get("url"))), parent
+        for adj in adjuntos:
+            if _debe_mostrar_boton_importar(adj, imagenes or {}):
+                ruta = imagenes.get(str(adj.get("url"))) if adj.get("url") else None
+                widgets.append(self._crear_adjunto_imagen(adj, ruta, parent))
+            else:
+                label = QtWidgets.QLabel(
+                    _escapar_y_linkificar(_linea_adjunto_texto(adj)), parent
                 )
-            )
+                label.setWordWrap(True)
+                label.setTextFormat(QtCore.Qt.RichText)
+                label.setOpenExternalLinks(True)
+                widgets.append(label)
         return widgets
 
-    def _crear_thumbnail_adjunto(self, adj, ruta_local, parent):
-        """Contenedor de un thumbnail de adjunto imagen + nombre + importar.
+    def _crear_adjunto_imagen(self, adj, ruta_local, parent):
+        """Contenedor de un adjunto imagen: preview (si pudo) + botón importar.
 
-        Sin imagen válida cae al texto (el preview se descartó en
-        `_render_adjuntos`; acá igual se protege). Click → zoom modal
-        (`_abrir_zoom_imagen`); hover muestra nombre + tamaño (tooltip).
+        El botón "⬇ Importar" aparece SIEMPRE (TAREA A). Si el thumbnail cargó
+        va debajo del preview; si no, aparece junto al texto.
         """
         cont = QtWidgets.QWidget(parent)
         lay = QtWidgets.QVBoxLayout(cont)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
-        pixmap = QtWidgets.QPixmap(ruta_local) if ruta_local else QtWidgets.QPixmap()
+        pixmap = (
+            QtWidgets.QPixmap(ruta_local) if ruta_local else QtWidgets.QPixmap()
+        )
         if pixmap.isNull():
+            # Sin preview (codecs/cache): texto + botón en la misma fila.
+            fila = QtWidgets.QHBoxLayout()
             label = QtWidgets.QLabel(
                 _escapar_y_linkificar(_linea_adjunto_texto(adj)), cont
             )
             label.setWordWrap(True)
             label.setTextFormat(QtCore.Qt.RichText)
             label.setOpenExternalLinks(True)
-            lay.addWidget(label)
+            fila.addWidget(label, 1)
+            fila.addWidget(self._crear_boton_importar(adj, cont))
+            lay.addLayout(fila)
             return cont
         miniatura = QtWidgets.QLabel(cont)
         miniatura.setPixmap(
@@ -2123,16 +2387,31 @@ class PanelComentarios(QtWidgets.QWidget):
         label_nombre.setWordWrap(True)
         fila.addWidget(label_nombre)
         fila.addStretch(1)
-        boton = QtWidgets.QToolButton(cont)
-        boton.setText("⬇ Importar")
-        boton.setToolTip("Descargar el adjunto y crearlo como nodo Read")
-        url = adj.get("url") or ""
-        boton.clicked.connect(
-            lambda checked=False, u=url, n=nombre: self._importar_adjunto(u, n)
-        )
-        fila.addWidget(boton)
+        fila.addWidget(self._crear_boton_importar(adj, cont))
         lay.addLayout(fila)
         return cont
+
+    def _crear_boton_importar(self, adj, parent):
+        """QToolButton "⬇ Importar" por adjunto de imagen (TAREA A).
+
+        Al pulsar descarga a `<dir>/ref/adjuntos/<filename>` y crea el Read.
+        Muestra "⏳…" mientras el worker del adjunto está en vuelo.
+        """
+        boton = QtWidgets.QToolButton(parent)
+        boton.setText("⬇ Importar")
+        boton.setToolTip("Descargar el adjunto y crearlo como nodo Read")
+        url = (adj.get("url") or "").strip()
+        nombre = (adj.get("name") or "adjunto").strip()
+
+        def _click():
+            if getattr(self, "_adjunto_trabajo_en_curso", False):
+                return
+            boton.setEnabled(False)
+            boton.setText("⏳…")
+            self._importar_adjunto(url, nombre)
+
+        boton.clicked.connect(lambda checked=False: _click())
+        return boton
 
     def _abrir_zoom_imagen(self, ruta_local, parent=None):
         """Modal con la imagen en tamaño completo (escalada a la pantalla)."""
@@ -2227,6 +2506,439 @@ class PanelComentarios(QtWidgets.QWidget):
         self._estado(
             trabajo.get("mensaje") or "Error al importar el adjunto.", error=True
         )
+
+    # ------------------------------------------------- escritura (v1.7.0)
+
+    def _actualizar_habilitacion_escritura(self):
+        """Habilita input/➔/🖼 SOLO con sesión + plano identificado (v1.7)."""
+        try:
+            plano = self._plano_activo()
+        except Exception:
+            plano = None
+        sesion = getattr(self, "sesion", None)
+        habilitado = bool(sesion and sesion.get("email") and plano)
+        for attr in ("_input_comentario", "_boton_enviar", "_boton_subir_imagen"):
+            widget = getattr(self, attr, None)
+            if widget is None:
+                continue
+            widget.setEnabled(habilitado)
+        input_widget = getattr(self, "_input_comentario", None)
+        if input_widget is not None:
+            input_widget.setToolTip(
+                "Necesitás iniciar sesión y un plano identificado para comentar."
+                if not habilitado
+                else ""
+            )
+        # El combo se habilita en `_poblar_combo_estado` (con estados reales).
+        combo = getattr(self, "_combo_estado", None)
+        if combo is not None and not getattr(self, "_estados_combo", None):
+            combo.setEnabled(False)
+        # La fila de modo respuesta depende de la habilitación.
+        fila = getattr(self, "_fila_respuesta", None)
+        if fila is not None and not habilitado:
+            self._cancelar_modo_respuesta()
+
+    def _iniciar_modo_respuesta(self, autor, padre_id):
+        """Pone el input en modo reply (guarda el padre y muestra el aviso)."""
+        self._reply_padre_id = padre_id
+        self._reply_padre_autor = autor or ""
+        label = getattr(self, "_label_modo_respuesta", None)
+        fila = getattr(self, "_fila_respuesta", None)
+        if label is not None:
+            label.setText("Respondiendo a {0}".format(autor or "…"))
+        if fila is not None:
+            fila.setVisible(True)
+        self._input_comentario.setFocus()
+
+    def _cancelar_modo_respuesta(self):
+        """Saca el input del modo reply y restaura el placeholder."""
+        self._reply_padre_id = None
+        self._reply_padre_autor = ""
+        fila = getattr(self, "_fila_respuesta", None)
+        if fila is not None:
+            fila.setVisible(False)
+        self._input_comentario.setPlaceholderText("Escribe comentario.")
+
+    def _on_enviar_comentario(self):
+        """➔/Enter: valida y lanza la creación del comment o reply (worker)."""
+        texto = self._input_comentario.text().strip()
+        if not texto:
+            return
+        plano = self._plano_activo()
+        token = self._id_token_actual()
+        if not plano or not token:
+            self._estado(
+                "Necesitás plano identificado y sesión para comentar.", error=True
+            )
+            return
+        if getattr(self, "_escritura_trabajo_en_curso", False):
+            return  # no publicar dos actividades a la vez
+        sesion = self.sesion or {}
+        if self._reply_padre_id and not self._reply_padre_autor:
+            self._reply_padre_autor = "…"
+        tipo = "reply" if self._reply_padre_id else "comment"
+        campos = _base_campos_actividad("", "", sesion, tipo, texto)
+        if self._reply_padre_id:
+            campos["parentId"] = self._reply_padre_id
+        self._lanzar_escritura(
+            self._trabajo_crear_actividad,
+            (plano, campos, token),
+            "Publicando {0}…".format("respuesta" if tipo == "reply" else "comentario"),
+        )
+
+    def _lanzar_escritura(self, trabajo_callable, args, mensaje_inicial):
+        """Arranca un worker de escritura + QTimer que aplica."""
+        self._escritura_trabajo_en_curso = True
+        self._escritura_trabajo = {"estado": "pendiente"}
+        self._estado(mensaje_inicial)
+        threading.Thread(target=trabajo_callable, args=args, daemon=True).start()
+        QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_escritura)
+
+    def _trabajo_crear_actividad(self, plano, campos, token):
+        """Worker: resuelve el plano y crea la actividad en shotActivity."""
+        try:
+            resuelto = vfxflow_datos.resolver_plano(plano, token)
+            if resuelto is None or resuelto.get("error"):
+                self._escritura_trabajo = {
+                    "estado": "error",
+                    "mensaje": self._mensaje_error_resolucion(resuelto),
+                }
+                return
+            self._plano_resuelto = resuelto
+            campos["shotId"] = resuelto["shot_id"]
+            campos["projectId"] = resuelto["project_id"]
+            self._crear_documento_actividad(resuelto["project_id"], campos, token)
+            tipo = campos.get("type") or "actividad"
+            self._escritura_trabajo = {
+                "estado": "ok",
+                "mensaje": "Comentario publicado."
+                if tipo == "comment"
+                else ("Respuesta publicada." if tipo == "reply" else "Publicado."),
+                "publicado": True,
+            }
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._escritura_trabajo = {
+                "estado": "error",
+                "mensaje": self._mensaje_error_escritura(e),
+            }
+        except Exception as e:
+            self._escritura_trabajo = {
+                "estado": "error",
+                "mensaje": "Error inesperado: %s" % e,
+            }
+
+    def _poll_escritura(self):
+        """QTimer (hilo principal): aplica el resultado de la escritura.
+
+        En éxito limpia el input, cancela el modo reply y recarga el feed +
+        combo (que el worker re-resolvió). Los errores van al estado sin
+        romper la UI.
+        """
+        if not getattr(self, "_escritura_trabajo_en_curso", False):
+            return
+        trabajo = self._escritura_trabajo or {}
+        if trabajo.get("estado") == "pendiente":
+            QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_escritura)
+            return
+        self._escritura_trabajo_en_curso = False
+        if trabajo.get("estado") == "ok":
+            if trabajo.get("publicado"):
+                self._input_comentario.clear()
+                self._cancelar_modo_respuesta()
+            self._estado(trabajo.get("mensaje") or "Hecho.")
+            self._cargar_comentarios_del_plano()
+            return
+        self._estado(
+            trabajo.get("mensaje") or "No se pudo escribir en VFXFlow.",
+            error=True,
+        )
+
+    def _mensaje_error_escritura(self, error):
+        """Mensaje claro para los fallos de escritura (403/400 rules, red…)."""
+        codigo = getattr(error, "codigo", None)
+        if codigo == "red":
+            return _MENSAJE_FIREWALL_GOOGLE
+        if codigo == "http":
+            return (
+                "No se pudo escribir en VFXFlow (parece un problema de "
+                "permisos: consultá al admin si no tenés acceso de escritura)."
+            )
+        if codigo == "token":
+            return "Sesión vencida: iniciá sesión de nuevo."
+        return str(error)
+
+    def _crear_documento_actividad(self, project_id, campos, token):
+        """Crea un doc en projects/{pid}/shotActivity (createDocument REST)."""
+        cfg = vfxflow_config.obtener_config_efectiva()
+        fb = (cfg or {}).get("project_id") or project_id
+        url = (
+            "https://firestore.googleapis.com/v1/projects/{fb}/databases/"
+            "(default)/documents/projects/{pid}/shotActivity"
+        ).format(fb=fb, pid=project_id)
+        return vfxflow_auth._post_json_bearer(
+            url, {"fields": _payload_actividad(campos)}, token
+        )
+
+    def _actualizar_estado_shot(self, resuelto, nuevo_id, nuevo_nombre, token):
+        """PATCH del doc del shot con stateId/status (updateMask)."""
+        cfg = vfxflow_config.obtener_config_efectiva()
+        fb = (cfg or {}).get("project_id") or resuelto["project_id"]
+        url = (
+            "https://firestore.googleapis.com/v1/projects/{fb}/databases/"
+            "(default)/documents/projects/{pid}/chapters/{cid}/shots/{sid}"
+        ).format(
+            fb=fb,
+            pid=resuelto["project_id"],
+            cid=resuelto["chapter_id"],
+            sid=resuelto["shot_id"],
+        )
+        payload = {
+            "fields": {
+                "stateId": {"stringValue": str(nuevo_id)},
+                "status": {"stringValue": str(nuevo_nombre)},
+            },
+            "updateMask": {"fieldPaths": ["stateId", "status"]},
+        }
+        return vfxflow_auth._patch_json_bearer(url, payload, token)
+
+    # ------------------------------------------------------- combo de estado
+
+    def _poblar_combo_estado(self, estados, estado_actual):
+        """Rellena el combo con los estados reales y selecciona el actual.
+
+        Sin estados queda deshabilitado (tooltip). El item 0 es un placeholder
+        neutral ("Estado"); los estados dejan su id en itemData. Es la única
+        puerta de entrada al cambio de estado (`_on_cambio_estado`).
+        """
+        self._estados_combo = {str(e.get("id")): e for e in estados or []}
+        self._estado_actual_id = str(estado_actual) if estado_actual else ""
+        combo = getattr(self, "_combo_estado", None)
+        if combo is None:
+            return
+        combo.blockSignals(True)
+        combo.clear()
+        if not estados:
+            combo.addItem("Estado")
+            combo.setEnabled(False)
+            combo.setToolTip("Sin estados disponibles")
+        else:
+            combo.addItem("Estado")
+            indice_actual = 0
+            for e in estados:
+                combo.addItem(str(e.get("name") or e["id"]), str(e["id"]))
+                if str(e["id"]) == self._estado_actual_id:
+                    indice_actual = combo.count() - 1
+            combo.setCurrentIndex(indice_actual)
+            sesion = getattr(self, "sesion", None)
+            combo.setEnabled(bool(sesion and sesion.get("email")))
+            combo.setToolTip(
+                "Cambiar el estado del plano" if combo.isEnabled() else
+                "Iniciá sesión para cambiar el estado"
+            )
+        combo.blockSignals(False)
+
+    def _on_cambio_estado(self, indice):
+        """Aplica el cambio de estado elegido en el combo (v1.7, directo).
+
+        Directo (sin undo): crea la actividad status_change y el PATCH del shot
+        en un worker. El item 0 (placeholder "Estado") no dispara nada.
+        """
+        combo = getattr(self, "_combo_estado", None)
+        if combo is None or indice <= 0:
+            return
+        nuevo_id = combo.itemData(indice)
+        nuevo = self._estados_combo.get(str(nuevo_id))
+        if not nuevo:
+            return
+        if str(nuevo_id) == self._estado_actual_id:
+            return  # ya está en ese estado
+        plano = self._plano_activo()
+        token = self._id_token_actual()
+        resuelto = getattr(self, "_plano_resuelto", None)
+        if not plano or not token or not resuelto or resuelto.get("error"):
+            self._estado(
+                "Actualizá la actividad primero (resolver el plano).", error=True
+            )
+            return
+        shot = resuelto.get("shot") or {}
+        previo_id = shot.get("stateId") or ""
+        previo_nombre = shot.get("status") or ""
+        if not previo_nombre:
+            previo_nombre = "desconocido"
+        campos = _campos_status_change(
+            resuelto["project_id"],
+            resuelto["shot_id"],
+            self.sesion or {},
+            previo_id,
+            previo_nombre,
+            nuevo.get("id"),
+            nuevo.get("name") or nuevo.get("id"),
+        )
+        if getattr(self, "_escritura_trabajo_en_curso", False):
+            return
+        self._lanzar_escritura(
+            self._trabajo_cambio_estado,
+            (plano, token, resuelto, campos),
+            "Cambiando estado…",
+        )
+
+    def _trabajo_cambio_estado(self, plano, token, resuelto, campos):
+        """Worker: crea la actividad status_change y PATCHea el shot.
+
+        Si el PATCH del shot falla por rules, la actividad queda creada y se
+        avisa (decisión documentada): el feed registra el cambio igual.
+        """
+        try:
+            self._crear_documento_actividad(resuelto["project_id"], campos, token)
+        except (vfxflow_auth.VfxFlowAuthError, Exception) as e:
+            self._escritura_trabajo = {
+                "estado": "error",
+                "mensaje": self._mensaje_error_escritura(e),
+            }
+            return
+        try:
+            self._actualizar_estado_shot(
+                resuelto,
+                campos["newState"],
+                campos["newStateName"],
+                token,
+            )
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._escritura_trabajo = {
+                "estado": "ok",
+                "mensaje": (
+                    "Estado registrado en la actividad; no se pudo actualizar "
+                    "el shot ({0})".format(self._mensaje_error_escritura(e))
+                ),
+            }
+            return
+        except Exception as e:
+            self._escritura_trabajo = {
+                "estado": "ok",
+                "mensaje": (
+                    "Estado registrado; no se pudo actualizar el shot (%s)" % e
+                ),
+            }
+            return
+        self._escritura_trabajo = {"estado": "ok", "mensaje": "Estado cambiado."}
+
+    # ------------------------------------------------------- subir imagen (B.3)
+
+    def _on_subir_imagen(self):
+        """🖼: elige imagen, la procesa a 1280×720 jpg y la sube (worker)."""
+        plano = self._plano_activo()
+        token = self._id_token_actual()
+        if not plano or not token:
+            self._estado(
+                "Necesitás plano identificado y sesión para subir.", error=True
+            )
+            return
+        if getattr(self, "_escritura_trabajo_en_curso", False):
+            return
+        ruta, _filtro = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Subir imagen", "",
+            "Imágenes (*.jpg *.jpeg *.png *.tif *.tiff *.exr);;Todos (*)",
+        )
+        if not ruta:
+            return
+        jpg_temporal = _ruta_jpg_temporal()
+        if not _convertir_jpg_1280x720(ruta, jpg_temporal):
+            self._estado("No se pudo procesar la imagen.", error=True)
+            return
+        try:
+            size = os.path.getsize(jpg_temporal)
+        except OSError:
+            size = 0
+        nombre = os.path.basename(ruta)
+        self._lanzar_escritura(
+            self._trabajo_subir_imagen,
+            (jpg_temporal, plano, token, nombre, size, self.sesion or {}),
+            "Subiendo imagen…",
+        )
+
+    def _trabajo_subir_imagen(
+        self, jpg_temporal, plano, token, nombre_origen, size, sesion
+    ):
+        """Worker: resuelve shot, sube el jpg a storage y crea file_upload."""
+        try:
+            resuelto = vfxflow_datos.resolver_plano(plano, token)
+            if resuelto is None or resuelto.get("error"):
+                self._escritura_trabajo = {
+                    "estado": "error",
+                    "mensaje": self._mensaje_error_resolucion(resuelto),
+                }
+                return
+            self._plano_resuelto = resuelto
+            project_id = resuelto["project_id"]
+            cfg = vfxflow_config.obtener_config_efectiva()
+            bucket = (cfg or {}).get("storage_bucket") or "vfxpm-be912.firebasestorage.app"
+            local_id = (sesion or {}).get("local_id") or "anon"
+            ruta_storage = "projects/{0}/image_comments/{1}_{2}.jpg".format(
+                project_id, local_id, int(time.time())
+            )
+            encoded = urllib.parse.quote(ruta_storage, safe="")
+            with open(jpg_temporal, "rb") as fh:
+                datos = fh.read()
+            url_subida = (
+                "https://firebasestorage.googleapis.com/upload/storage/v1/b/"
+                "{b}/o?uploadType=media&name={n}"
+            ).format(b=bucket, n=encoded)
+            vfxflow_auth._upload_media_bearer(url_subida, datos, token, "image/jpeg")
+            # Token de descarga para la URL firmada del adjunto.
+            meta_url = (
+                "https://firebasestorage.googleapis.com/v0/b/{b}/o/{n}"
+            ).format(b=bucket, n=encoded)
+            meta = vfxflow_auth._get_con_bearer(meta_url, token) or {}
+            tokens = (
+                meta.get("downloadTokens")
+                or meta.get("downloadToken")
+                or meta.get("downloadURL")
+                or ""
+            )
+            if tokens:
+                firma = str(tokens).split(",")[0].strip()
+                url_adjunto = (
+                    "https://firebasestorage.googleapis.com/v0/b/{b}/o/{n}"
+                    "?alt=media&token={t}"
+                ).format(b=bucket, n=encoded, t=firma)
+            else:
+                media = meta.get("mediaLink") or ""
+                if not media:
+                    self._escritura_trabajo = {
+                        "estado": "error",
+                        "mensaje": "El storage no devolvió token de descarga.",
+                    }
+                    return
+                url_adjunto = media
+            campos = _base_campos_actividad(
+                project_id,
+                resuelto["shot_id"],
+                sesion,
+                "file_upload",
+                nombre_origen,
+            )
+            campos["attachments"] = [
+                {
+                    "id": "att_{0}".format(int(time.time() * 1000)),
+                    "type": "image",
+                    "url": url_adjunto,
+                    "name": nombre_origen,
+                    "size": size,
+                    "mimeType": "image/jpeg",
+                }
+            ]
+            self._crear_documento_actividad(project_id, campos, token)
+            self._escritura_trabajo = {"estado": "ok", "mensaje": "Imagen subida."}
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._escritura_trabajo = {
+                "estado": "error",
+                "mensaje": self._mensaje_error_escritura(e),
+            }
+        except Exception as e:
+            self._escritura_trabajo = {
+                "estado": "error",
+                "mensaje": "Error inesperado: %s" % e,
+            }
 
     # -------------------------------------------- respuestas (v1.6.5)
 

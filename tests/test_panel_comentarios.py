@@ -221,6 +221,9 @@ class _WidgetFake:
     def setParent(self, parent):
         pass
 
+    def setFocus(self):
+        pass
+
 
 def _panel_con_ui_falsa():
     """PanelComentarios con secciones del login/sesión simuladas."""
@@ -358,6 +361,82 @@ class _ThreadFake:
 
     def start(self):
         self._target(*self._args)
+
+
+class _LineEditFake:
+    """QLineEdit mínimo para probar el flujo de escritura sin QApplication."""
+
+    def __init__(self, texto=""):
+        self._texto = texto
+        self.placeholder = ""
+        self.habilitado = False
+        self.tooltip = ""
+
+    def text(self):
+        return self._texto
+
+    def setText(self, texto):
+        self._texto = texto
+
+    def clear(self):
+        self._texto = ""
+
+    def setPlaceholderText(self, texto):
+        self.placeholder = texto
+
+    def setFocus(self):
+        pass
+
+    def setEnabled(self, habilitado):
+        self.habilitado = habilitado
+
+    def setToolTip(self, tooltip):
+        self.tooltip = tooltip
+
+
+class _ComboFake:
+    """QComboBox mínimo: registra items/data y el índice seleccionado."""
+
+    def __init__(self):
+        self.items = []
+        self.indice = 0
+        self.habilitado = False
+        self.tooltip = ""
+        self.bloqueado = False
+
+    def blockSignals(self, b):
+        self.bloqueado = b
+        return b
+
+    def clear(self):
+        self.items = []
+        self.indice = 0
+
+    def addItem(self, texto, data=None):
+        self.items.append((texto, data))
+
+    def count(self):
+        return len(self.items)
+
+    def itemData(self, indice):
+        if 0 <= indice < len(self.items):
+            return self.items[indice][1]
+        return None
+
+    def setCurrentIndex(self, indice):
+        self.indice = indice
+
+    def currentIndex(self):
+        return self.indice
+
+    def setEnabled(self, b):
+        self.habilitado = b
+
+    def isEnabled(self):
+        return self.habilitado
+
+    def setToolTip(self, t):
+        self.tooltip = t
 
 
 def test_escapar_y_linkificar_escapa_html_y_enlaza_urls():
@@ -674,6 +753,11 @@ def test_cargar_comentarios_con_sesion_publica_cards(monkeypatch):
         panel_comentarios.vfxflow_datos,
         "obtener_colores_estados",
         lambda pid, token, config=None: {},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "obtener_estados",
+        lambda pid, token, config=None: [],
     )
 
     panel._cargar_comentarios_del_plano()
@@ -1804,6 +1888,13 @@ def test_trabajo_comentarios_publica_colores_e_imagenes(monkeypatch):
         lambda pid, token, config=None: {"u1": "#f59e0b"},
     )
     monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "obtener_estados",
+        lambda pid, token, config=None: [
+            {"id": "u1", "name": "APROBADO", "color": "#f59e0b"}
+        ],
+    )
+    monkeypatch.setattr(
         panel_comentarios,
         "_cargar_imagenes_adjuntas",
         lambda actividad: {"https://x/o/a.jpg?alt=media": "/cache/a.img"},
@@ -1819,3 +1910,501 @@ def test_trabajo_comentarios_publica_colores_e_imagenes(monkeypatch):
         "https://x/o/a.jpg?alt=media": "/cache/a.img"
     }
     assert panel._comentarios_trabajo["comentarios"][0]["id"] == "c1"
+    assert panel._comentarios_trabajo["estados"][0]["name"] == "APROBADO"
+    assert panel._plano_resuelto["shot_id"] == "sid"
+
+# ---------------------------------------------------------------------------
+# v1.7.0 — TAREA A: botón "Importar" siempre presente por adjunto de imagen
+# ---------------------------------------------------------------------------
+
+
+def test_debe_mostrar_boton_importar_siempre_en_imagen():
+    from SamanTools import panel_comentarios
+
+    adj = {"type": "image", "url": "https://x/o/a.jpg?alt=media", "name": "a.jpg"}
+    # Sin cache (thumbnail puede fallar) -> el botón se muestra IGUAL.
+    assert panel_comentarios._debe_mostrar_boton_importar(adj, {}) is True
+    assert (
+        panel_comentarios._debe_mostrar_boton_importar(
+            adj, {"https://x/o/a.jpg?alt=media": "/x/a.img"}
+        )
+        is True
+    )
+    assert (
+        panel_comentarios._debe_mostrar_boton_importar(
+            {"type": "file", "url": "https://x/o/d.pdf"}, {}
+        )
+        is False
+    )
+    assert (
+        panel_comentarios._debe_mostrar_boton_importar(
+            {"type": "image", "name": "a.jpg"}, {}
+        )
+        is False  # sin url no se puede importar
+    )
+    assert panel_comentarios._debe_mostrar_boton_importar(None, {}) is False
+
+
+# ---------------------------------------------------------------------------
+# v1.7.0 — TAREA B.1: payloads de escritura + envío de comment/reply
+# ---------------------------------------------------------------------------
+
+
+def test_payload_actividad_tipos_firestore():
+    from SamanTools import panel_comentarios
+
+    campos = {
+        "type": "comment",
+        "content": "hola",
+        "isPrivate": False,
+        "parentId": None,
+        "createdAt": "2026-08-01T00:00:00.000Z",
+        "metadata": {},
+        "n": 3,
+    }
+    fields = panel_comentarios._payload_actividad(campos)
+    assert fields["type"] == {"stringValue": "comment"}
+    assert fields["content"] == {"stringValue": "hola"}
+    assert fields["isPrivate"] == {"booleanValue": False}
+    assert fields["parentId"] == {"nullValue": None}
+    assert fields["createdAt"] == {"timestampValue": "2026-08-01T00:00:00.000Z"}
+    assert fields["metadata"] == {"mapValue": {"fields": {}}}
+    assert fields["n"] == {"integerValue": "3"}
+
+
+def test_base_campos_actividad_desde_sesion():
+    from SamanTools import panel_comentarios
+
+    sesion = {"local_id": "uid1", "email": "ana.lopez@samanestudio.com"}
+    campos = panel_comentarios._base_campos_actividad(
+        "pid1", "sid1", sesion, "comment", "texto"
+    )
+    assert campos["type"] == "comment"
+    assert campos["shotId"] == "sid1"
+    assert campos["projectId"] == "pid1"
+    assert campos["userId"] == "uid1"
+    assert campos["userName"] == "ana.lopez"
+    assert campos["userRole"] == "artist"
+    assert campos["role"] == "artist"
+    assert campos["isPrivate"] is False
+    assert campos["metadata"] == {}
+
+
+def test_campos_status_change():
+    from SamanTools import panel_comentarios
+
+    campos = panel_comentarios._campos_status_change(
+        "pid", "sid", {"email": "a@b.com"}, "u1", "APROBADO", "u2", "ENTREGA"
+    )
+    assert campos["type"] == "status_change"
+    assert campos["previousState"] == "u1"
+    assert campos["previousStateName"] == "APROBADO"
+    assert campos["newState"] == "u2"
+    assert campos["newStateName"] == "ENTREGA"
+    assert "APROBADO" in campos["content"] and "ENTREGA" in campos["content"]
+
+
+def test_trabajo_crear_actividad_comment_publica_ok(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda d, t, config=None: {
+            "project_id": "pid",
+            "chapter_id": "cid",
+            "shot_id": "sid",
+            "shot": {},
+        },
+    )
+    creadas = []
+    panel._crear_documento_actividad = (
+        lambda pid, campos, token: creadas.append(pid) or {}
+    )
+    campos = panel_comentarios._base_campos_actividad(
+        "", "", {"email": "a@b.com", "local_id": "u"}, "comment", "hola"
+    )
+
+    panel._trabajo_crear_actividad(
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"}, campos, "T"
+    )
+
+    assert panel._escritura_trabajo["estado"] == "ok"
+    assert panel._escritura_trabajo["mensaje"] == "Comentario publicado."
+    assert creadas == ["pid"]
+    assert campos["shotId"] == "sid"
+    assert campos["projectId"] == "pid"
+
+
+def test_payload_reply_incluye_parent_id():
+    from SamanTools import panel_comentarios
+
+    campos = panel_comentarios._base_campos_actividad(
+        "pid", "sid", {"email": "a@b.com"}, "reply", "res"
+    )
+    campos["parentId"] = "c1"
+    fields = panel_comentarios._payload_actividad(campos)
+    assert fields["parentId"] == {"stringValue": "c1"}
+
+
+def test_on_enviar_comentario_lanza_comment_y_reply(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._input_comentario = _LineEditFake("hola")
+    panel.sesion = {"email": "a@b.com", "local_id": "u", "id_token": "IT"}
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR",
+        "capitulo": 107,
+        "plano": "008_00100",
+    }
+    panel._id_token_actual = lambda: "TOKEN"
+    panel._escritura_trabajo_en_curso = False
+    panel._reply_padre_id = None
+    panel.sesion = {"email": "a@b.com", "local_id": "u", "id_token": "IT"}
+    lanzados = []
+    panel._lanzar_escritura = (
+        lambda callable_, args, mensaje: lanzados.append((callable_, args, mensaje))
+    )
+
+    panel._on_enviar_comentario()
+    assert lanzados and lanzados[0][0] == panel._trabajo_crear_actividad
+    campos = lanzados[0][1][1]
+    assert campos["type"] == "comment"
+    assert campos.get("parentId") is None
+
+    # Modo reply: el payload lleva parentId y type reply.
+    panel._reply_padre_id = "c1"
+    panel._reply_padre_autor = "Ana"
+    lanzados.clear()
+    panel._on_enviar_comentario()
+    campos = lanzados[0][1][1]
+    assert campos["type"] == "reply"
+    assert campos["parentId"] == "c1"
+
+    # Texto vacío: no lanza nada.
+    panel._input_comentario = _LineEditFake("   ")
+    lanzados.clear()
+    panel._on_enviar_comentario()
+    assert lanzados == []
+
+
+def test_actualizar_habilitacion_escritura():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._input_comentario = _LineEditFake()
+    panel._boton_enviar = _LineEditFake()
+    panel._boton_subir_imagen = _LineEditFake()
+    panel._estados_combo = {}
+    panel._fila_respuesta = None
+    panel.sesion = {"email": "a@b.com", "id_token": "IT"}
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR",
+        "capitulo": 107,
+        "plano": "008_00100",
+    }
+
+    panel._actualizar_habilitacion_escritura()
+    assert panel._input_comentario.habilitado is True
+    assert panel._boton_enviar.habilitado is True
+    assert panel._boton_subir_imagen.habilitado is True
+
+    panel.sesion = None
+    panel._actualizar_habilitacion_escritura()
+    assert panel._input_comentario.habilitado is False
+    assert panel._boton_enviar.habilitado is False
+
+
+# ---------------------------------------------------------------------------
+# v1.7.0 — TAREA B.2: combo de estado + cambio de estado
+# ---------------------------------------------------------------------------
+
+
+def test_poblar_combo_estado_selecciona_actual():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "id_token": "ID"}
+    panel._combo_estado = _ComboFake()
+    estados = [{"id": "e1", "name": "APROBADO"}, {"id": "e2", "name": "ENTREGA"}]
+
+    panel._poblar_combo_estado(estados, "e2")
+
+    assert panel._combo_estado.items[0] == ("Estado", None)
+    assert panel._combo_estado.items[1] == ("APROBADO", "e1")
+    assert panel._combo_estado.items[2] == ("ENTREGA", "e2")
+    assert panel._combo_estado.indice == 2
+    assert panel._combo_estado.habilitado is True
+    assert panel._estado_actual_id == "e2"
+    assert panel._estados_combo == {"e1": {"id": "e1", "name": "APROBADO"},
+                                    "e2": {"id": "e2", "name": "ENTREGA"}}
+
+
+def test_poblar_combo_estado_vacio_deshabilitado():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com"}
+    panel._combo_estado = _ComboFake()
+
+    panel._poblar_combo_estado([], "")
+
+    assert panel._combo_estado.habilitado is False
+    assert "Sin estados" in panel._combo_estado.tooltip
+    assert len(panel._combo_estado.items) == 1
+
+
+def test_poblar_combo_estado_sin_combo_no_rompe():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._poblar_combo_estado([{"id": "e", "name": "E"}], "e")
+    assert panel._estados_combo == {"e": {"id": "e", "name": "E"}}
+
+
+def test_on_cambio_estado_ignora_placeholder_y_same():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "local_id": "uid", "id_token": "IT"}
+    panel._combo_estado = _ComboFake()
+    panel._estados_combo = {
+        "e1": {"id": "e1", "name": "APROBADO"},
+        "e2": {"id": "e2", "name": "ENTREGA"},
+    }
+    panel._estado_actual_id = "e1"
+    panel._plano_resuelto = {
+        "project_id": "pid",
+        "chapter_id": "cid",
+        "shot_id": "sid",
+        "shot": {"stateId": "e1", "status": "APROBADO"},
+    }
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR",
+        "capitulo": 107,
+        "plano": "008_00100",
+    }
+    panel._id_token_actual = lambda: "TOKEN"
+    panel._escritura_trabajo_en_curso = False
+    lanzados = []
+    panel._lanzar_escritura = lambda *a, **k: lanzados.append(a)
+    panel._combo_estado.items = [("Estado", None), ("APROBADO", "e1"), ("ENTREGA", "e2")]
+
+    panel._on_cambio_estado(0)  # placeholder
+    assert lanzados == []
+
+    panel._on_cambio_estado(1)  # ya está en ese estado
+    assert lanzados == []
+
+    panel._on_cambio_estado(2)  # otro estado -> lanza el worker
+    assert lanzados and lanzados[0][0] == panel._trabajo_cambio_estado
+    campos = lanzados[0][1][3]
+    assert campos["newState"] == "e2"
+    assert campos["newStateName"] == "ENTREGA"
+    assert campos["previousStateName"] == "APROBADO"
+
+
+def test_trabajo_cambio_estado_patch_shot(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    campos = panel_comentarios._campos_status_change(
+        "pid", "sid", {"email": "a@b.com"}, "e1", "APROBADO", "e2", "ENTREGA"
+    )
+    creada = []
+    panel._crear_documento_actividad = (
+        lambda pid, c, token: creada.append(pid) or {}
+    )
+    parchado = []
+    panel._actualizar_estado_shot = (
+        lambda resuelto, nuevo_id, nuevo_nombre, token: parchado.append(
+            (nuevo_id, nuevo_nombre)
+        )
+        and None
+    )
+    resuelto = {"project_id": "pid", "chapter_id": "cid", "shot_id": "sid"}
+
+    panel._trabajo_cambio_estado({"p": "d"}, "T", resuelto, campos)
+
+    assert panel._escritura_trabajo["estado"] == "ok"
+    assert panel._escritura_trabajo["mensaje"] == "Estado cambiado."
+    assert creada == ["pid"]
+    assert parchado == [("e2", "ENTREGA")]
+
+
+# ---------------------------------------------------------------------------
+# v1.7.0 — TAREA B.3: crop 16:9 + subida 1280×720
+# ---------------------------------------------------------------------------
+
+
+def test_rect_crop_central():
+    from SamanTools import panel_comentarios
+
+    # Ya 16:9 -> rect completo.
+    assert panel_comentarios._rect_crop_central(1600, 900) == (0, 0, 1600, 900)
+    # Horizontal 4:3 -> recorta ancho (centrado).
+    assert panel_comentarios._rect_crop_central(1600, 1200) == (0, 150, 1600, 900)
+    # Vertical 9:16 -> recorta alto.
+    assert panel_comentarios._rect_crop_central(900, 1600) == (0, 547, 900, 506)
+    # Cuadrada.
+    x, y, w, h = panel_comentarios._rect_crop_central(1000, 1000)
+    assert (x, w) == (0, 1000)
+    assert (y, h) == (219, 562)
+    # Degenerados no rompen.
+    assert panel_comentarios._rect_crop_central(0, 0) == (0, 0, 0, 0)
+
+
+def test_trabajo_subir_imagen_publica_ok(tmp_path, monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda d, t, config=None: {
+            "project_id": "pid",
+            "chapter_id": "cid",
+            "shot_id": "sid",
+            "shot": {},
+        },
+    )
+    subidas = []
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_upload_media_bearer",
+        lambda url, datos, token, content_type: subidas.append(url) or {"name": "x"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_get_con_bearer",
+        lambda url, token: {"downloadTokens": "tok1,tok2"},
+    )
+    creadas = []
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_post_json_bearer",
+        lambda url, payload, token: creadas.append(payload) or {"name": "doc"},
+    )
+    jpg = str(tmp_path / "cap.jpg")
+    with open(jpg, "wb") as fh:
+        fh.write(b"JPEGDATA")
+
+    panel._trabajo_subir_imagen(
+        jpg,
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"},
+        "T",
+        "cap.jpg",
+        99,
+        {"email": "a@b.com", "local_id": "uid"},
+    )
+
+    assert panel._escritura_trabajo["estado"] == "ok"
+    assert panel._escritura_trabajo["mensaje"] == "Imagen subida."
+    assert subidas  # se llamó el upload del jpg a storage
+    assert creadas  # se creó la actividad file_upload
+    values = creadas[0]["fields"]["attachments"]["arrayValue"]["values"]
+    adj = values[0]["mapValue"]["fields"]
+    assert adj["type"] == {"stringValue": "image"}
+    assert "tok1" in adj["url"]["stringValue"]
+    assert adj["name"] == {"stringValue": "cap.jpg"}
+    assert adj["size"] == {"integerValue": "99"}
+
+
+# ---------------------------------------------------------------------------
+# v1.7.0 — TAREA B.4: modo respuesta
+# ---------------------------------------------------------------------------
+
+
+def test_modo_respuesta_flag_y_cancelar():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._input_comentario = _LineEditFake()
+    panel._fila_respuesta = _WidgetFake()
+    panel._label_modo_respuesta = _WidgetFake()
+    panel._reply_padre_id = None
+    panel._reply_padre_autor = ""
+
+    panel._iniciar_modo_respuesta("Ana", "c1")
+    assert panel._reply_padre_id == "c1"
+    assert panel._reply_padre_autor == "Ana"
+    assert panel._label_modo_respuesta.texto == "Respondiendo a Ana"
+    assert panel._fila_respuesta.visible is True
+
+    panel._cancelar_modo_respuesta()
+    assert panel._reply_padre_id is None
+    assert panel._fila_respuesta.visible is False
+
+
+def test_poll_escritura_ok_recarga_y_limpia(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_feed_falsa()
+    panel._input_comentario = _LineEditFake("texto")
+    panel._fila_respuesta = None
+    panel.sesion = {"email": "a@b.com"}
+    panel._escritura_trabajo_en_curso = True
+    panel._escritura_trabajo = {
+        "estado": "ok",
+        "mensaje": "Comentario publicado.",
+        "publicado": True,
+    }
+    panel._estado = lambda *a, **k: None
+    recargadas = []
+    panel._cargar_comentarios_del_plano = lambda: recargadas.append(1)
+    monster = []
+    monkeypatch.setattr(
+        panel_comentarios.QtCore.QTimer,
+        "singleShot",
+        lambda ms, cb: monster.append((ms, cb)),
+    )
+
+    panel._poll_escritura()
+
+    assert panel._escritura_trabajo_en_curso is False
+    assert panel._input_comentario._texto == ""
+    assert recargadas == [1]
+    assert monster == []  # no reprograma
+
+
+def test_poll_escritura_pendiente_reprograma(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._escritura_trabajo_en_curso = True
+    panel._escritura_trabajo = {"estado": "pendiente"}
+    disparos = []
+    monkeypatch.setattr(
+        panel_comentarios.QtCore.QTimer,
+        "singleShot",
+        lambda ms, cb: disparos.append((ms, cb)),
+    )
+
+    panel._poll_escritura()
+
+    assert disparos == [(panel_comentarios._COMENTARIOS_POLL_MS, panel._poll_escritura)]
+    assert panel._escritura_trabajo_en_curso is True
