@@ -84,6 +84,15 @@ estructura = {
 for nombre, ruta in estructura.items():
     check("Estructura: %s" % nombre, os.path.isfile(ruta), "falta %s" % ruta)
 
+# --- 3b. Skills del proyecto enlazadas al repo (symlinks) ---
+skills_proyecto = "/Volumes/wupm/2026/HTLR/.opencode/skills"
+for nombre in ["nuke-breakdown-gizmo", "nuke-gallery-gizmo", "nuke-project-clone",
+               "saman-nuke-tools-maintenance"]:
+    link = os.path.join(skills_proyecto, nombre, "SKILL.md")
+    check("Skill enlazada al repo: %s" % nombre,
+          os.path.isfile(link) and os.path.islink(os.path.dirname(link)),
+          "falta symlink en %s" % skills_proyecto)
+
 # --- 4. Compilación .py (sintaxis válida) ---
 py_files = []
 for root, dirs, files in os.walk(REPO):
