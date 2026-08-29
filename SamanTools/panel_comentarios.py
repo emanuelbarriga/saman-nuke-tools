@@ -40,6 +40,22 @@ _NOMBRE_PANEL = "Comentarios por Plano — SamanTools"
 # hace mas de 50 minutos (el id_token dura 1 hora).
 _VENTANA_REFRESH_SEGUNDOS = 50 * 60
 
+# Techo del canje loopback en background. El canje hace 3 llamadas de red
+# encadenadas (canjear_codigo_autorizacion + loguear_con_google +
+# obtener_usuario), cada una con timeout interno de 10 s; con margen se corta
+# la espera de la UI a los 35 s para no dejarla colgada si la red se traba.
+_LOOPBACK_TIMEOUT_TRABAJO_SEGUNDOS = 35
+
+# Mensaje para el codigo "red" del login Google: la red del estudio bloquea la
+# salida directa a googleapis.com aunque el navegador (proxy) si conecte.
+_MENSAJE_FIREWALL_GOOGLE = (
+    "No se pudo contactar con Google. Parece que la red bloquea la salida "
+    "directa a Google (los dominios googleapis.com). El navegador puede "
+    "funcionar, pero el panel necesita acceso de red directo: verificá el "
+    "firewall/proxy del estudio para oauth2.googleapis.com y "
+    "firestore.googleapis.com."
+)
+
 
 class PanelComentarios(QtWidgets.QWidget):
     """Widget docked: contexto del plano activo + login a VFXFlow."""
@@ -49,6 +65,13 @@ class PanelComentarios(QtWidgets.QWidget):
         # Estado de sesion en memoria: id_token/refresh_token/local_id/email
         # (+ expira_en: epoch aproximado de expiracion del id_token).
         self.sesion = None
+
+        # Estado del canje loopback en worker: evita lanzar dos workers y le
+        # dice al QTimer que solo observe `_loopback_trabajo` (regla Qt: la UI
+        # se toca SOLO desde el hilo principal).
+        self._loopback_trabajo = None
+        self._loopback_trabajo_en_curso = False
+        self._loopback_tiempo_trabajo_inicio = 0.0
 
         self._construir_ui()
         self._mostrar_plano_activo()
@@ -307,6 +330,9 @@ class PanelComentarios(QtWidgets.QWidget):
         self._boton_login.setEnabled(False)
         self._boton_google.setEnabled(False)
         self._limpiar_loopback()
+        self._loopback_trabajo = None
+        self._loopback_trabajo_en_curso = False
+        self._loopback_tiempo_trabajo_inicio = 0.0
         try:
             client_id = vfxflow_auth.obtener_client_id_escritorio()
             verifier, challenge = vfxflow_auth.generar_pkce()
@@ -344,15 +370,18 @@ class PanelComentarios(QtWidgets.QWidget):
         )
 
     def _poll_loopback(self, servidor, redirect_uri, verifier):
-        """Un tick del polling del loopback; si sigue esperando reprograma.
+        """Un tick del polling del loopback; solo lee estado y delega.
 
-        Lee `servidor.resultado`: con `code` canjea el token, loguea en
-        Firebase con `loguear_con_google` (id_token de Google) y registra la
-        sesión; con `error` corta mostrando el motivo. Si aún no hay
-        respuesta reprograma en ~1 s; el timeout (~300 s) corta y cierra el
-        servidor.
+        Regla inicial: NUNCA hace red en el hilo principal. Mientras el worker
+        de canje corre, este metodo solo mira `self._loopback_trabajo` (y el
+        reloj) y aplica el resultado a la UI cuando llega ("ok"/"error") o
+        corta la espera si la red se traba mas de
+        `_LOOPBACK_TIMEOUT_TRABAJO_SEGUNDOS`. Si el navegador todavia no
+        redirigio con el code, reprograma en ~1 s; el timeout global (~300 s)
+        corta el flujo completo y cierra el servidor.
         """
         if time.time() - self._loopback_tiempo_inicio >= self._loopback_tiempo_maximo:
+            self._loopback_trabajo_en_curso = False
             self._limpiar_loopback()
             self._estado(
                 "Se agotó el tiempo para autorizar el inicio de sesión con "
@@ -360,6 +389,10 @@ class PanelComentarios(QtWidgets.QWidget):
                 error=True,
             )
             self._habilitar_botones_login()
+            return
+
+        if self._loopback_trabajo_en_curso:
+            self._vigilar_trabajo_loopback(servidor, redirect_uri, verifier)
             return
 
         resultado = servidor.resultado
@@ -371,9 +404,92 @@ class PanelComentarios(QtWidgets.QWidget):
             return
 
         if "code" in resultado:
+            # El canje (3 llamadas de red x hasta 10 s) corre en un worker
+            # daemon; este tick NO bloquea. El servidor lo cierra el worker al
+            # terminar (o el QTimer al cortar por timeout).
+            self._lanzar_canje(servidor, resultado["code"], redirect_uri, verifier)
+            QtCore.QTimer.singleShot(
+                1000,
+                lambda: self._poll_loopback(servidor, redirect_uri, verifier),
+            )
+            return
+
+        self._limpiar_loopback()
+        self._estado(
+            "Google rechazó el inicio de sesión (%s)."
+            % (resultado.get("error") or "error desconocido"),
+            error=True,
+        )
+        self._habilitar_botones_login()
+
+    def _vigilar_trabajo_loopback(self, servidor, redirect_uri, verifier):
+        """Aplica el fin del worker de canje a la UI (hilo principal si o si).
+
+        No toca widgets desde el hilo del worker: este metodo corre en el
+        QTimer (hilo principal). Con "ok"/"error" publicados por el worker
+        aplica el estado y deja de reprogramar; si sigue "pendiente" pasados
+        ~35 s corta mostrando el mensaje de firewall y deja el worker daemon
+        vivo en background (aceptable: la UI nunca queda esperando).
+        """
+        trabajo = self._loopback_trabajo or {}
+        estado = trabajo.get("estado")
+
+        if estado == "pendiente":
+            if (
+                time.time() - self._loopback_tiempo_trabajo_inicio
+                >= _LOOPBACK_TIMEOUT_TRABAJO_SEGUNDOS
+            ):
+                self._loopback_trabajo_en_curso = False
+                self._limpiar_loopback()
+                self._estado(
+                    self._mensaje_error_login_google(
+                        "El canje de Google tardó demasiado.", "red"
+                    ),
+                    error=True,
+                )
+                self._habilitar_botones_login()
+                return
+            QtCore.QTimer.singleShot(
+                1000,
+                lambda: self._poll_loopback(servidor, redirect_uri, verifier),
+            )
+            return
+
+        self._loopback_trabajo_en_curso = False
+        self._limpiar_loopback()
+        if estado == "ok":
+            self._estado(
+                "Conectado como %s (%s)" % (trabajo["email"], trabajo["rol"])
+            )
+        else:
+            self._estado(
+                self._mensaje_error_login_google(
+                    trabajo.get("mensaje") or "Error en el canje de Google.",
+                    trabajo.get("codigo"),
+                ),
+                error=True,
+            )
+        self._habilitar_botones_login()
+
+    def _lanzar_canje(self, servidor, code, redirect_uri, verifier):
+        """Canjea el code (canjear->loguear->obtener_usuario->registrar) en un
+        thread daemon para que NUNCA congele la UI de Nuke.
+
+        El resultado se publica en `self._loopback_trabajo`
+        ("pendiente"/"ok"/"error") y quien aplica los widgets es SIEMPRE el
+        QTimer (hilo principal). `_registrar_sesion` escribe llaves de sesion
+        en disco: se permite desde el worker (IO corta). Regla Qt respetada:
+        desde el worker NO se toca ningun widget. `self._loopback_client_id`
+        se fija antes de arrancar este worker y ya no cambia.
+        """
+        self._loopback_trabajo_en_curso = True
+        self._loopback_tiempo_trabajo_inicio = time.time()
+        self._loopback_trabajo = {"estado": "pendiente"}
+
+        def trabajo():
             try:
                 tokens = vfxflow_auth.canjear_codigo_autorizacion(
-                    resultado["code"],
+                    code,
                     redirect_uri,
                     verifier,
                     self._loopback_client_id,
@@ -385,23 +501,38 @@ class PanelComentarios(QtWidgets.QWidget):
                     respuesta["local_id"], respuesta["id_token"]
                 )
                 rol = usuario.get("role") or "artist"
-                self._estado("Conectado como %s (%s)" % (email, rol))
+                self._loopback_trabajo = {"estado": "ok", "email": email, "rol": rol}
             except vfxflow_auth.VfxFlowAuthError as e:
-                self._estado(str(e), error=True)
+                self._loopback_trabajo = {
+                    "estado": "error",
+                    "mensaje": str(e),
+                    "codigo": e.codigo,
+                }
             except Exception as e:
-                self._estado("Error inesperado: %s" % e, error=True)
+                self._loopback_trabajo = {
+                    "estado": "error",
+                    "mensaje": "Error inesperado: %s" % e,
+                    "codigo": "desconocido",
+                }
             finally:
-                self._limpiar_loopback()
-                self._habilitar_botones_login()
-            return
+                try:
+                    servidor.cerrar()
+                except Exception:
+                    pass
 
-        self._limpiar_loopback()
-        self._estado(
-            "Google rechazó el inicio de sesión (%s)."
-            % (resultado.get("error") or "error desconocido"),
-            error=True,
-        )
-        self._habilitar_botones_login()
+        threading.Thread(target=trabajo, daemon=True).start()
+
+    def _mensaje_error_login_google(self, mensaje, codigo):
+        """Define que mensaje mostrar segun el tipo de fallo del login Google.
+
+        Cuando la red no conecta ("red": timeout / sin salida a Google) se
+        explica el bloqueo de outbound del estudio, porque el sintoma real es
+        confuso (el navegador funciona, el panel no). Con cualquier otro codigo
+        se muestra el error original de la API.
+        """
+        if codigo == "red":
+            return _MENSAJE_FIREWALL_GOOGLE
+        return mensaje
 
     def _limpiar_loopback(self):
         """Cierra el servidor loopback si sigue vivo (nunca dejar huérfanos).

@@ -107,3 +107,20 @@ def test_abrir_panel_sin_nukescripts_no_rompe(panel_reset, monkeypatch):
         panel_reset.abrir_panel()
     except Exception as e:  # pragma: no cover - el contrato es no lanzar
         raise AssertionError("abrir_panel lanzo sin nukescripts: %r" % e)
+
+
+def test_mensaje_error_login_google_firewall():
+    """El fallo de red del canje loopback se explica, el resto se pasa tal cual.
+
+    Se instancia con `__new__` (sin __init__) para no levantar un QApplication
+    en el runner: `_mensaje_error_login_google` no depende de widgets.
+    """
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    mensaje_firewall = panel._mensaje_error_login_google("x", "red")
+    assert "firewall" in mensaje_firewall
+    assert "googleapis.com" in mensaje_firewall
+    assert panel._mensaje_error_login_google("x", "http") == "x"
