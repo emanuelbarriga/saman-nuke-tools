@@ -251,6 +251,44 @@ def _abrir(req, timeout=TIMEOUT_SEGUNDOS):
     return _opener().open(req, timeout=timeout)
 
 
+def _levantar_error_red(mensaje_generico):
+    """Convierte la excepcion de apertura de red en VfxFlowAuthError clasificado.
+
+    Distingue el fallo de SSL (certificados) del resto: el usuario ve "red" en
+    ambos por el mensaje generico, pero el codigo "ssl" permite al panel
+    mostrar instrucciones distintas (probar diagnostico_red / actualizar CA).
+    """
+    # El tipo real viene como e.reason; esta funcion se llama dentro del
+    # except, asi que la excepcion activa ya fue capturada por el caller que
+    # invoca sys.exc_info.
+    import sys as _sys
+
+    _, exc, _ = _sys.exc_info()
+    razon = getattr(exc, "reason", exc)
+    try:
+        import ssl
+
+        if isinstance(razon, ssl.SSLCertVerificationError):
+            raise VfxFlowAuthError(
+                "No se pudo verificar el certificado SSL de VFXFlow/Google "
+                "(CERTIFICATE_VERIFY_FAILED). El Python de Nuke puede no tener "
+                "los certificados raíz. Corré SamanTools.diagnostico_red.",
+                codigo="ssl",
+            )
+    except VfxFlowAuthError:
+        raise
+    except Exception:
+        pass
+    raise VfxFlowAuthError(mensaje_generico, codigo="red")
+    """Abre `req` con el opener configurado y un timeout.
+
+    Unico punto de apertura de red del modulo: los transportes pasan por aca
+    para que `_opener()` resuelva el proxy una sola vez. Es el extension point
+    que parchean los tests (en lugar de `urllib.request.urlopen`).
+    """
+    return _opener().open(req, timeout=timeout)
+
+
 def _post_json(url, payload, api_key):
     """POST JSON y devuelve el objeto parseado.
 
@@ -268,9 +306,8 @@ def _post_json(url, payload, api_key):
     except urllib.error.HTTPError as e:
         _levantar_error_http(e, es_firestore=False)
     except (urllib.error.URLError, socket.timeout):
-        raise VfxFlowAuthError(
-            "No se pudo contactar VFXFlow (revisá tu conexión a internet).",
-            codigo="red",
+        _levantar_error_red(
+            "No se pudo contactar VFXFlow (revisá tu conexión a internet)."
         )
 
     try:
@@ -321,9 +358,8 @@ def _post_form(url, datos):
         codigo, mensaje = _leer_error_oauth(e)
         return {"estado": "error", "codigo": codigo, "mensaje": mensaje}
     except (urllib.error.URLError, socket.timeout):
-        raise VfxFlowAuthError(
-            "No se pudo contactar Google (revisá tu conexión a internet).",
-            codigo="red",
+        _levantar_error_red(
+            "No se pudo contactar Google (revisá tu conexión a internet)."
         )
 
     try:
@@ -350,9 +386,8 @@ def _get_con_bearer(url, id_token):
         # _levantar_error_http lanza (401/http) o devuelve None (404).
         return _levantar_error_http(e, es_firestore=True)
     except (urllib.error.URLError, socket.timeout):
-        raise VfxFlowAuthError(
-            "No se pudo contactar VFXFlow (revisá tu conexión a internet).",
-            codigo="red",
+        _levantar_error_red(
+            "No se pudo contactar VFXFlow (revisá tu conexión a internet)."
         )
 
     try:
