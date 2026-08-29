@@ -812,3 +812,164 @@ def test_mensaje_error_resolucion():
         {"error": "plano_no_encontrado", "plano": "008_00100"}
     )
     assert panel._mensaje_error_resolucion(None)
+
+
+# ---------------------------------------------------------------------------
+# Poll del comp activo: refresh automático al cambiar de plano (bug v1.6.2)
+# ---------------------------------------------------------------------------
+
+
+def _panel_con_poll():
+    """PanelComentarios con el estado mínimo del poll (sin QApplication)."""
+    from SamanTools import panel_comentarios
+
+    p = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    p._root_anterior = "HTLR_107_008_00000_V01.mov"
+    p._plano_anterior = None
+    p._comentarios_trabajo_en_curso = False
+    p.sesion = None
+    return p
+
+
+def test_chequear_cambio_plano_no_hace_nada_si_root_igual(monkeypatch):
+    monkeypatch.setitem(nuke._estado, "root_name", "HTLR_107_008_00100_V01.mov")
+    panel = _panel_con_poll()
+    panel._root_anterior = "HTLR_107_008_00100_V01.mov"
+    llamado = []
+    panel._mostrar_plano_activo = lambda: llamado.append("mostrar")
+    panel._cargar_comentarios_del_plano = lambda: llamado.append("cargar")
+
+    panel._chequear_cambio_plano()
+
+    assert llamado == []  # root igual: no tocar nada
+
+
+def test_chequear_cambio_plano_refresca_y_recarga_al_cambiar(monkeypatch):
+    monkeypatch.setitem(nuke._estado, "root_name", "HTLR_107_008_00100_V01.mov")
+    panel = _panel_con_poll()
+    panel.sesion = {"email": "a@b.com", "id_token": "ID"}
+    panel._id_token_actual = lambda: "TOKEN_ID"
+    llamado = []
+    panel._mostrar_plano_activo = lambda: llamado.append("mostrar")
+    panel._cargar_comentarios_del_plano = lambda: llamado.append("cargar")
+
+    panel._chequear_cambio_plano()
+
+    assert llamado == ["mostrar", "cargar"]
+    assert panel._root_anterior == "HTLR_107_008_00100_V01.mov"
+    assert panel._plano_anterior["plano"] == "008_00100"
+
+
+def test_chequear_cambio_plano_sin_sesion_no_recarga(monkeypatch):
+    monkeypatch.setitem(nuke._estado, "root_name", "HTLR_107_008_00100_V01.mov")
+    panel = _panel_con_poll()  # sin sesión
+    llamado = []
+    panel._mostrar_plano_activo = lambda: llamado.append("mostrar")
+    panel._cargar_comentarios_del_plano = lambda: llamado.append("cargar")
+
+    panel._chequear_cambio_plano()
+
+    assert llamado == ["mostrar"]  # solo refresca labels, sin fetch
+    assert panel._root_anterior == "HTLR_107_008_00100_V01.mov"
+
+
+def test_chequear_cambio_plano_sin_token_vigente_no_recarga(monkeypatch):
+    monkeypatch.setitem(nuke._estado, "root_name", "HTLR_107_008_00100_V01.mov")
+    panel = _panel_con_poll()
+    panel.sesion = {"email": "a@b.com", "id_token": ""}
+    panel._id_token_actual = lambda: None
+    llamado = []
+    panel._mostrar_plano_activo = lambda: llamado.append("mostrar")
+    panel._cargar_comentarios_del_plano = lambda: llamado.append("cargar")
+
+    panel._chequear_cambio_plano()
+
+    assert llamado == ["mostrar"]  # sesión sin token vigente: no recargar
+
+
+def test_chequear_cambio_plano_worker_en_curso_no_recarga(monkeypatch):
+    monkeypatch.setitem(nuke._estado, "root_name", "HTLR_107_008_00100_V01.mov")
+    panel = _panel_con_poll()
+    panel.sesion = {"email": "a@b.com", "id_token": "ID"}
+    panel._id_token_actual = lambda: "TOKEN_ID"
+    panel._comentarios_trabajo_en_curso = True  # ya hay un worker en vuelo
+    llamado = []
+    panel._mostrar_plano_activo = lambda: llamado.append("mostrar")
+    panel._cargar_comentarios_del_plano = lambda: llamado.append("cargar")
+
+    panel._chequear_cambio_plano()
+
+    assert llamado == ["mostrar"]  # no se dispara fetch duplicado
+
+
+def test_chequear_cambio_plano_root_sin_nombre_no_rompe(monkeypatch):
+    monkeypatch.setitem(nuke._estado, "root_name", "")
+    panel = _panel_con_poll()
+    panel.sesion = {"email": "a@b.com", "id_token": "ID"}
+    panel._id_token_actual = lambda: "TOKEN_ID"
+    llamado = []
+    panel._mostrar_plano_activo = lambda: llamado.append("mostrar")
+    panel._cargar_comentarios_del_plano = lambda: llamado.append("cargar")
+
+    panel._chequear_cambio_plano()
+
+    # Con comp cerrado se refrescan las etiquetas a "—" y, al haber sesión, se
+    # dispara el camino de limpieza del feed ("Plano no identificado") sin
+    # tocar la red: `_cargar_comentarios_del_plano` corta en plano None.
+    assert llamado == ["mostrar", "cargar"]
+
+
+# ---------------------------------------------------------------------------
+# Tema oscuro (v1.6.2): paleta Nuke + avatar sin reborde + contraste
+# ---------------------------------------------------------------------------
+
+
+def test_estilo_panel_oscuro_con_selectores():
+    from SamanTools import panel_comentarios
+
+    estilo = panel_comentarios._ESTILO_PANEL
+    assert "#2b2b2b" in estilo                    # fondo del panel
+    assert "QFrame#cardActividad" in estilo       # selector de las cards
+    assert "chipEstado" in estilo                 # badges de estados
+    assert "avatarActividad" in estilo            # inicial sin reborde
+    assert "#1f8ecd" in estilo                    # acento azul de Nuke
+    assert "background-color: #1e1e1e" in estilo  # inputs oscuros
+
+
+def test_estilo_panel_no_tiene_border_radius_circular_avatar():
+    from SamanTools import panel_comentarios
+
+    # El avatar v1.6.2 NO tiene reborde redondeado: la inicial es texto plano.
+    assert "border-radius:12px" not in panel_comentarios._ESTILO_PANEL
+    assert "border-radius: 12px" not in panel_comentarios._ESTILO_PANEL
+
+
+def test_mensaje_actividad_error_usa_color_contraste():
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_feed_falsa()
+    panel._mostrar_mensaje_actividad("boom", error=True)
+    assert panel_comentarios._COLOR_ERROR in panel._label_mensaje_actividad.style
+
+
+def test_mensaje_actividad_comun_usa_color_secundario():
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_feed_falsa()
+    panel._mostrar_mensaje_actividad("sin actividad")
+    assert panel_comentarios._COLOR_MENSAJE in panel._label_mensaje_actividad.style
+
+
+def test_estado_error_usa_color_contraste():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._etiqueta_estado = _LabelFake()
+    panel._estado("falló", error=True)
+    assert panel_comentarios._COLOR_ERROR in panel._etiqueta_estado.style
+    panel._estado("ok")
+    assert panel._etiqueta_estado.style == ""  # sin error: vuelve al default

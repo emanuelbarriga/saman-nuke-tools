@@ -81,10 +81,144 @@ _MENSAJE_SIN_ACTIVIDAD = "Sin actividad para este plano."
 # Intervalo del QTimer que observa el resultado del fetch de actividad.
 _COMENTARIOS_POLL_MS = 500
 
+# Intervalo del QTimer que observa el comp activo (cambio de plano).
+_POLL_PLANO_MS = 1500
+
+# Colores de la paleta oscura usados en strings dinamicos (el resto vive en
+# _ESTILO_PANEL). Se aislan para poder probarlos sin QApplication.
+_COLOR_ERROR = "#ff6b6b"
+_COLOR_MENSAJE = "#9a9a9a"
+
 # Banderas de tiempo relativo (espanol) para el feed de actividad.
 _DIA_SEGUNDOS = 86400
 _MES_SEGUNDOS = 30 * _DIA_SEGUNDOS
 _ANIO_SEGUNDOS = 365 * _DIA_SEGUNDOS
+
+# Paleta oscura acorde a Nuke (fondo gris oscuro, acento azul #1f8ecd).
+# Se aplica SOLO a este widget (`self.setStyleSheet`), NUNCA global: no se
+# tocan los skins de Nuke ni de otros paneles.
+_ESTILO_PANEL = """
+QWidget {
+    background-color: #2b2b2b;
+    color: #dcdcdc;
+    font-size: 12px;
+}
+QLabel {
+    background: transparent;
+    color: #dcdcdc;
+}
+QLabel#autorActividad {
+    font-weight: bold;
+}
+QLabel#avatarActividad {
+    color: #1f8ecd;
+    font-weight: bold;
+}
+QLabel#rolActividad,
+QLabel#tiempoActividad,
+QLabel#versionActividad {
+    color: #9a9a9a;
+}
+QGroupBox {
+    background-color: transparent;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    margin-top: 12px;
+    color: #d0d0d0;
+    font-weight: bold;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+}
+QLineEdit {
+    background-color: #1e1e1e;
+    color: #ffffff;
+    border: 1px solid #4a4a4a;
+    border-radius: 3px;
+    padding: 3px 6px;
+    selection-background-color: #1f8ecd;
+    selection-color: #ffffff;
+}
+QLineEdit:focus {
+    border: 1px solid #1f8ecd;
+}
+QLineEdit:disabled {
+    background-color: #262626;
+    color: #6a6a6a;
+}
+QComboBox {
+    background-color: #1e1e1e;
+    color: #ffffff;
+    border: 1px solid #4a4a4a;
+    border-radius: 3px;
+    padding: 2px 8px;
+}
+QComboBox:disabled {
+    background-color: #262626;
+    color: #6a6a6a;
+}
+QComboBox QAbstractItemView {
+    background-color: #2b2b2b;
+    color: #dcdcdc;
+    border: 1px solid #4a4a4a;
+    selection-background-color: #1f8ecd;
+}
+QPushButton {
+    background-color: #3a3a3a;
+    color: #e6e6e6;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 4px 10px;
+}
+QPushButton:hover {
+    background-color: #444444;
+}
+QPushButton:pressed {
+    background-color: #4a4a50;
+}
+QPushButton:disabled {
+    background-color: #262626;
+    color: #6a6a6a;
+}
+QFrame#cardActividad {
+    background-color: #333333;
+    border: 1px solid #4a4a4a;
+    border-radius: 6px;
+    padding: 6px;
+}
+QLabel#chipEstado {
+    background-color: #3e3e3e;
+    border: 1px solid #5a5a5a;
+    border-radius: 9px;
+    padding: 2px 8px;
+    color: #e8e8e8;
+}
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+QScrollBar:vertical {
+    background: #2b2b2b;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #4a4a4a;
+    border-radius: 5px;
+    min-height: 20px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+"""
 
 
 # --------------------------------------------------------- helpers puros
@@ -338,6 +472,7 @@ class PanelComentarios(QtWidgets.QWidget):
         self._comentarios_trabajo_en_curso = False
 
         self._construir_ui()
+        self._arrancar_poll_plano()
         self._mostrar_plano_activo()
         self._autologin_si_hay_sesion()
         self._cargar_comentarios_del_plano()
@@ -431,6 +566,13 @@ class PanelComentarios(QtWidgets.QWidget):
         self._scroll_actividad = QtWidgets.QScrollArea(seccion_comentarios)
         self._scroll_actividad.setWidgetResizable(True)
         self._scroll_actividad.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._scroll_actividad.setAutoFillBackground(False)
+        try:
+            # el viewport por defecto es blanco en macOS: se deja transparente
+            # para que se vea el fondo oscuro del panel (el QSS lo refuerza).
+            self._scroll_actividad.viewport().setAutoFillBackground(False)
+        except Exception:
+            pass
         self._widget_contenido_actividad = QtWidgets.QWidget(self._scroll_actividad)
         self._layout_actividad = QtWidgets.QVBoxLayout(self._widget_contenido_actividad)
         self._layout_actividad.setContentsMargins(0, 0, 0, 0)
@@ -450,6 +592,9 @@ class PanelComentarios(QtWidgets.QWidget):
 
         # Estado inicial: sin sesión, se muestra el login (la sesión se oculta).
         self._aplicar_estado_sesion_ui()
+
+        # Tema oscuro acorde a Nuke, SOLO en este widget (nunca global).
+        self.setStyleSheet(_ESTILO_PANEL)
 
     def _fila_contexto(self, grilla, fila, nombre):
         grilla.addWidget(QtWidgets.QLabel(nombre), fila, 0)
@@ -519,6 +664,54 @@ class PanelComentarios(QtWidgets.QWidget):
         if proyecto and capitulo is not None and plano:
             return "{0}_{1}_{2}".format(proyecto, capitulo, plano)
         return "—"
+
+    def _arrancar_poll_plano(self):
+        """Levanta el QTimer que detecta el cambio de comp activo.
+
+        Cada `_POLL_PLANO_MS` compara `nuke.root().name()` con
+        `_root_anterior`; si cambió, `_chequear_cambio_plano` refresca las
+        etiquetas y recarga el feed (bug reportado: el feed no se actualizaba
+        al abrir otro plano). Corre SIEMPRE en el hilo principal (QTimer). El
+        root se captura con try/except para no romper bajo pytest (donde `nuke`
+        es un stub que responde siempre). El timer vive mientras el widget;
+        Nuke lo descarta al cerrar el panel.
+        """
+        try:
+            self._root_anterior = nuke.root().name() or ""
+        except Exception:
+            self._root_anterior = ""
+        self._plano_anterior = self._plano_activo()
+        self._timer_plano = QtCore.QTimer(self)
+        self._timer_plano.setInterval(_POLL_PLANO_MS)
+        self._timer_plano.timeout.connect(self._chequear_cambio_plano)
+        self._timer_plano.start()
+
+    def _chequear_cambio_plano(self):
+        """Tick del poll del comp activo: refresca y recarga si cambió el root.
+
+        Lee `nuke.root().name()` y lo compara con `_root_anterior` (la fuente
+        de verdad del cambio; `_plano_activo()` se re-parsea como dato para el
+        fetch). Si cambió: actualiza el root guardado, refresca las etiquetas
+        de contexto/header y recarga el feed automáticamente SOLO si hay una
+        sesión con id_token vigente (sin sesión el feed se actualiza recién
+        con ↻). No recarga si hay un worker de actividad en vuelo. Con el comp
+        cerrado (`root` sin nombre), `_mostrar_plano_activo()` ya pone "—";
+        tampoco se dispara red con plano None.
+        """
+        try:
+            nombre = nuke.root().name() or ""
+        except Exception:
+            return
+        if nombre == self._root_anterior:
+            return
+        self._root_anterior = nombre
+        self._plano_anterior = self._plano_activo()
+        self._mostrar_plano_activo()
+        if getattr(self, "_comentarios_trabajo_en_curso", False):
+            return  # no molestar mientras hay un worker de actividad en vuelo
+        sesion = getattr(self, "sesion", None)
+        if sesion and sesion.get("email") and self._id_token_actual():
+            self._cargar_comentarios_del_plano()
 
     # --------------------------------------------------------------- login
 
@@ -1176,36 +1369,38 @@ class PanelComentarios(QtWidgets.QWidget):
                 widget.setParent(None)
 
     def _crear_card_actividad(self, actividad):
-        """Construye la QFrame de una actividad (header + cuerpo por tipo)."""
+        """Construye la QFrame de una actividad (header + cuerpo por tipo).
+
+        Todo el look vive en `_ESTILO_PANEL` (selectores por objectName); el
+        avatar es la INICIAL como texto plano "[E]" (sin reborde redondeado),
+        como en el mock original.
+        """
         card = QtWidgets.QFrame(self._widget_contenido_actividad)
-        card.setStyleSheet(
-            "QFrame { border:1px solid #d4d4d4; border-radius:6px; "
-            "background-color:#fafafa; padding:6px; }"
-        )
+        card.setObjectName("cardActividad")
+        card.setFrameShape(QtWidgets.QFrame.NoFrame)
         lay_card = QtWidgets.QVBoxLayout(card)
         lay_card.setContentsMargins(8, 6, 8, 6)
 
         # Fila avatar (inicial) + autor + rol + tiempo relativo.
         fila_autor = QtWidgets.QHBoxLayout()
-        avatar = QtWidgets.QLabel(_inicial_avatar(actividad.get("userName")), card)
-        avatar.setFixedSize(24, 24)
-        avatar.setAlignment(QtAlignment.AlignCenter)
-        avatar.setStyleSheet(
-            "QLabel { background-color:#4a6fa5; color:#ffffff; "
-            "border-radius:12px; font-weight:bold; }"
+        avatar = QtWidgets.QLabel(
+            "[{0}]".format(_inicial_avatar(actividad.get("userName"))), card
         )
+        avatar.setObjectName("avatarActividad")
         fila_autor.addWidget(avatar)
         autor = QtWidgets.QLabel(actividad.get("userName") or "Anónimo", card)
-        autor.setStyleSheet("font-weight: bold;")
+        autor.setObjectName("autorActividad")
         fila_autor.addWidget(autor)
         rol = actividad.get("userRole") or ""
         if rol:
             label_rol = QtWidgets.QLabel("[{0}]".format(rol), card)
-            label_rol.setStyleSheet("color:#888888;")
+            label_rol.setObjectName("rolActividad")
             fila_autor.addWidget(label_rol)
         fila_autor.addStretch(1)
-        tiempo = QtWidgets.QLabel(_tiempo_relativo(actividad.get("createdAt")), card)
-        tiempo.setStyleSheet("color:#888888;")
+        tiempo = QtWidgets.QLabel(
+            _tiempo_relativo(actividad.get("createdAt")), card
+        )
+        tiempo.setObjectName("tiempoActividad")
         fila_autor.addWidget(tiempo)
         lay_card.addLayout(fila_autor)
 
@@ -1228,17 +1423,18 @@ class PanelComentarios(QtWidgets.QWidget):
             lay_card.addLayout(fila_estados)
         if cuerpo.get("versiones"):
             label_version = QtWidgets.QLabel(cuerpo["versiones"], card)
-            label_version.setStyleSheet("color:#555555;")
+            label_version.setObjectName("versionActividad")
             lay_card.addWidget(label_version)
         return card
 
     def _chip_estado(self, texto, parent):
-        """Label estilo chip para los badges de estados (nunca hardcodeados)."""
+        """Label estilo chip para los badges de estados (nunca hardcodeados).
+
+        El look (fondo/borde/texto) lo define el selector `QLabel#chipEstado`
+        de `_ESTILO_PANEL`, no un color hardcodeado acá.
+        """
         chip = QtWidgets.QLabel(str(texto), parent)
-        chip.setStyleSheet(
-            "QLabel { background-color:#e8eef7; border:1px solid #b8cbe0; "
-            "border-radius:9px; padding:2px 8px; color:#2c3e50; }"
-        )
+        chip.setObjectName("chipEstado")
         chip.setAlignment(QtAlignment.AlignCenter)
         return chip
 
@@ -1299,9 +1495,9 @@ class PanelComentarios(QtWidgets.QWidget):
             return
         label.setText(texto)
         label.setStyleSheet(
-            "color:#c0392b;font-style:italic;"
+            "color:{0};font-style:italic;".format(_COLOR_ERROR)
             if error
-            else "color:#888;font-style:italic;"
+            else "color:{0};font-style:italic;".format(_COLOR_MENSAJE)
         )
         self._layout_actividad.addWidget(label)
         self._layout_actividad.addStretch(1)
@@ -1310,7 +1506,7 @@ class PanelComentarios(QtWidgets.QWidget):
 
     def _estado(self, texto, error=False):
         self._etiqueta_estado.setStyleSheet(
-            "color: #c0392b;" if error else ""
+            "color: {0};".format(_COLOR_ERROR) if error else ""
         )
         self._etiqueta_estado.setText(texto)
 
