@@ -3,6 +3,9 @@
 Herramientas globales de Nuke para el estudio (multiplataforma: macOS, Windows, Linux).
 Incluye los nodos **Breakdown**, **Review**, **Rutas** y el menú **SamanTools** (ChangeColorspace).
 
+> **Antes de tocar el código**: lee [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) —
+> decisiones de diseño, flujo de actualización, errores históricos y reglas operativas.
+
 ## Qué contiene
 
 ```

@@ -51,6 +51,7 @@ Siempre devolver:
 ## References
 
 - `assets/verificar_salud.py` — script de salud/indicadores (ejecutar primero).
+- Repo: `/Volumes/wupm/2026/saman-nuke-tools/docs/ARQUITECTURA.md` — decisiones de diseño, errores históricos, reglas operativas.
 - Repo: `/Volumes/wupm/2026/saman-nuke-tools/VERSIONING.md` — política SemVer.
 - Repo: `/Volumes/wupm/2026/saman-nuke-tools/README.md` — flujos de instalación/actualización.
 - Repo: `/Volumes/wupm/2026/saman-nuke-tools/instalar_script_editor.py` — instalador oficial.
