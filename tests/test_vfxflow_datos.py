@@ -626,3 +626,88 @@ def test_post_json_bearer_404_devuelve_none(monkeypatch):
         "TOKEN_ID",
     )
     assert res is None
+
+
+# --------------------------------------------------------------------------
+# obtener_colores_estados (projectStates -> {stateId: color})
+# --------------------------------------------------------------------------
+
+
+def test_obtener_colores_estados_mapa(monkeypatch):
+    transporte = _TransporteRunQuery(
+        {
+            "projectStates": _respuesta_runquery(
+                [
+                    _doc(
+                        NOMBRE_PROYECTO + "/projectStates/est1",
+                        {"projectId": "lxYgN96Zk8zyhsFEABOf", "color": "#f59e0b"},
+                    ),
+                    _doc(
+                        NOMBRE_PROYECTO + "/projectStates/est2",
+                        {"projectId": "lxYgN96Zk8zyhsFEABOf", "color": "#22c55e"},
+                    ),
+                ]
+            )
+        }
+    )
+    _parchar_abrir(monkeypatch, transporte)
+
+    res = vfxflow_datos.obtener_colores_estados(
+        "lxYgN96Zk8zyhsFEABOf", "TOKEN_ID", config=_CONFIG
+    )
+    assert res == {"est1": "#f59e0b", "est2": "#22c55e"}
+    estados = [p for p in transporte.pedidos if p[0] == "projectStates"]
+    assert estados
+    assert estados[0][1]["structuredQuery"]["from"][0]["collectionId"] == "projectStates"
+
+
+def test_obtener_colores_estados_omite_docs_sin_color(monkeypatch):
+    transporte = _TransporteRunQuery(
+        {
+            "projectStates": _respuesta_runquery(
+                [
+                    _doc(
+                        NOMBRE_PROYECTO + "/projectStates/est1",
+                        {"projectId": "lxYgN96Zk8zyhsFEABOf", "color": "#f59e0b"},
+                    ),
+                    _doc(
+                        NOMBRE_PROYECTO + "/projectStates/est2",
+                        {"projectId": "lxYgN96Zk8zyhsFEABOf"},
+                    ),
+                ]
+            )
+        }
+    )
+    _parchar_abrir(monkeypatch, transporte)
+
+    res = vfxflow_datos.obtener_colores_estados(
+        "lxYgN96Zk8zyhsFEABOf", "TOKEN_ID", config=_CONFIG
+    )
+    assert res == {"est1": "#f59e0b"}
+
+
+def test_obtener_colores_estados_vacio_devuelve_vacio(monkeypatch):
+    transporte = _TransporteRunQuery(
+        {"projectStates": _respuesta_runquery([])}
+    )
+    _parchar_abrir(monkeypatch, transporte)
+
+    assert (
+        vfxflow_datos.obtener_colores_estados(
+            "lxYgN96Zk8zyhsFEABOf", "TOKEN_ID", config=_CONFIG
+        )
+        == {}
+    )
+
+
+def test_obtener_colores_estados_error_devuelve_vacio(monkeypatch):
+    """Ante error http/token NUNCA rompe el feed: devuelve {}."""
+    transporte = _TransporteRunQuery({"projectStates": 401})
+    _parchar_abrir(monkeypatch, transporte)
+
+    assert (
+        vfxflow_datos.obtener_colores_estados(
+            "lxYgN96Zk8zyhsFEABOf", "TOKEN_ID", config=_CONFIG
+        )
+        == {}
+    )

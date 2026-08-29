@@ -80,6 +80,9 @@ _CAMPOS_ACTIVIDAD = (
     "taskName",
     "completed",
     "userPhotoURL",
+    "metadata",
+    "quotedCommentId",
+    "userId",
     "timestamp",
 )
 
@@ -302,6 +305,8 @@ def listar_actividad(project_id, shot_id, id_token, config=None):
         if campos.get("type") not in _TIPOS_ACTIVIDAD:
             continue
         item = {clave: campos.get(clave) for clave in _CAMPOS_ACTIVIDAD}
+        # id del documento (para agrupar replies bajo su comentario padre).
+        item["id"] = resultado.get("id")
         if not item.get("userRole") and item.get("role"):
             item["userRole"] = item["role"]
         actividad.append(item)
@@ -316,3 +321,32 @@ def listar_comentarios(project_id, shot_id, id_token, config=None):
     el alias se mantiene para no romper llamadas previas al módulo.
     """
     return listar_actividad(project_id, shot_id, id_token, config=config)
+
+
+def obtener_colores_estados(project_id, id_token, config=None):
+    """Mapa {stateId: color} de la coleccion projectStates del proyecto.
+
+    Consulta `projects/{project_id}/projectStates` (docs con campo `color`,
+    p.ej. "#f59e0b") y devuelve {id_doc: color}. NUNCA rompe el feed: ante
+    error de red/http/token, coleccion ausente o documentos sin `color`
+    devuelve {} (los chips caen al color neutral). Puro.
+    """
+    try:
+        cfg = config or vfxflow_config.obtener_config_efectiva()
+        resultados = _buscar_por_campo(
+            "projects/{0}/projectStates".format(project_id),
+            "projectId",
+            project_id,
+            id_token,
+            config=cfg,
+            limite=100,
+        )
+    except Exception:
+        return {}
+    colores = {}
+    for resultado in resultados:
+        color = (resultado.get("campos") or {}).get("color")
+        doc_id = resultado.get("id")
+        if doc_id and color:
+            colores[doc_id] = str(color)
+    return colores

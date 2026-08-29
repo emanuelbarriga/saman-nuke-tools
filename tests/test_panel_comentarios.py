@@ -342,7 +342,9 @@ def _panel_con_feed_falsa():
     p._label_mensaje_actividad = _LabelFake()
     p._comentarios_trabajo_en_curso = False
     p._comentarios_trabajo = None
-    p._crear_card_actividad = lambda actividad: actividad
+    p._crear_card_actividad = (
+        lambda actividad, colores_estados=None, imagenes=None, es_respuesta=False: actividad
+    )
     p._limpiar_feed = _limpiar
     return p
 
@@ -668,6 +670,11 @@ def test_cargar_comentarios_con_sesion_publica_cards(monkeypatch):
             }
         ],
     )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "obtener_colores_estados",
+        lambda pid, token, config=None: {},
+    )
 
     panel._cargar_comentarios_del_plano()
 
@@ -936,6 +943,7 @@ def test_estilo_panel_oscuro_con_selectores():
     assert "avatarActividad" in estilo            # inicial sin reborde
     assert "#1f8ecd" in estilo                    # acento azul de Nuke
     assert "background-color: #1e1e1e" in estilo  # inputs oscuros
+    assert "#334155" in estilo                    # bg-slate-700 (cards/roles)
 
 
 def test_estilo_panel_no_tiene_border_radius_circular_avatar():
@@ -1392,3 +1400,422 @@ def test_poll_refs_pendiente_reprograma(monkeypatch):
 
     assert disparos == [(panel_comentarios._COMENTARIOS_POLL_MS, panel._poll_refs)]
     assert panel._refs_trabajo_en_curso is True
+
+
+# ---------------------------------------------------------------------------
+# v1.6.5 — TAREA 1: ruta del nodo Read con convención del estudio
+# ---------------------------------------------------------------------------
+
+
+def test_ruta_read_ref_con_ep_y_carpeta():
+    from SamanTools import panel_comentarios
+
+    comp = (
+        "/Volumes/wupm/2026/HTLR/COMP/EP_102/HTLR_102_023_00100_comp_SAMAN/"
+        "HTLR_102_023_00100_comp_SAMAN_V01.nk"
+    )
+    esperado = (
+        "[python {PYTHON_COMP}]/EP_102/HTLR_102_023_00100_comp_SAMAN/"
+        "ref/HTLR_102_023_0100.png"
+    )
+    assert panel_comentarios._ruta_read_ref(comp, "HTLR_102_023_0100.png") == esperado
+
+
+def test_ruta_read_ref_sin_ep_usa_capitulo_parseado():
+    from SamanTools import panel_comentarios
+
+    comp = (
+        "/comp/HTLR_107_008_00100_comp_SAMAN/"
+        "HTLR_107_008_00100_comp_SAMAN.nk"
+    )
+    ruta = panel_comentarios._ruta_read_ref(comp, "ref1.png")
+    assert ruta == (
+        "[python {PYTHON_COMP}]/EP_107/HTLR_107_008_00100_comp_SAMAN/ref/ref1.png"
+    )
+
+
+def test_ruta_read_ref_sin_comp_fallback_relativo():
+    from SamanTools import panel_comentarios
+
+    assert panel_comentarios._ruta_read_ref("", "a.png") == "ref/a.png"
+    assert panel_comentarios._ruta_read_ref(None, "a.png") == "ref/a.png"
+    # Ruta con directorio pero sin EP ni capítulo deducible -> relativo.
+    assert panel_comentarios._ruta_read_ref("/tmp/foo.nk", "a.png") == "ref/a.png"
+
+
+def test_ruta_read_ref_adjuntos():
+    from SamanTools import panel_comentarios
+
+    ruta = panel_comentarios._ruta_read_ref(
+        "/Volumes/HTLR/COMP/EP_102/CarpetaX/comp.nk", "adjuntos/cap.png"
+    )
+    assert ruta == (
+        "[python {PYTHON_COMP}]/EP_102/CarpetaX/ref/adjuntos/cap.png"
+    )
+
+
+def test_aplicar_import_refs_usa_convencion_estudio(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    monkeypatch.setitem(
+        nuke._estado,
+        "root_name",
+        "/Volumes/wupm/2026/HTLR/COMP/EP_102/CarpX/CarpX_V01.nk",
+    )
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._etiqueta_estado = _LabelFake()
+    creados = []
+    monkeypatch.setattr(
+        panel_comentarios.nuke,
+        "createNode",
+        lambda tipo: creados.append(nuke.NodoFake(tipo)) or creados[-1],
+    )
+    trabajo = {
+        "estado": "ok",
+        "descargados": [("u", "/v/ref/a.png", "a.png")],
+        "fallidos": [],
+        "directorio": "/v/ref",
+    }
+
+    panel._aplicar_import_refs(trabajo)
+
+    assert creados[0]["file"].valor == (
+        "[python {PYTHON_COMP}]/EP_102/CarpX/ref/a.png"
+    )
+
+
+# ---------------------------------------------------------------------------
+# v1.6.5 — TAREA 2: adjuntos/imágenes en las cards (helpers puros)
+# ---------------------------------------------------------------------------
+
+
+def test_formatear_tamano_bytes():
+    from SamanTools import panel_comentarios
+
+    assert panel_comentarios._formatear_tamano_bytes(114 * 1024) == "114 KB"
+    assert panel_comentarios._formatear_tamano_bytes(560) == "560 B"
+    assert panel_comentarios._formatear_tamano_bytes(0) == "0 B"
+    assert panel_comentarios._formatear_tamano_bytes(None) == ""
+    assert panel_comentarios._formatear_tamano_bytes("no es num") == ""
+
+
+def test_ruta_cache_imagen_estable(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    monkeypatch.setattr(panel_comentarios, "_CACHE_ADJUNTOS_DIR", "/tmp/saman_cache")
+    url = "https://firebasestorage.googleapis.com/o/x.jpg?alt=media&token=abc"
+    a = panel_comentarios._ruta_cache_imagen(url)
+    b = panel_comentarios._ruta_cache_imagen(url)
+    assert a == b
+    assert a.startswith("/tmp/saman_cache/")
+    assert a.endswith(".img")
+    otro = panel_comentarios._ruta_cache_imagen(
+        "https://firebasestorage.googleapis.com/o/y.jpg?alt=media&token=xyz"
+    )
+    assert otro != a
+
+
+def test_cargar_imagen_cacheada_descarga_y_reusa(tmp_path, monkeypatch):
+    from SamanTools import panel_comentarios
+
+    monkeypatch.setattr(panel_comentarios, "_CACHE_ADJUNTOS_DIR", str(tmp_path))
+    url = "https://storage/o/refs%2Fcap.png?alt=media&token=1"
+    pedidos = []
+
+    def _abrir(req, timeout=10):
+        pedidos.append(req)
+        return _RespuestaRefFake(b"IMG")
+
+    ruta = panel_comentarios._cargar_imagen_cacheada(url, abrir=_abrir)
+    assert ruta == panel_comentarios._ruta_cache_imagen(url)
+    assert os.path.exists(ruta)
+    with open(ruta, "rb") as f:
+        assert f.read() == b"IMG"
+
+    # Segunda llamada: reusa la cache (sin red).
+    ruta2 = panel_comentarios._cargar_imagen_cacheada(url, abrir=_abrir)
+    assert ruta2 == ruta
+    assert len(pedidos) == 1
+
+
+def test_cargar_imagen_cacheada_fallo_devuelve_none(tmp_path, monkeypatch):
+    from SamanTools import panel_comentarios
+
+    monkeypatch.setattr(panel_comentarios, "_CACHE_ADJUNTOS_DIR", str(tmp_path))
+
+    def _abrir(req, timeout=10):
+        raise OSError("boom")
+
+    assert (
+        panel_comentarios._cargar_imagen_cacheada(
+            "https://x/o/a?alt=media", abrir=_abrir
+        )
+        is None
+    )
+
+
+def test_cargar_imagenes_adjuntas_solo_imagenes(tmp_path, monkeypatch):
+    from SamanTools import panel_comentarios
+
+    monkeypatch.setattr(panel_comentarios, "_CACHE_ADJUNTOS_DIR", str(tmp_path))
+
+    def _abrir(req, timeout=10):
+        return _RespuestaRefFake(b"X")
+
+    actividad = [
+        {
+            "type": "comment",
+            "attachments": [
+                {"type": "image", "url": "https://x/o/a.jpg?alt=media"},
+                {"type": "file", "url": "https://x/o/doc.pdf?alt=media"},
+            ],
+        },
+        {
+            "type": "file_upload",
+            "attachments": [{"type": "image", "url": "https://x/o/b.png?alt=media"}],
+        },
+    ]
+    rutas = panel_comentarios._cargar_imagenes_adjuntas(actividad, abrir=_abrir)
+    assert set(rutas.keys()) == {
+        "https://x/o/a.jpg?alt=media",
+        "https://x/o/b.png?alt=media",
+    }
+    assert all(os.path.exists(p) for p in rutas.values())
+
+
+def test_linea_adjunto_texto():
+    from SamanTools import panel_comentarios
+
+    archivo = panel_comentarios._linea_adjunto_texto(
+        {
+            "type": "file",
+            "name": "doc.pdf",
+            "size": 114 * 1024,
+            "url": "https://x/o/doc.pdf?alt=media",
+        }
+    )
+    assert "Adjuntó: doc.pdf (114 KB)" in archivo
+    assert "https://x/o/doc.pdf" in archivo
+    assert panel_comentarios._linea_adjunto_texto(
+        {"type": "image", "name": "cap.png"}
+    ) == "[imagen] cap.png"
+
+
+# ---------------------------------------------------------------------------
+# v1.6.5 — TAREA 3: capa estética (helpers puros)
+# ---------------------------------------------------------------------------
+
+
+def test_tiempo_relativo_largo():
+    from datetime import timedelta
+    from SamanTools import panel_comentarios
+
+    ahora = datetime.now(timezone.utc)
+
+    def iso(seg):
+        return (ahora - timedelta(seconds=seg)).isoformat().replace("+00:00", "Z")
+
+    assert panel_comentarios._tiempo_relativo_largo(iso(0)) == "ahora"
+    assert panel_comentarios._tiempo_relativo_largo(iso(61)) == "hace 1 minuto"
+    assert panel_comentarios._tiempo_relativo_largo(iso(125)) == "hace 2 minutos"
+    assert panel_comentarios._tiempo_relativo_largo(iso(3600)) == "hace 1 hora"
+    assert panel_comentarios._tiempo_relativo_largo(iso(7200)) == "hace 2 horas"
+    assert panel_comentarios._tiempo_relativo_largo(iso(86400)) == "hace 1 día"
+    assert panel_comentarios._tiempo_relativo_largo(iso(3 * 86400)) == "hace 3 días"
+    assert panel_comentarios._tiempo_relativo_largo(iso(30 * 86400)) == "hace 1 mes"
+    assert panel_comentarios._tiempo_relativo_largo(iso(61 * 86400)) == "hace 2 meses"
+    assert panel_comentarios._tiempo_relativo_largo(iso(365 * 86400)) == "hace 1 año"
+    assert (
+        panel_comentarios._tiempo_relativo_largo(iso(2 * 365 * 86400)) == "hace 2 años"
+    )
+
+
+def test_dentro_ventana_10min():
+    from datetime import timedelta
+    from SamanTools import panel_comentarios
+
+    ahora = datetime.now(timezone.utc)
+
+    def iso(seg):
+        return (ahora - timedelta(seconds=seg)).isoformat().replace("+00:00", "Z")
+
+    assert panel_comentarios._dentro_ventana_10min(iso(30)) is True
+    assert panel_comentarios._dentro_ventana_10min(iso(60 * 9)) is True
+    assert panel_comentarios._dentro_ventana_10min(iso(60 * 11)) is False
+    assert panel_comentarios._dentro_ventana_10min(iso(30 * 86400)) is False
+    assert panel_comentarios._dentro_ventana_10min("no valido") is False
+    assert panel_comentarios._dentro_ventana_10min(None) is False
+
+
+def test_es_autor():
+    from SamanTools import panel_comentarios
+
+    sesion = {"local_id": "uid1", "email": "e.b@samanestudio.com"}
+    assert panel_comentarios._es_autor({"userId": "uid1", "userName": "E"}, sesion) is True
+    assert panel_comentarios._es_autor({"userId": "otro"}, sesion) is False
+    assert panel_comentarios._es_autor({"userName": "E.B"}, sesion) is True
+    assert panel_comentarios._es_autor({"userName": "X"}, sesion) is False
+    assert panel_comentarios._es_autor({"userId": "uid1"}, None) is False
+
+
+def test_agrupar_actividad():
+    from SamanTools import panel_comentarios
+
+    comentario = {"id": "c1", "type": "comment"}
+    comment2 = {"id": "c2", "type": "comment"}
+    reply1 = {"id": "r1", "type": "reply", "parentId": "c1"}
+    reply2 = {"id": "r2", "type": "reply", "parentId": "c1"}
+    padres, hijas = panel_comentarios._agrupar_actividad(
+        [comentario, reply1, comment2, reply2]
+    )
+    assert [p["id"] for p in padres] == ["c1", "c2"]
+    assert [h["id"] for h in hijas["c1"]] == ["r1", "r2"]
+
+
+def test_verbo_y_glifo_tipo():
+    from SamanTools import panel_comentarios
+
+    assert panel_comentarios._verbo_tipo("comment") == "comentó"
+    assert panel_comentarios._verbo_tipo("desconocido") == ""
+    assert panel_comentarios._glifo_tipo("status_change") == "⇄"
+    assert panel_comentarios._glifo_tipo("otro") == ""
+
+
+def test_cuerpo_actividad_versiones_chip_y_cita():
+    from SamanTools import panel_comentarios
+
+    r = panel_comentarios._cuerpo_actividad(
+        {"type": "version_update", "previousVersion": 1, "newVersion": 2}
+    )
+    assert r["versiones_chip"] == ("V1", "V2")
+    assert r["chips"] is None
+    r2 = panel_comentarios._cuerpo_actividad(
+        {"type": "batch_update", "previousVersion": 1, "newVersion": 1}
+    )
+    assert r2["versiones_chip"] is None
+    con_cita = panel_comentarios._cuerpo_actividad(
+        {
+            "type": "comment",
+            "content": "ok",
+            "metadata": {"quotedComment": {"content": "citado", "userName": "Luis"}},
+        }
+    )
+    assert "citado" in con_cita["cita"]
+    assert "Luis" in con_cita["cita"]
+    sin_cita = panel_comentarios._cuerpo_actividad({"type": "comment", "content": "ok"})
+    assert sin_cita["cita"] == ""
+
+
+def test_cuerpo_actividad_status_chip_ids():
+    from SamanTools import panel_comentarios
+
+    a = {
+        "type": "status_change",
+        "previousState": "u1",
+        "previousStateName": "APROBADO",
+        "newState": "u2",
+        "newStateName": "ENTREGA",
+    }
+    r = panel_comentarios._cuerpo_actividad(a)
+    assert r["chips"] == ("APROBADO", "ENTREGA")
+    assert r["chip_ids"] == ("u1", "u2")
+
+
+def test_color_estado_y_styles_chip_color():
+    from SamanTools import panel_comentarios
+
+    assert panel_comentarios._color_estado({"u1": "#f59e0b"}, "u1") == "#f59e0b"
+    assert panel_comentarios._color_estado({}, "u1") == ""
+    assert panel_comentarios._color_estado(None, "u1") == ""
+    s = panel_comentarios._styles_chip_color("#f59e0b")
+    assert "#f59e0b4D" in s  # alpha ~30%
+    assert "#f59e0b" in s
+    assert panel_comentarios._styles_chip_color("") == ""
+    assert panel_comentarios._styles_chip_color("rojo") == ""
+
+
+def test_publicar_actividad_pasa_colores_a_las_cards():
+    panel = _panel_con_feed_falsa()
+    recibidos = []
+    panel._crear_card_actividad = (
+        lambda actividad, colores_estados=None, imagenes=None, es_respuesta=False: (
+            recibidos.append((colores_estados, imagenes)) or actividad
+        )
+    )
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append(texto)
+
+    panel._publicar_actividad(
+        [{"type": "comment", "content": "a"}],
+        colores_estados={"u": "#f59e0b"},
+        imagenes={"u2": "/x/a.img"},
+    )
+
+    assert recibidos == [({"u": "#f59e0b"}, {"u2": "/x/a.img"})]
+
+
+def test_publicar_actividad_agrupa_respuestas():
+    panel = _panel_con_feed_falsa()
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append(texto)
+    bloques = []
+    panel._crear_bloque_respuestas = (
+        lambda hijas, colores_estados=None, imagenes=None: (
+            bloques.append(hijas) or "bloque"
+        )
+    )
+    padre = {"id": "c1", "type": "comment", "content": "padre"}
+    hijo = {"id": "r1", "type": "reply", "parentId": "c1", "content": "hijo"}
+
+    panel._publicar_actividad([padre, hijo])
+
+    assert "bloque" in panel._layout_actividad.items
+    assert bloques == [[hijo]]
+
+
+def test_trabajo_comentarios_publica_colores_e_imagenes(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda d, t, config=None: {
+            "project_id": "pid",
+            "shot_id": "sid",
+            "chapter_id": "cid",
+            "shot": {},
+        },
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "listar_actividad",
+        lambda pid, sid, token, config=None: [
+            {"type": "comment", "content": "x", "id": "c1"}
+        ],
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "obtener_colores_estados",
+        lambda pid, token, config=None: {"u1": "#f59e0b"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios,
+        "_cargar_imagenes_adjuntas",
+        lambda actividad: {"https://x/o/a.jpg?alt=media": "/cache/a.img"},
+    )
+
+    panel._trabajo_comentarios(
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"}, "TOKEN"
+    )
+
+    assert panel._comentarios_trabajo["estado"] == "ok"
+    assert panel._comentarios_trabajo["colores_estados"] == {"u1": "#f59e0b"}
+    assert panel._comentarios_trabajo["imagenes"] == {
+        "https://x/o/a.jpg?alt=media": "/cache/a.img"
+    }
+    assert panel._comentarios_trabajo["comentarios"][0]["id"] == "c1"

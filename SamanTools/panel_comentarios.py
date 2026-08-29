@@ -26,6 +26,7 @@ Import de PySide con el patron de `frame_manager` (try PySide2, except
 PySide6) para mantener compatibilidad entre Nuke 14 y 17.
 """
 
+import hashlib
 import html
 import os
 import re
@@ -107,30 +108,53 @@ _DIA_SEGUNDOS = 86400
 _MES_SEGUNDOS = 30 * _DIA_SEGUNDOS
 _ANIO_SEGUNDOS = 365 * _DIA_SEGUNDOS
 
-# Paleta oscura acorde a Nuke (fondo gris oscuro, acento azul #1f8ecd).
-# Se aplica SOLO a este widget (`self.setStyleSheet`), NUNCA global: no se
-# tocan los skins de Nuke ni de otros paneles.
+# Paleta oscura acorde a Nuke + spec de la app web (bg-slate-700 #334155,
+# bg-slate-800 #1e293b, text-slate-100 #f1f5f9, text-slate-400 #94a3b8,
+# bg-sky-800 #075985, text-sky-300 #7dd3fc, amber #f59e0b). Se aplica SOLO a
+# este widget (`self.setStyleSheet`), NUNCA global.
 _ESTILO_PANEL = """
 QWidget {
     background-color: #2b2b2b;
-    color: #dcdcdc;
+    color: #f1f5f9;
     font-size: 12px;
 }
 QLabel {
     background: transparent;
-    color: #dcdcdc;
+    color: #f1f5f9;
 }
 QLabel#autorActividad {
+    color: #f1f5f9;
     font-weight: bold;
+}
+QLabel#verboActividad {
+    color: #94a3b8;
 }
 QLabel#avatarActividad {
-    color: #1f8ecd;
+    background-color: #334155;
+    color: #f1f5f9;
+    border-radius: 16px;
     font-weight: bold;
 }
-QLabel#rolActividad,
+QLabel#rolActividad {
+    background-color: #334155;
+    color: #94a3b8;
+    padding: 2px 6px;
+    border-radius: 2px;
+}
 QLabel#tiempoActividad,
+QLabel#glifoTipo,
 QLabel#versionActividad {
-    color: #9a9a9a;
+    color: #94a3b8;
+    font-size: 11px;
+}
+QLabel#editoActividad {
+    color: #94a3b8;
+    font-style: italic;
+    font-size: 10px;
+}
+QLabel#ventanaActividad {
+    color: #f59e0b;
+    font-weight: bold;
 }
 QGroupBox {
     background-color: transparent;
@@ -196,17 +220,47 @@ QPushButton:disabled {
     color: #6a6a6a;
 }
 QFrame#cardActividad {
-    background-color: #333333;
-    border: 1px solid #4a4a4a;
+    background-color: #334155;
+    border: 1px solid #475569;
     border-radius: 6px;
     padding: 6px;
 }
+QFrame#cardRespuesta {
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 6px;
+}
 QLabel#chipEstado {
-    background-color: #3e3e3e;
-    border: 1px solid #5a5a5a;
+    background-color: #334155;
+    border: 1px solid #475569;
     border-radius: 9px;
     padding: 2px 8px;
-    color: #e8e8e8;
+    color: #f1f5f9;
+}
+QLabel#chipVersionVieja {
+    background-color: #334155;
+    border: 1px solid #475569;
+    border-radius: 9px;
+    padding: 2px 8px;
+    color: #94a3b8;
+}
+QLabel#chipVersionNueva {
+    background-color: #075985;
+    border: 1px solid #075985;
+    border-radius: 9px;
+    padding: 2px 8px;
+    color: #7dd3fc;
+}
+QToolButton#botonRespuestas {
+    color: #94a3b8;
+    border: none;
+    background: transparent;
+    padding: 2px 0;
+    font-weight: bold;
+}
+QToolButton#botonRespuestas:hover {
+    color: #f1f5f9;
 }
 QScrollArea {
     background: transparent;
@@ -390,12 +444,311 @@ def _texto_asignacion(actividad):
     return "Asignación cambiada: {0} → {1}".format(prev, nuevo)
 
 
+# ----------------------------------------------------- helpers v1.6.5 (puros)
+
+def _tiempo_relativo_largo(creado_en):
+    """Tiempo relativo en espanol COMPLETO (spec app web).
+
+    "ahora", "hace X minutos/horas/días", "hace 1 mes/X meses",
+    "hace 1 año/X años" (singular/plural). Misma base de parseo que
+    `_tiempo_relativo`; fallback: recorta a 19 caracteres. Puro.
+    """
+    if not creado_en:
+        return ""
+    try:
+        texto = str(creado_en)
+        if texto.endswith("Z"):
+            texto = texto[:-1] + "+00:00"
+        instante = datetime.fromisoformat(texto)
+        if instante.tzinfo is None:
+            instante = instante.replace(tzinfo=timezone.utc)
+        segundos = (datetime.now(timezone.utc) - instante).total_seconds()
+    except (TypeError, ValueError):
+        return str(creado_en)[:19]
+    if segundos < 60:
+        return "ahora"
+    if segundos < 60 * 60:
+        minutos = int(segundos // 60)
+        return "hace 1 minuto" if minutos == 1 else "hace {0} minutos".format(minutos)
+    if segundos < _DIA_SEGUNDOS:
+        horas = int(segundos // 3600)
+        return "hace 1 hora" if horas == 1 else "hace {0} horas".format(horas)
+    if segundos < _MES_SEGUNDOS:
+        dias = int(segundos // _DIA_SEGUNDOS)
+        return "hace 1 día" if dias == 1 else "hace {0} días".format(dias)
+    if segundos < _ANIO_SEGUNDOS:
+        meses = int(segundos // _MES_SEGUNDOS)
+        return "hace 1 mes" if meses == 1 else "hace {0} meses".format(meses)
+    anios = int(segundos // _ANIO_SEGUNDOS)
+    return "hace 1 año" if anios == 1 else "hace {0} años".format(anios)
+
+
+def _dentro_ventana_10min(creado_en):
+    """True si `createdAt` cae en la ventana de edicion de 10 min. Puro."""
+    try:
+        texto = str(creado_en)
+        if texto.endswith("Z"):
+            texto = texto[:-1] + "+00:00"
+        instante = datetime.fromisoformat(texto)
+        if instante.tzinfo is None:
+            instante = instante.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return False
+    segundos = (datetime.now(timezone.utc) - instante).total_seconds()
+    return 0 <= segundos < 10 * 60
+
+
+def _es_autor(actividad, sesion):
+    """True si la actividad es del usuario de la sesion (solo visual).
+
+    Compara `userId` contra `sesion.local_id`; sin id del item, compara el
+    `userName` con la parte previa a '@' del email. Nunca lanza.
+    """
+    if not sesion:
+        return False
+    local_id = sesion.get("local_id")
+    user_id = actividad.get("userId")
+    if local_id and user_id:
+        return str(local_id) == str(user_id)
+    email = sesion.get("email") or ""
+    user_name = actividad.get("userName") or ""
+    if not email or not user_name:
+        return False
+    return (
+        user_name.split("@")[0].strip().lower()
+        == email.split("@")[0].strip().lower()
+    )
+
+
+_GLIFOS_TIPO = {
+    "comment": "💬",
+    "reply": "↳",
+    "file_upload": "🖼",
+    "status_change": "⇄",
+    "version_update": "v",
+    "task_update": "✓",
+    "batch_update": "≡",
+    "assignment_change": "⚑",
+}
+
+_VERBOS_TIPO = {
+    "comment": "comentó",
+    "reply": "respondió",
+    "file_upload": "subió imagen",
+    "status_change": "cambió estado",
+    "version_update": "actualizó versión",
+    "task_update": "actualizó tarea",
+    "batch_update": "actualizó estados",
+    "assignment_change": "cambió asignación",
+}
+
+
+def _glifo_tipo(tipo):
+    """Glifo discreto por tipo de actividad (al final de la fila). Puro."""
+    return _GLIFOS_TIPO.get(tipo, "")
+
+
+def _verbo_tipo(tipo):
+    """Verbo corto por tipo (gris tras el autor). Puro."""
+    return _VERBOS_TIPO.get(tipo, "")
+
+
+_REGEX_EP = re.compile(r"(?:\A|/)EP_(\d+)(?:/|\Z)")
+
+
+def _ep_desde_ruta(ruta):
+    """Segmento 'EP_<digitos>' de una ruta, o None. Puro."""
+    m = _REGEX_EP.search(str(ruta or "").replace("\\", "/"))
+    if m:
+        return "EP_{0}".format(m.group(1))
+    return None
+
+
+def _ruta_read_ref(comp_path, filename):
+    """Valor del knob `file` del Read con la convencion del estudio.
+
+    "[python {PYTHON_COMP}]/EP_<nn>/{carpeta_comp}/ref/{filename}" donde
+    `carpeta_comp` es el basename del directorio del comp y `EP_<nn>` sale de
+    un segmento 'EP_<digitos>' de la ruta o, si no, del capitulo parseado.
+    Sin comp guardado (o sin EP deducible) -> ruta relativa "ref/<filename>".
+    Puro.
+    """
+    ruta = str(comp_path or "").replace("\\", "/")
+    if not ruta.strip():
+        return "ref/{0}".format(filename)
+    carpeta_comp = os.path.basename(os.path.dirname(ruta))
+    if not carpeta_comp:
+        return "ref/{0}".format(filename)
+    ep = _ep_desde_ruta(ruta)
+    if not ep:
+        try:
+            from SamanTools import nombres
+
+            cap = (nombres.parsear_plato(ruta) or {}).get("capitulo")
+            if cap is not None:
+                ep = "EP_{0}".format(cap)
+        except Exception:
+            ep = None
+    if not ep:
+        return "ref/{0}".format(filename)
+    # Las llaves de {PYTHON_COMP} son literales: se escapan para .format.
+    return "[python {{PYTHON_COMP}}]/{0}/{1}/ref/{2}".format(ep, carpeta_comp, filename)
+
+
+def _formatear_tamano_bytes(size):
+    """"114 KB" (o "560 B") desde el campo size de un adjunto. Puro."""
+    try:
+        size = int(size)
+    except (TypeError, ValueError):
+        return ""
+    if size < 1024:
+        return "{0} B".format(size)
+    return "{0:.0f} KB".format(size / 1024.0)
+
+
+_CACHE_ADJUNTOS_DIR = os.path.join(
+    os.path.expanduser("~"), ".config", "saman", "cache_adjuntos"
+)
+
+
+def _ruta_cache_imagen(url):
+    """Ruta de cache estable por URL firmada (md5 del url). Puro."""
+    digest = hashlib.md5(str(url or "").encode("utf-8")).hexdigest()
+    return os.path.join(_CACHE_ADJUNTOS_DIR, digest + ".img")
+
+
+def _cargar_imagen_cacheada(url, abrir=None):
+    """Ruta local de una imagen adjunta (cacheada) o None si no se pudo.
+
+    Si ya existe la cache la devuelve; si no, descarga con GET puro (el token
+    va en la URL firmada) via `vfxflow_auth._abrir`, escribiendo a un tmp y
+    moviendo (nunca cache parcial). Sin widgets: corre en el worker de
+    actividad. Un fallo devuelve None (el render cae al texto).
+    """
+    abrir = abrir or vfxflow_auth._abrir
+    try:
+        ruta = _ruta_cache_imagen(url)
+        if os.path.exists(ruta):
+            return ruta
+        os.makedirs(os.path.dirname(ruta), exist_ok=True)
+        req = urllib.request.Request(str(url), method="GET")
+        with abrir(req, timeout=_REFS_TIMEOUT_SEGUNDOS) as respuesta:
+            datos = respuesta.read()
+        tmp = ruta + ".tmp"
+        with open(tmp, "wb") as archivo:
+            archivo.write(datos)
+        os.replace(tmp, ruta)
+        return ruta
+    except Exception:
+        return None
+
+
+def _cargar_imagenes_adjuntas(actividad, abrir=None):
+    """Descarga a cache las imagenes de los adjuntos; {url: ruta_local}."""
+    rutas = {}
+    for item in actividad or []:
+        for adj in item.get("attachments") or []:
+            if not isinstance(adj, dict) or adj.get("type") != "image":
+                continue
+            url = adj.get("url")
+            if not url:
+                continue
+            ruta = _cargar_imagen_cacheada(url, abrir=abrir)
+            if ruta:
+                rutas[str(url)] = ruta
+    return rutas
+
+
+def _agrupar_actividad(actividad):
+    """(padres, hijas_por_padre) agrupando las replies bajo su comentario.
+
+    Una activity es hija si trae `parentId`; se agrupa por ese id. Los padres
+    quedan en el orden del fetch (DESC por createdAt) y las hijas mantienen su
+    propio orden dentro de cada grupo. Puro.
+    """
+    padres = []
+    hijas = {}
+    for item in actividad or []:
+        if item.get("parentId"):
+            hijas.setdefault(item.get("parentId"), []).append(item)
+        else:
+            padres.append(item)
+    return padres, hijas
+
+
+def _color_estado(colores, state_id):
+    """Color hex de un estado desde el mapa {stateId: color}, o ''. Puro."""
+    if not colores or not state_id:
+        return ""
+    return str(colores.get(str(state_id)) or "")
+
+
+def _styles_chip_color(color):
+    """QSS de un chip con el color real del estado (`bg <color>4D` ~30% alpha).
+
+    Con color ausente devuelve '' (el chip cae al selector neutral
+    `QLabel#chipEstado`). Puro.
+    """
+    texto = str(color or "").strip()
+    if not texto.startswith("#") or len(texto) not in (4, 7):
+        return ""
+    rgb = texto[1:]
+    return "background-color:#{0}4D; border:1px solid {1}; color:{1};".format(
+        rgb, texto
+    )
+
+
+def _ids_estados(actividad):
+    """(id_previo, id_nuevo) de estados o None (para colorear chips). Puro."""
+    prev = actividad.get("previousState")
+    nuevo = actividad.get("newState")
+    if prev and nuevo:
+        return (str(prev), str(nuevo))
+    return None
+
+
+def _html_cita(actividad):
+    """HTML seguro del bloque de cita (quoted), o '' si no hay datos. Puro.
+
+    La cita viaja en `metadata.quotedComment` ({content, userName}); sin
+    contenido, ya fue sintetizada en `content` y no se repite el bloque.
+    """
+    meta = actividad.get("metadata") or {}
+    cita = meta.get("quotedComment") or {}
+    contenido = cita.get("content")
+    if not contenido:
+        return ""
+    autor_cita = cita.get("userName") or "Anónimo"
+    cuerpo = _escapar_y_linkificar(str(contenido))
+    return (
+        "<div style='border-left:2px solid #64748b; padding-left:8px; "
+        "color:#94a3b8; margin-top:4px;'>"
+        "<span style='color:#94a3b8;'>{0} escribió:</span><br/>{1}</div>"
+    ).format(_escapar_y_linkificar(autor_cita), cuerpo)
+
+
+def _linea_adjunto_texto(adj):
+    """Línea de texto de un adjunto sin thumbnail ("Adjuntó: name (114 KB)")."""
+    nombre = (adj.get("name") or "").strip()
+    url = adj.get("url") or ""
+    if adj.get("type") == "image":
+        texto = "[imagen] {0}".format(nombre) if nombre else "[imagen]"
+    else:
+        texto = "Adjuntó: {0}".format(nombre) if nombre else "Adjuntó un archivo"
+        tamanio = _formatear_tamano_bytes(adj.get("size"))
+        if tamanio:
+            texto += " ({0})".format(tamanio)
+    if url:
+        texto = "{0}  {1}".format(texto, url)
+    return texto
+
+
 def _html_archivos(actividad):
     """HTML (seguro) del cuerpo de file_upload: una línea por attachment.
 
-    Para `type=="image"` muestra "[imagen] <name>" (NO baja la imagen en
-    v1.6.1, solo se muestra el link); para el resto "Adjuntó: <name>". Si hay
-    `url`, queda clicable. Sin attachments usa `content`.
+    Para `type=="image"` muestra "[imagen] <name>" (fallback a texto: en la
+    card el thumbnail lo reemplaza); para el resto "Adjuntó: <name> (<size>
+    KB)". Si hay `url`, queda clicable. Sin attachments usa `content`.
     """
     adjuntos = actividad.get("attachments")
     if not adjuntos:
@@ -404,62 +757,82 @@ def _html_archivos(actividad):
     for adj in adjuntos:
         if not isinstance(adj, dict):
             continue
-        tipo = adj.get("type")
-        nombre = (adj.get("name") or "").strip()
-        url = adj.get("url") or ""
-        if tipo == "image":
-            texto = "[imagen] {0}".format(nombre) if nombre else "[imagen]"
-        else:
-            texto = "Adjuntó: {0}".format(nombre) if nombre else "Adjuntó un archivo"
-        if url:
-            texto = "{0}  {1}".format(texto, url)
-        lineas.append(texto)
+        lineas.append(_linea_adjunto_texto(adj))
     return "<br/>".join(_escapar_y_linkificar(l) for l in lineas)
 
 
 def _cuerpo_actividad(actividad):
     """Cuerpo de una card según el type (HTML seguro) + extras. Puro.
 
-    Devuelve {"html", "chips", "versiones"}:
+    Devuelve:
       - "html": línea(s) del cuerpo, HTML seguro con URLs enlazadas.
-      - "chips": (previo, nuevo) o None; badges de estados (status/batch).
-      - "versiones": "V<prev> → V<new>" o None (batch_update).
+      - "chips": (nombre_previo, nombre_nuevo) o None (status/batch).
+      - "chip_ids": (id_previo, id_nuevo) o None (para colorear por projectState).
+      - "versiones": "V<prev> → V<new>" o None (batch_update, texto simple).
+      - "versiones_chip": (previo, nuevo) o None (chips de versión).
+      - "cita": HTML de la cita (quoted) o '' (comment/reply).
 
     El feed es de actividad completa: los 8 tipos de shotActivity se muestran
     como cards (comentarios, archivos, estados, versiones, tareas, asignación).
     """
     tipo = actividad.get("type")
     content = actividad.get("content")
+    base = {
+        "chips": None,
+        "chip_ids": None,
+        "versiones": None,
+        "versiones_chip": None,
+        "cita": _html_cita(actividad),
+    }
     if tipo == "comment":
-        return {"html": _escapar_y_linkificar(content), "chips": None, "versiones": None}
+        return dict(base, html=_escapar_y_linkificar(content))
     if tipo == "reply":
-        return {"html": _escapar_y_linkificar("↳ {0}".format(content or "")), "chips": None, "versiones": None}
+        return dict(base, html=_escapar_y_linkificar("↳ {0}".format(content or "")))
     if tipo == "file_upload":
-        return {"html": _html_archivos(actividad), "chips": None, "versiones": None}
+        if (actividad.get("attachments") or []):
+            # Los adjuntos se renderizan como widgets en la card (thumbnails o
+            # filas de texto), no como cuerpo HTML: no se duplica el preview.
+            html = ""
+            return dict(base, html=html)
+        return dict(base, html=_escapar_y_linkificar(content or ""))
     if tipo == "status_change":
         texto = content or _estado_cambiada(actividad)
-        return {"html": _escapar_y_linkificar(texto), "chips": _chips_estados(actividad), "versiones": None}
+        return dict(
+            base,
+            html=_escapar_y_linkificar(texto),
+            chips=_chips_estados(actividad),
+            chip_ids=_ids_estados(actividad),
+        )
     if tipo == "version_update":
         texto = content
+        versiones_chip = None
+        prev = _formatear_version(actividad.get("previousVersion"))
+        nuevo = _formatear_version(actividad.get("newVersion"))
         if not texto:
-            prev = _formatear_version(actividad.get("previousVersion"))
-            nuevo = _formatear_version(actividad.get("newVersion"))
             if prev and nuevo:
                 texto = "Versión actualizada de {0} a {1}".format(prev, nuevo)
             else:
                 texto = "Versión actualizada"
-        return {"html": _escapar_y_linkificar(texto), "chips": None, "versiones": None}
+        if prev and nuevo and prev != nuevo:
+            versiones_chip = (prev, nuevo)
+        return dict(base, html=_escapar_y_linkificar(texto), versiones_chip=versiones_chip)
     if tipo == "task_update":
-        return {"html": _escapar_y_linkificar(_texto_tarea(actividad)), "chips": None, "versiones": None}
+        return dict(base, html=_escapar_y_linkificar(_texto_tarea(actividad)))
     if tipo == "batch_update":
-        return {
-            "html": _escapar_y_linkificar(content or ""),
-            "chips": _chips_estados(actividad),
-            "versiones": _versiones_diferentes(actividad),
-        }
+        prev = _formatear_version(actividad.get("previousVersion"))
+        nuevo = _formatear_version(actividad.get("newVersion"))
+        versiones_chip = (prev, nuevo) if (prev and nuevo and prev != nuevo) else None
+        return dict(
+            base,
+            html=_escapar_y_linkificar(content or ""),
+            chips=_chips_estados(actividad),
+            chip_ids=_ids_estados(actividad),
+            versiones=_versiones_diferentes(actividad),
+            versiones_chip=versiones_chip,
+        )
     if tipo == "assignment_change":
-        return {"html": _escapar_y_linkificar(_texto_asignacion(actividad)), "chips": None, "versiones": None}
-    return {"html": _escapar_y_linkificar(content or ""), "chips": None, "versiones": None}
+        return dict(base, html=_escapar_y_linkificar(_texto_asignacion(actividad)))
+    return dict(base, html=_escapar_y_linkificar(content or ""))
 
 
 # ------------------------------------------------------- refs (v1.6.4)
@@ -560,6 +933,11 @@ class PanelComentarios(QtWidgets.QWidget):
         # publica "pendiente"/"ok"/"error" y el QTimer (`_poll_refs`) aplica.
         self._refs_trabajo = None
         self._refs_trabajo_en_curso = False
+
+        # Estado del import de UN adjunto imagen (v1.6.5): `_adjunto_trabajo`
+        # publica y el QTimer (`_poll_adjunto`) crea el Read.
+        self._adjunto_trabajo = None
+        self._adjunto_trabajo_en_curso = False
 
         self._construir_ui()
         self._arrancar_poll_plano()
@@ -1391,12 +1769,14 @@ class PanelComentarios(QtWidgets.QWidget):
         QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_comentarios)
 
     def _trabajo_comentarios(self, plano, token):
-        """Worker daemon: resuelve el shot y lee la actividad de Firestore.
+        """Worker daemon: resuelve el shot, lee actividad, colores y cache.
 
         Nunca toca widgets: publica el resultado en `_comentarios_trabajo`
-        ("ok" con la lista, o "error" con mensaje/codigo). El QTimer
-        (`_poll_comentarios`) es quien aplica a la UI. Los "no encontrado" de
-        la resolucion son un error de datos (no de red): mensaje normalizado.
+        ("ok" con la actividad + colores de estados + imagenes cacheadas, o
+        "error" con mensaje/codigo). El QTimer (`_poll_comentarios`) es quien
+        aplica a la UI. Los "no encontrado" de la resolucion son un error de
+        datos (no de red): mensaje normalizado. Las descargas de imagenes de
+        adjuntos corren acá (worker) y la UI solo lee las rutas locales.
         """
         try:
             resuelto = vfxflow_datos.resolver_plano(plano, token)
@@ -1410,9 +1790,20 @@ class PanelComentarios(QtWidgets.QWidget):
             actividad = vfxflow_datos.listar_actividad(
                 resuelto["project_id"], resuelto["shot_id"], token
             )
+            # Los colores de estados y las imagenes de adjuntos NUNCA rompen el
+            # feed: ante fallo caen a {} / texto sin thumbnail.
+            colores = vfxflow_datos.obtener_colores_estados(
+                resuelto["project_id"], token
+            )
+            try:
+                imagenes = _cargar_imagenes_adjuntas(actividad)
+            except Exception:
+                imagenes = {}
             self._comentarios_trabajo = {
                 "estado": "ok",
                 "comentarios": actividad,
+                "colores_estados": colores,
+                "imagenes": imagenes,
             }
         except vfxflow_auth.VfxFlowAuthError as e:
             self._comentarios_trabajo = {
@@ -1447,7 +1838,11 @@ class PanelComentarios(QtWidgets.QWidget):
 
         self._comentarios_trabajo_en_curso = False
         if estado == "ok":
-            self._publicar_actividad(trabajo.get("comentarios") or [])
+            self._publicar_actividad(
+                trabajo.get("comentarios") or [],
+                colores_estados=trabajo.get("colores_estados") or {},
+                imagenes=trabajo.get("imagenes") or {},
+            )
         else:
             self._aplicar_error_actividad(trabajo)
 
@@ -1464,43 +1859,115 @@ class PanelComentarios(QtWidgets.QWidget):
             if widget is not None:
                 widget.setParent(None)
 
-    def _crear_card_actividad(self, actividad):
+    def _publicar_actividad(self, actividad, colores_estados=None, imagenes=None):
+        """Pinta las cards del feed (o el mensaje de vacio), agrupando replies.
+
+        `_agrupar_actividad` separa padres e hijas (parentId set); cada padre
+        publica su card y, si tiene respuestas, un bloque colapsable debajo
+        (`_crear_bloque_respuestas`). `colores_estados` y `imagenes` (rutas de
+        cache) ya vienen del worker: acá solo se aplican.
+        """
+        if not actividad:
+            self._mostrar_mensaje_actividad(_MENSAJE_SIN_ACTIVIDAD)
+            self._estado(_MENSAJE_SIN_ACTIVIDAD)
+            return
+        self._limpiar_feed()
+        colores_estados = colores_estados or {}
+        imagenes = imagenes or {}
+        padres, hijas = _agrupar_actividad(actividad)
+        for padre in padres:
+            self._layout_actividad.addWidget(
+                self._crear_card_actividad(
+                    padre,
+                    colores_estados=colores_estados,
+                    imagenes=imagenes,
+                )
+            )
+            hijas_padre = hijas.get(padre.get("id")) or []
+            if hijas_padre:
+                self._layout_actividad.addWidget(
+                    self._crear_bloque_respuestas(
+                        hijas_padre,
+                        colores_estados=colores_estados,
+                        imagenes=imagenes,
+                    )
+                )
+        self._layout_actividad.addStretch(1)
+        cantidad = len(actividad)
+        self._estado(
+            "%d actividad%s."
+            % (cantidad, "es" if cantidad != 1 else "")
+        )
+
+    def _crear_card_actividad(
+        self, actividad, colores_estados=None, imagenes=None, es_respuesta=False
+    ):
         """Construye la QFrame de una actividad (header + cuerpo por tipo).
 
-        Todo el look vive en `_ESTILO_PANEL` (selectores por objectName); el
-        avatar es la INICIAL como texto plano "[E]" (sin reborde redondeado),
-        como en el mock original.
+        v1.6.5 (spec app web): avatar circular 32×32 con la inicial, autor
+        negrita, verbo gris, rol como chip, tiempo relativo largo en español,
+        "• editado" si metadata.edited, ⚠ si el autor está en la ventana de
+        10 min, glifo de tipo, chips de estado con el color REAL de
+        projectStates (nuevo → previo), chips de versión, y thumbnails de
+        adjuntos imagen (click → zoom; botón importar). Todo el look vive en
+        `_ESTILO_PANEL` por objectName.
         """
         card = QtWidgets.QFrame(self._widget_contenido_actividad)
-        card.setObjectName("cardActividad")
+        card.setObjectName("cardRespuesta" if es_respuesta else "cardActividad")
         card.setFrameShape(QtWidgets.QFrame.NoFrame)
         lay_card = QtWidgets.QVBoxLayout(card)
         lay_card.setContentsMargins(8, 6, 8, 6)
 
-        # Fila avatar (inicial) + autor + rol + tiempo relativo.
+        # Fila avatar circular + autor + verbo + rol chip + tiempo largo.
         fila_autor = QtWidgets.QHBoxLayout()
         avatar = QtWidgets.QLabel(
-            "[{0}]".format(_inicial_avatar(actividad.get("userName"))), card
+            _inicial_avatar(actividad.get("userName")), card
         )
         avatar.setObjectName("avatarActividad")
+        avatar.setFixedSize(32, 32)
+        avatar.setAlignment(QtAlignment.AlignCenter)
         fila_autor.addWidget(avatar)
         autor = QtWidgets.QLabel(actividad.get("userName") or "Anónimo", card)
         autor.setObjectName("autorActividad")
         fila_autor.addWidget(autor)
+        verbo = _verbo_tipo(actividad.get("type"))
+        if verbo:
+            label_verbo = QtWidgets.QLabel(verbo, card)
+            label_verbo.setObjectName("verboActividad")
+            fila_autor.addWidget(label_verbo)
         rol = actividad.get("userRole") or ""
         if rol:
-            label_rol = QtWidgets.QLabel("[{0}]".format(rol), card)
+            label_rol = QtWidgets.QLabel(rol, card)
             label_rol.setObjectName("rolActividad")
             fila_autor.addWidget(label_rol)
         fila_autor.addStretch(1)
+        sesion = getattr(self, "sesion", None)
+        if _dentro_ventana_10min(actividad.get("createdAt")) and _es_autor(
+            actividad, sesion
+        ):
+            ventana = QtWidgets.QLabel("⚠", card)
+            ventana.setObjectName("ventanaActividad")
+            ventana.setToolTip(
+                "Puede editar/eliminar (ventana de 10 minutos)"
+            )
+            fila_autor.addWidget(ventana)
         tiempo = QtWidgets.QLabel(
-            _tiempo_relativo(actividad.get("createdAt")), card
+            _tiempo_relativo_largo(actividad.get("createdAt")), card
         )
         tiempo.setObjectName("tiempoActividad")
         fila_autor.addWidget(tiempo)
+        if (actividad.get("metadata") or {}).get("edited"):
+            editado = QtWidgets.QLabel("• editado", card)
+            editado.setObjectName("editoActividad")
+            fila_autor.addWidget(editado)
+        glifo = _glifo_tipo(actividad.get("type"))
+        if glifo:
+            label_glifo = QtWidgets.QLabel(glifo, card)
+            label_glifo.setObjectName("glifoTipo")
+            fila_autor.addWidget(label_glifo)
         lay_card.addLayout(fila_autor)
 
-        # Cuerpo segun el tipo de actividad (puro y testeable).
+        # Cuerpo segun el tipo (puro y testeable) + cita + adjuntos.
         cuerpo = _cuerpo_actividad(actividad)
         if cuerpo["html"]:
             label_cuerpo = QtWidgets.QLabel(cuerpo["html"], card)
@@ -1508,47 +1975,310 @@ class PanelComentarios(QtWidgets.QWidget):
             label_cuerpo.setTextFormat(QtCore.Qt.RichText)
             label_cuerpo.setOpenExternalLinks(True)
             lay_card.addWidget(label_cuerpo)
+        if cuerpo["cita"]:
+            label_cita = QtWidgets.QLabel(cuerpo["cita"], card)
+            label_cita.setWordWrap(True)
+            label_cita.setTextFormat(QtCore.Qt.RichText)
+            lay_card.addWidget(label_cita)
+        for widget in self._render_adjuntos(actividad, card, imagenes or {}):
+            lay_card.addWidget(widget)
         if cuerpo["chips"] is not None:
-            previo, nuevo = cuerpo["chips"]
-            fila_estados = QtWidgets.QHBoxLayout()
-            fila_estados.addWidget(self._chip_estado(previo, card))
-            flecha = QtWidgets.QLabel("➔", card)
-            fila_estados.addWidget(flecha, 0, QtAlignment.AlignCenter)
-            fila_estados.addWidget(self._chip_estado(nuevo, card))
-            fila_estados.addStretch(1)
-            lay_card.addLayout(fila_estados)
-        if cuerpo.get("versiones"):
+            self._agregar_fila_estados(
+                cuerpo, colores_estados or {}, card, lay_card
+            )
+        if cuerpo.get("versiones_chip"):
+            previo, nuevo = cuerpo["versiones_chip"]
+            fila_v = QtWidgets.QHBoxLayout()
+            chip_vieja = QtWidgets.QLabel("[{0}]".format(previo), card)
+            chip_vieja.setObjectName("chipVersionVieja")
+            chip_nueva = QtWidgets.QLabel("[{0}]".format(nuevo), card)
+            chip_nueva.setObjectName("chipVersionNueva")
+            flecha_v = QtWidgets.QLabel("→", card)
+            fila_v.addWidget(chip_nueva)
+            fila_v.addWidget(flecha_v, 0, QtAlignment.AlignCenter)
+            fila_v.addWidget(chip_vieja)
+            fila_v.addStretch(1)
+            lay_card.addLayout(fila_v)
+        elif cuerpo.get("versiones"):
             label_version = QtWidgets.QLabel(cuerpo["versiones"], card)
             label_version.setObjectName("versionActividad")
             lay_card.addWidget(label_version)
         return card
 
-    def _chip_estado(self, texto, parent):
-        """Label estilo chip para los badges de estados (nunca hardcodeados).
+    def _agregar_fila_estados(self, cuerpo, colores, card, lay_card):
+        """Chips de status [NUEVO] → [PREVIO] con el color real del estado.
 
-        El look (fondo/borde/texto) lo define el selector `QLabel#chipEstado`
-        de `_ESTILO_PANEL`, no un color hardcodeado acá.
+        El color sale del mapa {stateId: color} (id en `cuerpo["chip_ids"]`);
+        sin color cae al chip neutral `QLabel#chipEstado`. Orden invertido
+        segun la spec (el estado nuevo a la izquierda).
+        """
+        previo, nuevo = cuerpo["chips"]
+        ids = cuerpo.get("chip_ids")
+        color_previo = ""
+        color_nuevo = ""
+        if ids:
+            id_previo, id_nuevo = ids
+            color_previo = _color_estado(colores, id_previo)
+            color_nuevo = _color_estado(colores, id_nuevo)
+        fila = QtWidgets.QHBoxLayout()
+        fila.addWidget(self._chip_estado(nuevo, card, color_nuevo))
+        flecha = QtWidgets.QLabel("→", card)
+        fila.addWidget(flecha, 0, QtAlignment.AlignCenter)
+        fila.addWidget(self._chip_estado(previo, card, color_previo))
+        fila.addStretch(1)
+        lay_card.addLayout(fila)
+
+    def _chip_estado(self, texto, parent, color=""):
+        """Label estilo chip para las badges de estados (nunca hardcodeados).
+
+        El look base lo define `QLabel#chipEstado`; con `color` (hex real del
+        projectState) se aplica un stylesheet inline con alpha ~30%.
         """
         chip = QtWidgets.QLabel(str(texto), parent)
         chip.setObjectName("chipEstado")
         chip.setAlignment(QtAlignment.AlignCenter)
+        if color:
+            chip.setStyleSheet(_styles_chip_color(color))
         return chip
 
-    def _publicar_actividad(self, actividad):
-        """Pinta las cards del feed (o el mensaje de vacio) en la UI."""
-        if not actividad:
-            self._mostrar_mensaje_actividad(_MENSAJE_SIN_ACTIVIDAD)
-            self._estado(_MENSAJE_SIN_ACTIVIDAD)
-            return
-        self._limpiar_feed()
-        for item in actividad:
-            self._layout_actividad.addWidget(self._crear_card_actividad(item))
-        self._layout_actividad.addStretch(1)
-        cantidad = len(actividad)
-        self._estado(
-            "%d actividad%s."
-            % (cantidad, "es" if cantidad != 1 else "")
+    # ------------------------------------------------- adjuntos (v1.6.5)
+
+    def _render_adjuntos(self, actividad, parent, imagenes):
+        """Widgets de adjuntos: thumbnails (imagen cacheada) o filas de texto.
+
+        Las imagenes con cache se muestran como thumbnail (click → zoom, botón
+        "Importar"). El resto (archivos o imagenes sin cache) cae a filas de
+        texto con su tamaño. Sin adjuntos devuelve [].
+        """
+        adjuntos = [
+            a for a in (actividad.get("attachments") or []) if isinstance(a, dict)
+        ]
+        if not adjuntos:
+            return []
+        previews = []
+        resto = []
+        for adj in adjuntos:
+            url = adj.get("url")
+            if adj.get("type") == "image" and url and imagenes.get(str(url)):
+                previews.append(adj)
+            else:
+                resto.append(adj)
+        widgets = []
+        if resto:
+            lineas = "<br/>".join(
+                _escapar_y_linkificar(_linea_adjunto_texto(a)) for a in resto
+            )
+            label = QtWidgets.QLabel(lineas, parent)
+            label.setWordWrap(True)
+            label.setTextFormat(QtCore.Qt.RichText)
+            label.setOpenExternalLinks(True)
+            widgets.append(label)
+        for adj in previews:
+            widgets.append(
+                self._crear_thumbnail_adjunto(
+                    adj, imagenes.get(str(adj.get("url"))), parent
+                )
+            )
+        return widgets
+
+    def _crear_thumbnail_adjunto(self, adj, ruta_local, parent):
+        """Contenedor de un thumbnail de adjunto imagen + nombre + importar.
+
+        Sin imagen válida cae al texto (el preview se descartó en
+        `_render_adjuntos`; acá igual se protege). Click → zoom modal
+        (`_abrir_zoom_imagen`); hover muestra nombre + tamaño (tooltip).
+        """
+        cont = QtWidgets.QWidget(parent)
+        lay = QtWidgets.QVBoxLayout(cont)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        pixmap = QtWidgets.QPixmap(ruta_local) if ruta_local else QtWidgets.QPixmap()
+        if pixmap.isNull():
+            label = QtWidgets.QLabel(
+                _escapar_y_linkificar(_linea_adjunto_texto(adj)), cont
+            )
+            label.setWordWrap(True)
+            label.setTextFormat(QtCore.Qt.RichText)
+            label.setOpenExternalLinks(True)
+            lay.addWidget(label)
+            return cont
+        miniatura = QtWidgets.QLabel(cont)
+        miniatura.setPixmap(
+            pixmap.scaled(
+                320, 208, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
+            )
         )
+        miniatura.setCursor(QtCore.Qt.PointingHandCursor)
+        nombre = (adj.get("name") or "adjunto").strip()
+        tamanio = _formatear_tamano_bytes(adj.get("size"))
+        miniatura.setToolTip(
+            "{0} — {1}".format(nombre, tamanio) if tamanio else nombre
+        )
+        miniatura.mousePressEvent = (
+            lambda evento, ruta=ruta_local: self._abrir_zoom_imagen(ruta)
+        )
+        lay.addWidget(miniatura)
+        fila = QtWidgets.QHBoxLayout()
+        label_nombre = QtWidgets.QLabel("Adjuntó: {0}".format(nombre), cont)
+        label_nombre.setWordWrap(True)
+        fila.addWidget(label_nombre)
+        fila.addStretch(1)
+        boton = QtWidgets.QToolButton(cont)
+        boton.setText("⬇ Importar")
+        boton.setToolTip("Descargar el adjunto y crearlo como nodo Read")
+        url = adj.get("url") or ""
+        boton.clicked.connect(
+            lambda checked=False, u=url, n=nombre: self._importar_adjunto(u, n)
+        )
+        fila.addWidget(boton)
+        lay.addLayout(fila)
+        return cont
+
+    def _abrir_zoom_imagen(self, ruta_local, parent=None):
+        """Modal con la imagen en tamaño completo (escalada a la pantalla)."""
+        try:
+            pixmap = QtWidgets.QPixmap(ruta_local)
+            if pixmap.isNull():
+                return
+            dialogo = QtWidgets.QDialog(parent or self)
+            dialogo.setWindowTitle("Imagen adjunta")
+            lay = QtWidgets.QVBoxLayout(dialogo)
+            label = QtWidgets.QLabel(dialogo)
+            label.setPixmap(
+                pixmap.scaled(
+                    1200, 800, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
+                )
+            )
+            lay.addWidget(label)
+            cerrar = QtWidgets.QPushButton("Cerrar", dialogo)
+            cerrar.clicked.connect(dialogo.accept)
+            lay.addWidget(cerrar)
+            dialogo.exec_()
+        except Exception:
+            pass
+
+    def _importar_adjunto(self, url, nombre):
+        """Importa un adjunto imagen a `<dir>/ref/adjuntos` + nodo Read.
+
+        Corre con descarga en worker (`_trabajo_importar_adjunto`) y el
+        createNode en QTimer (`_poll_adjunto`), nunca desde el worker.
+        """
+        dir_comp = os.path.dirname(nuke.root().name() or "")
+        if not dir_comp:
+            self._estado("Guardá el comp antes de importar el adjunto.", error=True)
+            return
+        directorio = os.path.join(dir_comp, "ref", "adjuntos")
+        if getattr(self, "_adjunto_trabajo_en_curso", False):
+            return
+        self._adjunto_trabajo_en_curso = True
+        self._adjunto_trabajo = {"estado": "pendiente"}
+        self._estado("Importando adjunto…")
+        threading.Thread(
+            target=self._trabajo_importar_adjunto,
+            args=(url, directorio, nombre),
+            daemon=True,
+        ).start()
+        QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_adjunto)
+
+    def _trabajo_importar_adjunto(self, url, directorio, nombre):
+        """Worker daemon: descarga un adjunto y publica en `_adjunto_trabajo`."""
+        try:
+            resultado = _descargar_refs([str(url)], directorio)
+            if not resultado["ok"]:
+                self._adjunto_trabajo = {
+                    "estado": "error",
+                    "mensaje": "No se pudo descargar el adjunto.",
+                }
+                return
+            _url, _ruta_local, filename = resultado["ok"][0]
+            self._adjunto_trabajo = {
+                "estado": "ok",
+                "nombre": filename,
+                "directorio": directorio,
+            }
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._adjunto_trabajo = {"estado": "error", "mensaje": str(e)}
+        except Exception as e:
+            self._adjunto_trabajo = {
+                "estado": "error",
+                "mensaje": "Error inesperado: %s" % e,
+            }
+
+    def _poll_adjunto(self):
+        """QTimer (hilo principal): aplica el import del adjunto y crea el Read."""
+        if not getattr(self, "_adjunto_trabajo_en_curso", False):
+            return
+        trabajo = self._adjunto_trabajo or {}
+        if trabajo.get("estado") == "pendiente":
+            QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_adjunto)
+            return
+        self._adjunto_trabajo_en_curso = False
+        if trabajo.get("estado") == "ok":
+            try:
+                nodo = nuke.createNode("Read")
+                comp = nuke.root().name() or ""
+                nodo["file"].setValue(
+                    _ruta_read_ref(comp, "adjuntos/{0}".format(trabajo["nombre"]))
+                )
+                self._estado("Adjunto importado como Read.")
+            except Exception as e:
+                self._estado("Error al importar el adjunto: %s" % e, error=True)
+            return
+        self._estado(
+            trabajo.get("mensaje") or "Error al importar el adjunto.", error=True
+        )
+
+    # -------------------------------------------- respuestas (v1.6.5)
+
+    def _crear_bloque_respuestas(
+        self, hijas, colores_estados=None, imagenes=None
+    ):
+        """Bloque colapsable "▸/▾ Ver N respuestas" bajo un comentario padre.
+
+        Las hijas se muestran indentadas (margin-left) como cards planas
+        `cardRespuesta`; el estado expanded/collapsed vive solo en memoria de
+        este widget. La flecha rota por cambio de glifo (▸/▾) en vez de QSS.
+        """
+        cantidad = len(hijas)
+        sufijo = "respuesta" if cantidad == 1 else "respuestas"
+        texto_cerrado = "▸ Ver {0} {1}".format(cantidad, sufijo)
+        texto_abierto = "▾ Ver {0} {1}".format(cantidad, sufijo)
+
+        bloque = QtWidgets.QWidget(self._widget_contenido_actividad)
+        lay = QtWidgets.QVBoxLayout(bloque)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        boton = QtWidgets.QToolButton(bloque)
+        boton.setObjectName("botonRespuestas")
+        boton.setText(texto_cerrado)
+        boton.setCheckable(True)
+        boton.setChecked(False)
+        boton.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        lay.addWidget(boton)
+
+        cont_hijas = QtWidgets.QWidget(bloque)
+        lay_hijas = QtWidgets.QVBoxLayout(cont_hijas)
+        lay_hijas.setContentsMargins(16, 0, 0, 0)
+        lay_hijas.setSpacing(4)
+        for hija in hijas:
+            lay_hijas.addWidget(
+                self._crear_card_actividad(
+                    hija,
+                    colores_estados=colores_estados,
+                    imagenes=imagenes,
+                    es_respuesta=True,
+                )
+            )
+        cont_hijas.setVisible(False)
+        lay.addWidget(cont_hijas)
+
+        def _alternar():
+            expandido = boton.isChecked()
+            cont_hijas.setVisible(expandido)
+            boton.setText(texto_abierto if expandido else texto_cerrado)
+
+        boton.clicked.connect(lambda checked=False: _alternar())
+        return bloque
 
     def _aplicar_error_actividad(self, trabajo):
         """Publica un error del fetch: firewall para "red", texto si no.
@@ -1738,10 +2468,12 @@ class PanelComentarios(QtWidgets.QWidget):
 
         descargados = trabajo.get("descargados") or []
         fallidos = trabajo.get("fallidos") or []
+        comp = nuke.root().name() or ""
         for _url, _ruta_local, nombre in descargados:
             try:
                 nodo = nuke.createNode("Read")
-                nodo["file"].setValue("ref/" + nombre)
+                # Convención del estudio: [python {PYTHON_COMP}]/EP_x/{carpeta}/ref/{fname}.
+                nodo["file"].setValue(_ruta_read_ref(comp, nombre))
             except Exception:
                 pass  # un nodo que falla no corta el resto
         directorio = trabajo.get("directorio") or ""
