@@ -47,12 +47,16 @@ def _instalar_stub_nuke():
         def __init__(self, valor=""):
             self.valor = valor
             self.script = valor
+            self.visible = True
 
         def value(self):
             return self.valor
 
         def setValue(self, v):
             self.valor = v
+
+        def setVisible(self, v):
+            self.visible = v
 
         def toScript(self):
             return self.script
@@ -70,6 +74,7 @@ def _instalar_stub_nuke():
             self.nombre = nombre
             self.knobs_d = {"file": KnobFake("ruta_estatica.png")}
             self.posxy = (0, 0)
+            self.selected = False
 
         def Class(self):
             return self.cls
@@ -97,6 +102,9 @@ def _instalar_stub_nuke():
 
         def inputs(self):
             return 0
+
+        def setSelected(self, v):
+            self.selected = v
 
     # Estado compartido de "la escena"
     estado = {"nodos": [], "seleccionados": [], "mensajes": [], "plugins": []}

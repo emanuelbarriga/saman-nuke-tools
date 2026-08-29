@@ -1,6 +1,6 @@
 NoOp {
  name RUTAS
- knobChanged "\nfrom SamanTools import rutas\nrutas.actualizar(nuke.thisNode())\n"
+ knobChanged "from SamanTools import rutas\nrutas.actualizar(nuke.thisNode())\ntry:\n    knob_cambiado = nuke.thisKnob()\nexcept Exception:\n    knob_cambiado = None\nif knob_cambiado is None:\n    rutas.avisar_duplicados(nuke.thisNode())\n    rutas.refrescar_estado(nuke.thisNode())\nelif knob_cambiado.name() == \'UsuarioActivo\':\n    rutas.refrescar_estado(nuke.thisNode())"
  tile_color 0x6aff55ff
  gl_color 0x55ffbfff
  label "PRINCIPALES \nACTIVAS\nGLOBALES"
@@ -8,6 +8,10 @@ NoOp {
  xpos 494
  ypos 44
  addUserKnob {20 Rutas}
+ addUserKnob {26 SeccionEntorno l "Entorno y estado de unidad" T " "}
+ addUserKnob {26 SO_Detectado l "SO Detectado" T " "}
+ addUserKnob {26 EstadoUnidad l "Estado de la Unidad" T " "}
+ addUserKnob {26 UsuarioRecomendado l "Usuario Recomendado" T "Usuario recomendado segun SO: -"}
  addUserKnob {26 Usuario l "" +STARTLINE T "\n"}
  addUserKnob {4 UsuarioActivo l "Usuario Activo" M {MacServer Windows Artist ""}}
  addUserKnob {1 string l Proyecto}

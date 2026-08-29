@@ -31,8 +31,9 @@ def _escanear_scripts_proyecto():
 
 def _insertar_rutas():
     """Inserta el nodo Rutas (rutas VFX dinámicas) en el script actual."""
-    ruta_archivo = os.path.join(os.path.dirname(os.path.realpath(__file__)), "nodos", "Rutas.nk")
-    nuke.nodePaste(ruta_archivo)
+    from SamanTools import rutas
+
+    rutas.crear_o_reutilizar()
 
 
 def _insertar_review():
@@ -151,7 +152,7 @@ def instalar():
     sub_nodos_nodos = menu_saman.addMenu("Insertar Nodo")
     sub_nodos_nodos.addCommand(
         "Rutas (Rutas VFX)",
-        "nuke.createNode('Rutas')",
+        "from SamanTools import rutas\nrutas.crear_o_reutilizar()",
     )
     sub_nodos_nodos.addCommand(
         "Review (Comparación)",

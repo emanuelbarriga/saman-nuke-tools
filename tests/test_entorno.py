@@ -208,7 +208,7 @@ def test_reconstruir_rutas_claves_exactas_de_los_knobs():
 # --------------------------------------------------------------------------
 
 
-def _nodo_rutas_env(usuario="MacServer", ruta_base=""):
+def _nodo_rutas_env(usuario="MacServer"):
     n = nuke.NodoFake(cls="NoOp", nombre="Rutas1")
     n.knobs_d["UsuarioActivo"] = nuke.KnobFake(usuario)
     n.knobs_d["TO_VFX_SERVER_MAC"] = nuke.KnobFake("/vol/TO_VFX")
@@ -216,8 +216,8 @@ def _nodo_rutas_env(usuario="MacServer", ruta_base=""):
     n.knobs_d["FROM_VFX_SERVER_MAC"] = nuke.KnobFake("/vol/FROM_VFX")
     n.knobs_d["RutaActual"] = nuke.KnobFake("")
     n.knobs_d["SO_Detectado"] = nuke.KnobFake("")
-    n.knobs_d["RutaBase"] = nuke.KnobFake(ruta_base)
     n.knobs_d["EstadoUnidad"] = nuke.KnobFake("")
+    n.knobs_d["UsuarioRecomendado"] = nuke.KnobFake("")
     n.knobs_d["tile_color"] = nuke.KnobFake(0)
     return n
 
@@ -228,25 +228,50 @@ def _escenario(n):
     nuke._estado["mensajes"] = []
 
 
-def test_actualizar_sincroniza_knobs_entorno(tmp_path):
+def _usuario_esperado():
+    """Usuario recomendado para el SO de la maquina que corre los tests."""
+    return entorno.usuario_activo(entorno.detectar_so())
+
+
+def test_actualizar_sincroniza_knobs_entorno(monkeypatch, tmp_path):
     ruta = str(tmp_path)
-    n = _nodo_rutas_env(ruta_base=ruta)
+    monkeypatch.setattr(
+        entorno, "primera_ruta_disponible", lambda so, extra=None: ruta
+    )
+    n = _nodo_rutas_env()
     _escenario(n)
     assert rutas.actualizar(n) is not None
     assert n["SO_Detectado"].value() in ("macOS", "Windows", "Linux")
-    assert n["RutaBase"].value() == ruta
     assert "Conectado" in n["EstadoUnidad"].value()
-
-
-def test_actualizar_rellena_rutabase_vacia(monkeypatch, tmp_path):
-    ruta = str(tmp_path)
-    n = _nodo_rutas_env(ruta_base="")
-    monkeypatch.setattr(
-        entorno, "primera_ruta_disponible", lambda so, extra=None: ruta or None
+    assert n["UsuarioRecomendado"].value() == (
+        "Usuario recomendado segun SO: " + _usuario_esperado()
     )
+
+
+def test_actualizar_recomienda_y_rellena_usuario_vacio(monkeypatch):
+    monkeypatch.setattr(
+        entorno, "primera_ruta_disponible", lambda so, extra=None: None
+    )
+    n = _nodo_rutas_env(usuario="")
     _escenario(n)
     assert rutas.actualizar(n) is not None
-    assert n["RutaBase"].value() == ruta
+    assert n["UsuarioActivo"].value() == _usuario_esperado()
+    assert n["UsuarioRecomendado"].value() == (
+        "Usuario recomendado segun SO: " + _usuario_esperado()
+    )
+
+
+def test_recomendacion_no_pisa_usuario_valido(monkeypatch):
+    monkeypatch.setattr(
+        entorno, "primera_ruta_disponible", lambda so, extra=None: None
+    )
+    n = _nodo_rutas_env(usuario="Windows")
+    _escenario(n)
+    assert rutas.refrescar_estado(n) is True
+    assert n["UsuarioActivo"].value() == "Windows"
+    assert n["UsuarioRecomendado"].value() == (
+        "Usuario recomendado segun SO: " + _usuario_esperado()
+    )
 
 
 def test_actualizar_nodo_sin_knobs_entorno_no_rompe():
@@ -263,19 +288,25 @@ def test_actualizar_nodo_sin_knobs_entorno_no_rompe():
     assert getattr(__main__, "PYTHON_TO_VFX", None) == "/vol/TO_VFX"
 
 
-def test_refrescar_estado_conectado_pinta_verde(tmp_path):
+def test_refrescar_estado_conectado_pinta_verde(monkeypatch, tmp_path):
     ruta = str(tmp_path)
-    n = _nodo_rutas_env(ruta_base=ruta)
+    monkeypatch.setattr(
+        entorno, "primera_ruta_disponible", lambda so, extra=None: ruta
+    )
+    n = _nodo_rutas_env()
     assert rutas.refrescar_estado(n) is True
     assert n["SO_Detectado"].value() in ("macOS", "Windows", "Linux")
-    assert n["RutaBase"].value() == ruta
     assert "Conectado" in n["EstadoUnidad"].value()
     assert n["tile_color"].value() == 0x6aff55ff
 
 
-def test_refrescar_estado_desconectado_pinta_rojo():
+def test_refrescar_estado_desconectado_pinta_rojo(monkeypatch):
+    monkeypatch.setattr(
+        entorno,
+        "primera_ruta_disponible",
+        lambda so, extra=None: "/no/existe/SamanTools/ruta/bogus",
+    )
     n = _nodo_rutas_env()
-    n["RutaBase"].setValue("/no/existe/SamanTools/ruta/bogus")
     assert rutas.refrescar_estado(n) is True
     assert n["tile_color"].value() == 0xff3b30ff
     assert "Desconectado" in n["EstadoUnidad"].value()
@@ -290,3 +321,88 @@ def test_refrescar_estado_nodo_sin_knobs_no_lanza():
 def test_refrescar_estado_sin_nodo_devuelve_false():
     nuke._estado["nodo_actual"] = None
     assert rutas.refrescar_estado(None) is False
+
+
+# --------------------------------------------------------------------------
+# Visibilidad de grupos de rutas por usuario activo
+# --------------------------------------------------------------------------
+
+
+def _nodo_rutas_todas_plataformas(usuario="MacServer"):
+    n = nuke.NodoFake(cls="NoOp", nombre="Rutas1")
+    n.knobs_d["UsuarioActivo"] = nuke.KnobFake(usuario)
+    n.knobs_d["UsuarioRecomendado"] = nuke.KnobFake("")
+    for suf in ("MAC", "WINDOWS", "ARTIST"):
+        n.knobs_d["TO_VFX_SERVER_" + suf] = nuke.KnobFake("/vol/TO_VFX")
+        n.knobs_d["comp_SERVER_" + suf] = nuke.KnobFake("/vol/COMP")
+        n.knobs_d["FROM_VFX_SERVER_" + suf] = nuke.KnobFake("/vol/FROM_VFX")
+    for sep in ("RutaMacServer", "RutaWindows", "RutaArtist"):
+        n.knobs_d[sep] = nuke.KnobFake("")
+    n.knobs_d["RutaActual"] = nuke.KnobFake("")
+    return n
+
+
+def _visibilidad(n):
+    """Devuelve {nombre_knob: visible} de todos los knobs de rutas."""
+    res = {}
+    for suf in ("MAC", "WINDOWS", "ARTIST"):
+        for pre in ("TO_VFX_SERVER", "comp_SERVER", "FROM_VFX_SERVER"):
+            res[pre + "_" + suf] = n[pre + "_" + suf].visible
+    for sep in ("RutaMacServer", "RutaWindows", "RutaArtist"):
+        res[sep] = n[sep].visible
+    return res
+
+
+def test_visibilidad_usuario_mac_muestra_solo_mac(monkeypatch):
+    monkeypatch.setattr(
+        entorno, "primera_ruta_disponible", lambda so, extra=None: None
+    )
+    n = _nodo_rutas_todas_plataformas(usuario="MacServer")
+    _escenario(n)
+    rutas.actualizar(n)
+    vis = _visibilidad(n)
+    for k in ("TO_VFX_SERVER_MAC", "comp_SERVER_MAC", "FROM_VFX_SERVER_MAC"):
+        assert vis[k] is True
+    assert vis["RutaMacServer"] is True
+    for k in (
+        "TO_VFX_SERVER_WINDOWS",
+        "comp_SERVER_WINDOWS",
+        "FROM_VFX_SERVER_WINDOWS",
+        "RutaWindows",
+        "TO_VFX_SERVER_ARTIST",
+        "comp_SERVER_ARTIST",
+        "FROM_VFX_SERVER_ARTIST",
+        "RutaArtist",
+    ):
+        assert vis[k] is False
+
+
+def test_visibilidad_usuario_windows_muestra_solo_windows(monkeypatch):
+    monkeypatch.setattr(
+        entorno, "primera_ruta_disponible", lambda so, extra=None: None
+    )
+    n = _nodo_rutas_todas_plataformas(usuario="Windows")
+    _escenario(n)
+    assert rutas.refrescar_estado(n) is True
+    vis = _visibilidad(n)
+    for k in (
+        "TO_VFX_SERVER_WINDOWS",
+        "comp_SERVER_WINDOWS",
+        "FROM_VFX_SERVER_WINDOWS",
+        "RutaWindows",
+    ):
+        assert vis[k] is True
+    for k in ("TO_VFX_SERVER_MAC", "RutaMacServer", "RutaArtist"):
+        assert vis[k] is False
+
+
+def test_visibilidad_nodo_viejo_sin_knobs_no_rompe():
+    n = nuke.NodoFake(cls="NoOp", nombre="Rutas1")
+    n.knobs_d["UsuarioActivo"] = nuke.KnobFake("MacServer")
+    n.knobs_d["TO_VFX_SERVER_MAC"] = nuke.KnobFake("/vol/TO_VFX")
+    n.knobs_d["comp_SERVER_MAC"] = nuke.KnobFake("/vol/COMP")
+    n.knobs_d["FROM_VFX_SERVER_MAC"] = nuke.KnobFake("/vol/FROM_VFX")
+    n.knobs_d["RutaActual"] = nuke.KnobFake("")
+    _escenario(n)
+    assert rutas.actualizar(n) is not None
+    assert n["TO_VFX_SERVER_MAC"].visible is True
