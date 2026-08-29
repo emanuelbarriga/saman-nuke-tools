@@ -105,6 +105,22 @@ cd saman-nuke-tools && install.bat
 
 > Actualizar = `git pull && ./install.sh` (o `.bat`).
 
+## Skills del estudio (versionadas aquí)
+
+Las skills de OpenCode/Claude usadas por el estudio viven versionadas en
+[`skills/`](skills/) para que no se pierdan y viajen con el repo:
+
+| Skill | Para qué |
+|---|---|
+| `nuke-project-clone` | Clonar el template SAMAN de Nuke para un nuevo shot/episodio |
+| `nuke-gallery-gizmo` | Construir galerías de assets (contact sheets) desde GLOBAL_ASSETS |
+| `nuke-breakdown-gizmo` | Crear/regenerar el widget de VFX breakdown (tabla de frames) |
+| `saman-nuke-tools-maintenance` | Mantener este repo: versión, tags, sync git, cobertura de tests |
+
+> Las skills `nuke-*` son del proyecto HTLR y referencian rutas de esa
+> máquina (`/Volumes/wupm/2026/HTLR/...`) — sirven como fuente versionada,
+> no como distribución a artistas.
+
 ## Cómo se verifica
 
 Tras reiniciar Nuke:
