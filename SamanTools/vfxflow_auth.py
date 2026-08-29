@@ -502,6 +502,40 @@ def _get_con_bearer(url, id_token):
         )
 
 
+def _post_json_bearer(url, payload, id_token):
+    """POST JSON con `Authorization: Bearer <id_token>` y devuelve el parsed.
+
+    Comparte el manejo de error de `_get_con_bearer`: HTTP 401 -> codigo
+    "token" (id_token vencido), HTTP 404 -> None (recurso inexistente), otros
+    HTTPError -> codigo "http", URLError/timeout -> codigo "red", JSON
+    invalido -> codigo "respuesta". Es el transporte de los runQuery de
+    Firestore (vfxflow_datos): la URL runQuery NO es GET y el Bearer + POST
+    funcionan igual que el GET autenticado.
+    """
+    cuerpo = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=cuerpo, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", "Bearer {0}".format(id_token))
+
+    try:
+        with _abrir(req, timeout=TIMEOUT_SEGUNDOS) as respuesta:
+            texto = respuesta.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        # _levantar_error_http lanza (401/http) o devuelve None (404).
+        return _levantar_error_http(e, es_firestore=True)
+    except (urllib.error.URLError, socket.timeout):
+        _levantar_error_red(
+            "No se pudo contactar VFXFlow (revisá tu conexión a internet)."
+        )
+
+    try:
+        return json.loads(texto)
+    except (ValueError, TypeError):
+        raise VfxFlowAuthError(
+            "VFXFlow respondió con un JSON inválido.", codigo="respuesta"
+        )
+
+
 def _levantar_error_http(e, es_firestore=False):
     """Convierte un HTTPError de urllib en un VfxFlowAuthError con codigo."""
     mensaje_servidor = ""
@@ -535,6 +569,39 @@ def _levantar_error_http(e, es_firestore=False):
 # --------------------------------------------------------------------------
 
 
+def _aplanar_firestore_valor(valor):
+    """Convierte un Value de Firestore (REST) a Python (recursivo).
+
+    Cada entrada de un `arrayValue` es un Value; un map se resuelve a su vez
+    con `_aplanar_firestore_fields`. Puro.
+    """
+    if not isinstance(valor, dict):
+        return valor
+    if "stringValue" in valor:
+        return valor["stringValue"]
+    if "booleanValue" in valor:
+        return valor["booleanValue"] in (True, "true", "TRUE")
+    if "integerValue" in valor:
+        try:
+            return int(valor["integerValue"])
+        except (TypeError, ValueError):
+            return valor["integerValue"]
+    if "doubleValue" in valor:
+        return valor["doubleValue"]
+    if "timestampValue" in valor:
+        return valor["timestampValue"]
+    if "nullValue" in valor:
+        return None
+    if "mapValue" in valor:
+        return _aplanar_firestore_fields(valor["mapValue"].get("fields"))
+    if "arrayValue" in valor:
+        return [
+            _aplanar_firestore_valor(item)
+            for item in valor["arrayValue"].get("values", [])
+        ]
+    return None
+
+
 def _aplanar_firestore_fields(fields):
     """Convierte `fields` de Firestore (REST) en un dict plano de Python.
 
@@ -542,7 +609,8 @@ def _aplanar_firestore_fields(fields):
         {"role": {"stringValue": "artist"}}  ->  {"role": "artist"}
 
     Soportados: stringValue, booleanValue, integerValue, doubleValue,
-    timestampValue y nullValue. Los valores desconocidos se omiten.
+    timestampValue, nullValue, mapValue (recursivo) y arrayValue de esos
+    mismos tipos. Los valores desconocidos se omiten.
     """
     planos = {}
     if not isinstance(fields, dict):
@@ -551,21 +619,9 @@ def _aplanar_firestore_fields(fields):
         if not isinstance(valor, dict):
             planos[clave] = valor
             continue
-        if "stringValue" in valor:
-            planos[clave] = valor["stringValue"]
-        elif "booleanValue" in valor:
-            planos[clave] = valor["booleanValue"] in (True, "true", "TRUE")
-        elif "integerValue" in valor:
-            try:
-                planos[clave] = int(valor["integerValue"])
-            except (TypeError, ValueError):
-                planos[clave] = valor["integerValue"]
-        elif "doubleValue" in valor:
-            planos[clave] = valor["doubleValue"]
-        elif "timestampValue" in valor:
-            planos[clave] = valor["timestampValue"]
-        elif "nullValue" in valor:
-            planos[clave] = None
+        convertido = _aplanar_firestore_valor(valor)
+        if convertido is not None or "nullValue" in valor:
+            planos[clave] = convertido
     return planos
 
 

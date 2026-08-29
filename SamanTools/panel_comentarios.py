@@ -1,22 +1,35 @@
 """
-SamanTools.panel_comentarios - Panel docked "Comentarios por Plano" (v1 login).
+SamanTools.panel_comentarios - Panel docked "Comentarios por Plano".
 
 Ventana acoplable de Nuke que muestra el contexto del plano activo
-(proyecto, capitulo, plano) parseado con `SamanTools.nombres` y permite
-iniciar sesion contra VFXFlow (Firebase).
+(proyecto, capitulo, plano) parseado con `SamanTools.nombres`, permite
+iniciar sesion contra VFXFlow (Firebase) y muestra el feed de actividad del
+plano activo (SOLO LECTURA, v1.6.1) leido desde Firestore.
 
-v1 = contexto del plano + login. La logica de auth REST vive en
-`vfxflow_auth` (pura, testeable) y la persistencia segura del refresh token
-en `sesion_vfxflow`. En v2 este panel leera/escribira comentarios por plano.
+La logica de auth REST vive en `vfxflow_auth` (pura, testeable), la
+persistencia segura del refresh token en `sesion_vfxflow` y la resolucion de
+planos/actividad (cadena proyecto -> capitulo -> shot -> actividad) en
+`vfxflow_datos`. La red SIEMPRE corre en un thread daemon y un QTimer del
+hilo principal observa/publica resultados (regla Qt: la UI se toca solo desde
+el hilo principal).
+
+El feed de actividad reemplaza el QTextBrowser de la v1.6.0 por un
+QScrollArea de cards. En v1.6.1 todo es solo consulta: el combo "Estado" y el
+input de comentario estan deshabilitados (el envio y el cambio de estado son
+v1.6.2). El avatar por foto (userPhotoURL) tambien queda documentado para
+despues: v1.6.1 muestra la INICIAL del usuario.
 
 Import de PySide con el patron de `frame_manager` (try PySide2, except
 PySide6) para mantener compatibilidad entre Nuke 14 y 17.
 """
 
+import html
 import os
+import re
 import threading
 import time
 import webbrowser
+from datetime import datetime, timezone
 
 import nuke
 
@@ -32,6 +45,7 @@ except ImportError:
 from . import sesion_vfxflow
 from . import vfxflow_auth
 from . import vfxflow_config
+from . import vfxflow_datos
 
 _ID_PANEL = "pe.saman.vfxflow.comentarios"
 _NOMBRE_PANEL = "Comentarios por Plano — SamanTools"
@@ -56,6 +70,250 @@ _MENSAJE_FIREWALL_GOOGLE = (
     "firestore.googleapis.com."
 )
 
+# Mensajes del area de actividad (copia UI en espanol).
+_MENSAJE_PLANO_NO_IDENTIFICADO = (
+    "Plano no identificado: guardá el comp con la convención "
+    "{PROYECTO}_{EP}_{escena}_{shot}_V{nn}."
+)
+_MENSAJE_SIN_SESION = "Iniciá sesión para ver actividad."
+_MENSAJE_SIN_ACTIVIDAD = "Sin actividad para este plano."
+
+# Intervalo del QTimer que observa el resultado del fetch de actividad.
+_COMENTARIOS_POLL_MS = 500
+
+# Banderas de tiempo relativo (espanol) para el feed de actividad.
+_DIA_SEGUNDOS = 86400
+_MES_SEGUNDOS = 30 * _DIA_SEGUNDOS
+_ANIO_SEGUNDOS = 365 * _DIA_SEGUNDOS
+
+
+# --------------------------------------------------------- helpers puros
+
+def _escapar_y_linkificar(texto):
+    """Escapa `texto` e hipervincula las URLs `https?://\\S+` (HTML seguro).
+
+    Escapa TODO el texto primero (nunca HTML arbitrario) y envuelve las URLs
+    resultantes en `<a href="...">`. Devuelve HTML seguro para las labels de
+    las cards del feed (que abren los links con QLabel.setOpenExternalLinks).
+    """
+    if not texto:
+        return ""
+    escapado = html.escape(str(texto))
+
+    def _enlace(m):
+        url = m.group(0)
+        return '<a href="{0}">{1}</a>'.format(url, url)
+
+    return re.sub(r"https?://\S+", _enlace, escapado)
+
+
+def _tiempo_relativo(creado_en):
+    """Tiempo relativo en espanol desde `creado_en` (ISO 8601) hasta ahora.
+
+    "ahora" (<1 min), "hace Xm" (<60 min), "hace Xh" (<24 h), "hace Xd"
+    (<30 dias), "hace Xmes" (1 mes singular / X meses) y "hace Xa"
+    (>=365 dias). Compara contra `datetime.now(timezone.utc)`; acepta ISO con
+    'Z' o con offset. Si no se puede parsear, devuelve el string recortado a
+    19 caracteres. Puro (para testear sin QApplication).
+    """
+    if not creado_en:
+        return ""
+    try:
+        texto = str(creado_en)
+        if texto.endswith("Z"):
+            texto = texto[:-1] + "+00:00"
+        instante = datetime.fromisoformat(texto)
+        if instante.tzinfo is None:
+            instante = instante.replace(tzinfo=timezone.utc)
+        segundos = (datetime.now(timezone.utc) - instante).total_seconds()
+    except (TypeError, ValueError):
+        return str(creado_en)[:19]
+    if segundos < 60:
+        return "ahora"
+    if segundos < 60 * 60:
+        return "hace {0}m".format(int(segundos // 60))
+    if segundos < _DIA_SEGUNDOS:
+        return "hace {0}h".format(int(segundos // 3600))
+    if segundos < _MES_SEGUNDOS:
+        return "hace {0}d".format(int(segundos // _DIA_SEGUNDOS))
+    if segundos < _ANIO_SEGUNDOS:
+        meses = int(segundos // _MES_SEGUNDOS)
+        return "hace 1 mes" if meses == 1 else "hace {0} meses".format(meses)
+    anios = int(segundos // _ANIO_SEGUNDOS)
+    return "hace {0}a".format(anios)
+
+
+def _inicial_avatar(nombre):
+    """Inicial para el avatar circular de la card; '?' si no hay nombre. Puro.
+
+    v1.6.1 no descarga userPhotoURL: el avatar por URL queda documentado para
+    una versión posterior (la inicial no depende de red ni de fakes Qt).
+    """
+    nombre = str(nombre or "").strip()
+    if not nombre:
+        return "?"
+    return nombre[0].upper()
+
+
+def _abreviar_nombre(nombre):
+    """Abrevia un nombre a "Primer Apellido." (o el nombre si es uno solo)."""
+    partes = [p for p in str(nombre or "").split() if p]
+    if not partes:
+        return "?"
+    if len(partes) == 1:
+        return partes[0]
+    return "{0} {1}.".format(partes[0], partes[1][0])
+
+
+def _resumen_asignados(assignees):
+    """Resumen legible de assignees: "Emanuel B. (+2)" o "—" si no hay datos.
+
+    Usa `primaryName` (abreviado) y cuenta los `secondaryNames`. Puro.
+    """
+    if not isinstance(assignees, dict):
+        return "—"
+    primario = _abreviar_nombre(assignees.get("primaryName")) if assignees.get("primaryName") else None
+    secundarios = assignees.get("secondaryNames") or []
+    if primario and secundarios:
+        return "{0} (+{1})".format(primario, len(secundarios))
+    if primario:
+        return primario
+    if secundarios:
+        return "(+{0})".format(len(secundarios))
+    return "—"
+
+
+def _es_verdadero(valor):
+    """Interpreta un booleano de Firestore (bool o su string) como True/False."""
+    if isinstance(valor, bool):
+        return valor
+    return str(valor or "").strip().lower() in ("true", "1")
+
+
+def _estado_cambiada(actividad):
+    """Texto sintetizado de status_change cuando content llega vacio."""
+    prev = actividad.get("previousStateName") or "desconocido"
+    nuevo = actividad.get("newStateName") or "desconocido"
+    return "Estado cambiado de '{0}' a '{1}'".format(prev, nuevo)
+
+
+def _chips_estados(actividad):
+    """Badges (previo, nuevo) de estados; None si faltan los dos nombres."""
+    prev = actividad.get("previousStateName")
+    nuevo = actividad.get("newStateName")
+    if prev and nuevo:
+        return (str(prev), str(nuevo))
+    return None
+
+
+def _formatear_version(valor):
+    """"V<valor>" sin duplicar la 'V' si el dato ya viene con ella (o None)."""
+    if valor is None:
+        return None
+    texto = str(valor).strip()
+    if not texto:
+        return None
+    if not texto.startswith(("V", "v")):
+        texto = "V" + texto
+    return texto.upper()
+
+
+def _versiones_diferentes(actividad):
+    """"V<prev> → V<new>" solo si ambas versiones existen y difieren."""
+    prev = _formatear_version(actividad.get("previousVersion"))
+    nuevo = _formatear_version(actividad.get("newVersion"))
+    if prev is None or nuevo is None or prev == nuevo:
+        return None
+    return "{0} → {1}".format(prev, nuevo)
+
+
+def _texto_tarea(actividad):
+    """Línea de task_update: "Tarea '<taskName>' completada/pendiente"."""
+    nombre = actividad.get("taskName") or ""
+    estado = "completada" if _es_verdadero(actividad.get("completed")) else "pendiente"
+    if nombre:
+        return "Tarea '{0}' {1}".format(nombre, estado)
+    return "Tarea {0}".format(estado)
+
+
+def _texto_asignacion(actividad):
+    """Línea de assignment_change con resúmenes de previo/nuevo asignado."""
+    prev = _resumen_asignados(actividad.get("previousAssignees"))
+    nuevo = _resumen_asignados(actividad.get("newAssignees"))
+    return "Asignación cambiada: {0} → {1}".format(prev, nuevo)
+
+
+def _html_archivos(actividad):
+    """HTML (seguro) del cuerpo de file_upload: una línea por attachment.
+
+    Para `type=="image"` muestra "[imagen] <name>" (NO baja la imagen en
+    v1.6.1, solo se muestra el link); para el resto "Adjuntó: <name>". Si hay
+    `url`, queda clicable. Sin attachments usa `content`.
+    """
+    adjuntos = actividad.get("attachments")
+    if not adjuntos:
+        return _escapar_y_linkificar(actividad.get("content") or "")
+    lineas = []
+    for adj in adjuntos:
+        if not isinstance(adj, dict):
+            continue
+        tipo = adj.get("type")
+        nombre = (adj.get("name") or "").strip()
+        url = adj.get("url") or ""
+        if tipo == "image":
+            texto = "[imagen] {0}".format(nombre) if nombre else "[imagen]"
+        else:
+            texto = "Adjuntó: {0}".format(nombre) if nombre else "Adjuntó un archivo"
+        if url:
+            texto = "{0}  {1}".format(texto, url)
+        lineas.append(texto)
+    return "<br/>".join(_escapar_y_linkificar(l) for l in lineas)
+
+
+def _cuerpo_actividad(actividad):
+    """Cuerpo de una card según el type (HTML seguro) + extras. Puro.
+
+    Devuelve {"html", "chips", "versiones"}:
+      - "html": línea(s) del cuerpo, HTML seguro con URLs enlazadas.
+      - "chips": (previo, nuevo) o None; badges de estados (status/batch).
+      - "versiones": "V<prev> → V<new>" o None (batch_update).
+
+    El feed es de actividad completa: los 8 tipos de shotActivity se muestran
+    como cards (comentarios, archivos, estados, versiones, tareas, asignación).
+    """
+    tipo = actividad.get("type")
+    content = actividad.get("content")
+    if tipo == "comment":
+        return {"html": _escapar_y_linkificar(content), "chips": None, "versiones": None}
+    if tipo == "reply":
+        return {"html": _escapar_y_linkificar("↳ {0}".format(content or "")), "chips": None, "versiones": None}
+    if tipo == "file_upload":
+        return {"html": _html_archivos(actividad), "chips": None, "versiones": None}
+    if tipo == "status_change":
+        texto = content or _estado_cambiada(actividad)
+        return {"html": _escapar_y_linkificar(texto), "chips": _chips_estados(actividad), "versiones": None}
+    if tipo == "version_update":
+        texto = content
+        if not texto:
+            prev = _formatear_version(actividad.get("previousVersion"))
+            nuevo = _formatear_version(actividad.get("newVersion"))
+            if prev and nuevo:
+                texto = "Versión actualizada de {0} a {1}".format(prev, nuevo)
+            else:
+                texto = "Versión actualizada"
+        return {"html": _escapar_y_linkificar(texto), "chips": None, "versiones": None}
+    if tipo == "task_update":
+        return {"html": _escapar_y_linkificar(_texto_tarea(actividad)), "chips": None, "versiones": None}
+    if tipo == "batch_update":
+        return {
+            "html": _escapar_y_linkificar(content or ""),
+            "chips": _chips_estados(actividad),
+            "versiones": _versiones_diferentes(actividad),
+        }
+    if tipo == "assignment_change":
+        return {"html": _escapar_y_linkificar(_texto_asignacion(actividad)), "chips": None, "versiones": None}
+    return {"html": _escapar_y_linkificar(content or ""), "chips": None, "versiones": None}
+
 
 class PanelComentarios(QtWidgets.QWidget):
     """Widget docked: contexto del plano activo + login a VFXFlow."""
@@ -73,9 +331,16 @@ class PanelComentarios(QtWidgets.QWidget):
         self._loopback_trabajo_en_curso = False
         self._loopback_tiempo_trabajo_inicio = 0.0
 
+        # Estado del fetch de comentarios en worker (misma regla que loopback):
+        # `_comentarios_trabajo` publica "pendiente"/"ok"/"error" + datos y el
+        # QTimer (`_poll_comentarios`) lo aplica a la UI en el hilo principal.
+        self._comentarios_trabajo = None
+        self._comentarios_trabajo_en_curso = False
+
         self._construir_ui()
         self._mostrar_plano_activo()
         self._autologin_si_hay_sesion()
+        self._cargar_comentarios_del_plano()
 
     # ------------------------------------------------------------- UI
 
@@ -110,11 +375,84 @@ class PanelComentarios(QtWidgets.QWidget):
         self._boton_google.clicked.connect(self._on_login_google)
         form.addRow(self._boton_google)
         layout.addWidget(seccion_login)
+        self._seccion_login = seccion_login
+
+        seccion_sesion = QtWidgets.QGroupBox("Sesión VFXFlow", self)
+        form_sesion = QtWidgets.QFormLayout(seccion_sesion)
+        self._label_conectado = QtWidgets.QLabel("—", self)
+        form_sesion.addRow("Conectado", self._label_conectado)
+        self._boton_desconectar = QtWidgets.QPushButton(
+            "Desconectar", self
+        )
+        self._boton_desconectar.clicked.connect(self._on_desconectar)
+        form_sesion.addRow(self._boton_desconectar)
+        layout.addWidget(seccion_sesion)
+        self._seccion_sesion = seccion_sesion
+
+        seccion_comentarios = QtWidgets.QGroupBox("Actividad por Plano", self)
+        lay_comentarios = QtWidgets.QVBoxLayout(seccion_comentarios)
+
+        # Header (v1.6.1): plano identificado + combo de estado deshabilitado.
+        fila_header = QtWidgets.QHBoxLayout()
+        self._header_plano = QtWidgets.QLabel("—", seccion_comentarios)
+        self._header_plano.setStyleSheet("font-weight: bold;")
+        fila_header.addWidget(self._header_plano)
+        fila_header.addStretch(1)
+        self._combo_estado = QtWidgets.QComboBox(seccion_comentarios)
+        self._combo_estado.addItem("Estado")
+        self._combo_estado.setEnabled(False)  # v1.6.2 lo activa (solo lectura ahora)
+        fila_header.addWidget(self._combo_estado)
+        lay_comentarios.addLayout(fila_header)
+
+        self._label_usuario = QtWidgets.QLabel("Usuario: —", seccion_comentarios)
+        lay_comentarios.addWidget(self._label_usuario)
+
+        # Input de comentario (v1.6.1 SOLO LECTURA: el envío es v1.6.2).
+        fila_input = QtWidgets.QHBoxLayout()
+        self._input_comentario = QtWidgets.QLineEdit(seccion_comentarios)
+        self._input_comentario.setPlaceholderText("Escribe comentario.")
+        self._input_comentario.setEnabled(False)
+        fila_input.addWidget(self._input_comentario)
+        self._boton_enviar = QtWidgets.QPushButton("➔", seccion_comentarios)
+        self._boton_enviar.setEnabled(False)
+        fila_input.addWidget(self._boton_enviar)
+        lay_comentarios.addLayout(fila_input)
+
+        # Feed header: título + botón de refresco (reemplaza "Actualizar comentarios").
+        fila_feed = QtWidgets.QHBoxLayout()
+        label_titulo_feed = QtWidgets.QLabel("Actividad Reciente", seccion_comentarios)
+        label_titulo_feed.setStyleSheet("font-weight: bold;")
+        fila_feed.addWidget(label_titulo_feed)
+        fila_feed.addStretch(1)
+        self._boton_refrescar = QtWidgets.QPushButton("↻", seccion_comentarios)
+        self._boton_refrescar.setToolTip("Actualizar actividad")
+        self._boton_refrescar.clicked.connect(self._on_actualizar_comentarios)
+        fila_feed.addWidget(self._boton_refrescar)
+        lay_comentarios.addLayout(fila_feed)
+
+        # Feed de cards: QScrollArea con contenedor vertical de cards.
+        self._scroll_actividad = QtWidgets.QScrollArea(seccion_comentarios)
+        self._scroll_actividad.setWidgetResizable(True)
+        self._scroll_actividad.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._widget_contenido_actividad = QtWidgets.QWidget(self._scroll_actividad)
+        self._layout_actividad = QtWidgets.QVBoxLayout(self._widget_contenido_actividad)
+        self._layout_actividad.setContentsMargins(0, 0, 0, 0)
+        self._scroll_actividad.setWidget(self._widget_contenido_actividad)
+        self._scroll_actividad.setMinimumHeight(160)
+        lay_comentarios.addWidget(self._scroll_actividad)
+
+        self._label_mensaje_actividad = QtWidgets.QLabel(self._widget_contenido_actividad)
+        self._label_mensaje_actividad.setWordWrap(True)
+        layout.addWidget(seccion_comentarios)
+        self._seccion_comentarios = seccion_comentarios
 
         self._etiqueta_estado = QtWidgets.QLabel(self)
         self._etiqueta_estado.setWordWrap(True)
         layout.addWidget(self._etiqueta_estado)
         layout.addStretch(1)
+
+        # Estado inicial: sin sesión, se muestra el login (la sesión se oculta).
+        self._aplicar_estado_sesion_ui()
 
     def _fila_contexto(self, grilla, fila, nombre):
         grilla.addWidget(QtWidgets.QLabel(nombre), fila, 0)
@@ -124,16 +462,31 @@ class PanelComentarios(QtWidgets.QWidget):
 
     # ---------------------------------------------------- contexto del plano
 
+    def _plano_activo(self):
+        """Dict de `nombres.parsear_plato` del comp abierto, o None.
+
+        Sin comp guardado o sin parseo posible => None. Nunca lanza.
+        """
+        try:
+            from SamanTools import nombres
+
+            ruta = nuke.root().name() or ""
+            if not ruta:
+                return None
+            return nombres.parsear_plato(ruta)
+        except Exception:
+            return None
+
     def _mostrar_plano_activo(self):
         """Rellena las etiquetas de contexto desde el comp abierto.
 
         Sin comp guardado o sin parseo posible => '—'. Nunca lanza.
         """
         try:
-            from SamanTools import entorno, nombres
+            from SamanTools import entorno
 
             ruta = nuke.root().name() or ""
-            datos = nombres.parsear_plato(ruta) if ruta else None
+            datos = self._plano_activo()
 
             proyecto = datos.get("proyecto") if datos else None
             if not proyecto:
@@ -150,6 +503,35 @@ class PanelComentarios(QtWidgets.QWidget):
             self._label_proyecto.setText("—")
             self._label_capitulo.setText("—")
             self._label_plano.setText("—")
+        self._header_plano.setText(self._header_plano_texto())
+
+    def _header_plano_texto(self):
+        """Texto del header de la sección: "{proyecto}_{capitulo}_{plano}".
+
+        Reconstruye el identificador del plano desde `nombres.parsear_plato`
+        (sin versión ni extensión; el `canonico` las incluye y el header del
+        mock solo muestra el plano). Sin plano identificado => "—".
+        """
+        try:
+            datos = self._plano_activo() or {}
+        except Exception:
+            return "—"
+        proyecto = datos.get("proyecto")
+        capitulo = datos.get("capitulo")
+        plano = datos.get("plano")
+        if proyecto and capitulo is not None and plano:
+            return "{0}_{1}_{2}".format(proyecto, capitulo, plano)
+        return "—"
+
+    def _actualizar_label_usuario(self, conectado):
+        """Refresca "Usuario: <email>" (o "Usuario: —") del header de actividad."""
+        label = getattr(self, "_label_usuario", None)
+        if label is None:
+            return
+        if conectado:
+            label.setText("Usuario: {0}".format(self.sesion["email"]))
+        else:
+            label.setText("Usuario: —")
 
     # --------------------------------------------------------------- login
 
@@ -170,6 +552,7 @@ class PanelComentarios(QtWidgets.QWidget):
             )
             rol = usuario.get("role") or "artist"
             self._estado("Conectado como %s (%s)" % (email, rol))
+            self._aplicar_estado_sesion_ui()
         except vfxflow_auth.VfxFlowAuthError as e:
             self._estado(str(e), error=True)
         except Exception as e:
@@ -310,6 +693,7 @@ class PanelComentarios(QtWidgets.QWidget):
             )
             rol = usuario.get("role") or "artist"
             self._estado("Conectado como %s (%s)" % (email, rol))
+            self._aplicar_estado_sesion_ui()
         except vfxflow_auth.VfxFlowAuthError as e:
             self._estado(str(e), error=True)
         except Exception as e:
@@ -461,6 +845,7 @@ class PanelComentarios(QtWidgets.QWidget):
             self._estado(
                 "Conectado como %s (%s)" % (trabajo["email"], trabajo["rol"])
             )
+            self._aplicar_estado_sesion_ui()
         else:
             self._estado(
                 self._mensaje_error_login_google(
@@ -552,6 +937,39 @@ class PanelComentarios(QtWidgets.QWidget):
         self._boton_login.setEnabled(True)
         self._boton_google.setEnabled(True)
 
+    def _aplicar_estado_sesion_ui(self):
+        """Muestra login o sesión según haya una sesión activa.
+
+        Con sesión en memoria se oculta la sección "Login VFXFlow" y se
+        muestra "Sesión VFXFlow" con el email conectado y el botón para
+        desconectar; sin sesión, lo inverso. Tolerante a widgets ausentes
+        (instancias de prueba creadas con `__new__`): si no se construyó la
+        UI no hace nada.
+        """
+        if not getattr(self, "_seccion_login", None):
+            return
+        conectado = bool(self.sesion and self.sesion.get("email"))
+        self._seccion_login.setVisible(not conectado)
+        self._seccion_sesion.setVisible(conectado)
+        if conectado:
+            self._label_conectado.setText(self.sesion["email"])
+        self._actualizar_label_usuario(conectado)
+
+    def _on_desconectar(self):
+        """Cierra la sesión local (y la persistida) y vuelve al login.
+
+        No revoca el refresh_token en Google ni en VFXFlow: el usuario puede
+        volver a entrar sin reautorizar; desconectar solo saca los tokens del
+        equipo. Nunca lanza.
+        """
+        try:
+            sesion_vfxflow.borrar_sesion()
+        except Exception:
+            pass
+        self.sesion = None
+        self._aplicar_estado_sesion_ui()
+        self._estado("Sesión cerrada.")
+
     def _registrar_sesion(self, respuesta, email=None):
         """Guarda la sesion en memoria y persiste refresh_token en disco."""
         sesion_previa = self.sesion or {}
@@ -608,6 +1026,7 @@ class PanelComentarios(QtWidgets.QWidget):
                 self._estado("Reconectado como %s" % email)
             else:
                 self._estado("Reconectado con VFXFlow.")
+            self._aplicar_estado_sesion_ui()
         except Exception:
             sesion_vfxflow.borrar_sesion()
 
@@ -654,6 +1073,247 @@ class PanelComentarios(QtWidgets.QWidget):
             ) > segundos
         except OSError:
             return True
+
+    # ------------------------------------------------------ actividad del plano
+
+    def _on_actualizar_comentarios(self):
+        """Botón "↻" del feed: dispara el fetch de actividad del plano activo."""
+        self._cargar_comentarios_del_plano()
+
+    def _cargar_comentarios_del_plano(self):
+        """Dispara el fetch de actividad del plano activo (worker daemon).
+
+        Precondiciones antes de tocar la red: plano identificado y sesión con
+        id_token vigente. Sin plano o sin token NO se lanza query: se muestra
+        el mensaje correspondiente en el área de actividad. Con las
+        precondiciones listas publica `pendiente` en `_comentarios_trabajo`,
+        corre el fetch en un thread daemon y programa el QTimer que aplica el
+        resultado a la UI (nunca se tocan widgets desde el worker).
+        """
+        plano = self._plano_activo()
+        if plano is None:
+            self._mostrar_mensaje_actividad(_MENSAJE_PLANO_NO_IDENTIFICADO)
+            self._estado(_MENSAJE_PLANO_NO_IDENTIFICADO)
+            return
+
+        token = self._id_token_actual()
+        if not token:
+            self._mostrar_mensaje_actividad(_MENSAJE_SIN_SESION)
+            self._estado(_MENSAJE_SIN_SESION)
+            return
+
+        if getattr(self, "_comentarios_trabajo_en_curso", False):
+            return  # ya hay un worker de actividad en vuelo
+
+        self._comentarios_trabajo_en_curso = True
+        self._comentarios_trabajo = {"estado": "pendiente"}
+        self._estado("Cargando actividad…")
+        threading.Thread(
+            target=self._trabajo_comentarios,
+            args=(plano, token),
+            daemon=True,
+        ).start()
+        QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_comentarios)
+
+    def _trabajo_comentarios(self, plano, token):
+        """Worker daemon: resuelve el shot y lee la actividad de Firestore.
+
+        Nunca toca widgets: publica el resultado en `_comentarios_trabajo`
+        ("ok" con la lista, o "error" con mensaje/codigo). El QTimer
+        (`_poll_comentarios`) es quien aplica a la UI. Los "no encontrado" de
+        la resolucion son un error de datos (no de red): mensaje normalizado.
+        """
+        try:
+            resuelto = vfxflow_datos.resolver_plano(plano, token)
+            if resuelto is None or resuelto.get("error"):
+                self._comentarios_trabajo = {
+                    "estado": "error",
+                    "mensaje": self._mensaje_error_resolucion(resuelto),
+                    "codigo": "resolucion",
+                }
+                return
+            actividad = vfxflow_datos.listar_actividad(
+                resuelto["project_id"], resuelto["shot_id"], token
+            )
+            self._comentarios_trabajo = {
+                "estado": "ok",
+                "comentarios": actividad,
+            }
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._comentarios_trabajo = {
+                "estado": "error",
+                "mensaje": str(e),
+                "codigo": e.codigo,
+            }
+        except Exception as e:
+            self._comentarios_trabajo = {
+                "estado": "error",
+                "mensaje": "Error inesperado: %s" % e,
+                "codigo": "desconocido",
+            }
+
+    def _poll_comentarios(self):
+        """Tick del QTimer (hilo principal): aplica el resultado del fetch.
+
+        Solo observa `_comentarios_trabajo` (nunca toca widgets desde el
+        worker). Mientras es "pendiente" reprograma el tick; con "ok"/"error"
+        publica en la UI y libera `_comentarios_trabajo_en_curso`.
+        """
+        if not getattr(self, "_comentarios_trabajo_en_curso", False):
+            return
+        trabajo = self._comentarios_trabajo or {}
+        estado = trabajo.get("estado")
+
+        if estado == "pendiente":
+            QtCore.QTimer.singleShot(
+                _COMENTARIOS_POLL_MS, self._poll_comentarios
+            )
+            return
+
+        self._comentarios_trabajo_en_curso = False
+        if estado == "ok":
+            self._publicar_actividad(trabajo.get("comentarios") or [])
+        else:
+            self._aplicar_error_actividad(trabajo)
+
+    # ------------------------------------------------- feed de cards
+
+    def _limpiar_feed(self):
+        """Quita todas las cards (y el mensaje) del layout del feed."""
+        layout = getattr(self, "_layout_actividad", None)
+        if layout is None:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+
+    def _crear_card_actividad(self, actividad):
+        """Construye la QFrame de una actividad (header + cuerpo por tipo)."""
+        card = QtWidgets.QFrame(self._widget_contenido_actividad)
+        card.setStyleSheet(
+            "QFrame { border:1px solid #d4d4d4; border-radius:6px; "
+            "background-color:#fafafa; padding:6px; }"
+        )
+        lay_card = QtWidgets.QVBoxLayout(card)
+        lay_card.setContentsMargins(8, 6, 8, 6)
+
+        # Fila avatar (inicial) + autor + rol + tiempo relativo.
+        fila_autor = QtWidgets.QHBoxLayout()
+        avatar = QtWidgets.QLabel(_inicial_avatar(actividad.get("userName")), card)
+        avatar.setFixedSize(24, 24)
+        avatar.setAlignment(QtAlignment.AlignCenter)
+        avatar.setStyleSheet(
+            "QLabel { background-color:#4a6fa5; color:#ffffff; "
+            "border-radius:12px; font-weight:bold; }"
+        )
+        fila_autor.addWidget(avatar)
+        autor = QtWidgets.QLabel(actividad.get("userName") or "Anónimo", card)
+        autor.setStyleSheet("font-weight: bold;")
+        fila_autor.addWidget(autor)
+        rol = actividad.get("userRole") or ""
+        if rol:
+            label_rol = QtWidgets.QLabel("[{0}]".format(rol), card)
+            label_rol.setStyleSheet("color:#888888;")
+            fila_autor.addWidget(label_rol)
+        fila_autor.addStretch(1)
+        tiempo = QtWidgets.QLabel(_tiempo_relativo(actividad.get("createdAt")), card)
+        tiempo.setStyleSheet("color:#888888;")
+        fila_autor.addWidget(tiempo)
+        lay_card.addLayout(fila_autor)
+
+        # Cuerpo segun el tipo de actividad (puro y testeable).
+        cuerpo = _cuerpo_actividad(actividad)
+        if cuerpo["html"]:
+            label_cuerpo = QtWidgets.QLabel(cuerpo["html"], card)
+            label_cuerpo.setWordWrap(True)
+            label_cuerpo.setTextFormat(QtCore.Qt.RichText)
+            label_cuerpo.setOpenExternalLinks(True)
+            lay_card.addWidget(label_cuerpo)
+        if cuerpo["chips"] is not None:
+            previo, nuevo = cuerpo["chips"]
+            fila_estados = QtWidgets.QHBoxLayout()
+            fila_estados.addWidget(self._chip_estado(previo, card))
+            flecha = QtWidgets.QLabel("➔", card)
+            fila_estados.addWidget(flecha, 0, QtAlignment.AlignCenter)
+            fila_estados.addWidget(self._chip_estado(nuevo, card))
+            fila_estados.addStretch(1)
+            lay_card.addLayout(fila_estados)
+        if cuerpo.get("versiones"):
+            label_version = QtWidgets.QLabel(cuerpo["versiones"], card)
+            label_version.setStyleSheet("color:#555555;")
+            lay_card.addWidget(label_version)
+        return card
+
+    def _chip_estado(self, texto, parent):
+        """Label estilo chip para los badges de estados (nunca hardcodeados)."""
+        chip = QtWidgets.QLabel(str(texto), parent)
+        chip.setStyleSheet(
+            "QLabel { background-color:#e8eef7; border:1px solid #b8cbe0; "
+            "border-radius:9px; padding:2px 8px; color:#2c3e50; }"
+        )
+        chip.setAlignment(QtAlignment.AlignCenter)
+        return chip
+
+    def _publicar_actividad(self, actividad):
+        """Pinta las cards del feed (o el mensaje de vacio) en la UI."""
+        if not actividad:
+            self._mostrar_mensaje_actividad(_MENSAJE_SIN_ACTIVIDAD)
+            self._estado(_MENSAJE_SIN_ACTIVIDAD)
+            return
+        self._limpiar_feed()
+        for item in actividad:
+            self._layout_actividad.addWidget(self._crear_card_actividad(item))
+        self._layout_actividad.addStretch(1)
+        cantidad = len(actividad)
+        self._estado(
+            "%d actividad%s."
+            % (cantidad, "es" if cantidad != 1 else "")
+        )
+
+    def _aplicar_error_actividad(self, trabajo):
+        """Publica un error del fetch: firewall para "red", texto si no."""
+        mensaje = trabajo.get("mensaje") or "No se pudieron cargar los comentarios."
+        codigo = trabajo.get("codigo")
+        if codigo == "red":
+            texto = self._mensaje_error_login_google(mensaje, codigo)
+        else:
+            texto = mensaje
+        self._mostrar_mensaje_actividad(texto, error=True)
+        self._estado(texto, error=True)
+
+    def _mensaje_error_resolucion(self, resuelto):
+        """Texto del error de resolucion (plano sin registrar en VFXFlow)."""
+        error = (resuelto or {}).get("error")
+        if error == "proyecto_no_encontrado":
+            return "El proyecto '{0}' no está en VFXFlow.".format(
+                (resuelto or {}).get("proyecto")
+            )
+        if error == "capitulo_no_encontrado":
+            return "El capítulo {0} no está en VFXFlow.".format(
+                (resuelto or {}).get("capitulo")
+            )
+        if error == "plano_no_encontrado":
+            return "El plano '{0}' no está en VFXFlow.".format(
+                (resuelto or {}).get("plano")
+            )
+        return "El plano no se encontró en VFXFlow."
+
+    def _mostrar_mensaje_actividad(self, texto, error=False):
+        """Pinta un mensaje placeholder en el área del feed (reemplaza cards)."""
+        self._limpiar_feed()
+        label = getattr(self, "_label_mensaje_actividad", None)
+        if label is None or getattr(self, "_layout_actividad", None) is None:
+            return
+        label.setText(texto)
+        label.setStyleSheet(
+            "color:#c0392b;font-style:italic;"
+            if error
+            else "color:#888;font-style:italic;"
+        )
+        self._layout_actividad.addWidget(label)
+        self._layout_actividad.addStretch(1)
 
     # ------------------------------------------------------------ utilidad
 
