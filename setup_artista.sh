@@ -1,49 +1,70 @@
 #!/usr/bin/env bash
 #
-# setup_artista.sh — Configura SamanTools en ~/.nuke con ACTUALIZACION AUTOMATICA
-# via GitHub (repo publico). El artista lo ejecuta UNA sola vez.
+# setup_artista.sh — Instala SamanTools desde cero y lo configura con
+# auto-actualizacion via GitHub. El artista lo ejecuta UNA sola vez.
 #
-# Uso (en la maquina del artista, macOS o Linux):
-#   bash setup_artista.sh https://github.com/TU_ORG/saman-nuke-tools.git
+# Se puede ejecutar SIN tener el repo clonado:
+#
+#   macOS / Linux:
+#     curl -sL https://raw.githubusercontent.com/emanuelbarriga/saman-nuke-tools/main/setup_artista.sh | bash
+#
+#   Windows (PowerShell):
+#     Invoke-WebRequest -UseBasicParsing <misma URL> -OutFile setup_artista.sh ; bash setup_artista.sh
 #
 # Despues de esto:
-#   - Copia el bootstrap a ~/.nuke/menu.py (NO se toca nunca mas)
-#   - Clona el repo a ~/.nuke/SamanTools (checkout local)
-#   - Cada vez que el artista abre Nuke, el menú se actualiza solo
-#     (git pull silencioso, max. 1 vez cada 6h).
+#   - Clona el repo a ~/.nuke/SamanTools (checkout local).
+#   - Copia el bootstrap a ~/.nuke/menu.py.
+#   - Cada vez que el artista abre Nuke, recibe el menu SamanTools; si hay
+#     actualizacion disponible, se le avisa y decide si actualizar.
 #
 set -euo pipefail
 
-REPO_URL="${1:?Uso: setup_artista.sh <URL del repo en GitHub>}"
-TOOLS_DIR="$HOME/.nuke"
-TOOLS_CHECKOUT="$TOOLS_DIR/SamanTools"
-BOOTSTRAP="$(cd "$(dirname "$0")" && pwd)/bootstrap/menu.py"
+REPO_ORG="emanuelbarriga"
+REPO_NAME="saman-nuke-tools"
+BRANCH="main"
+REPO_URL="https://github.com/${REPO_ORG}/${REPO_NAME}.git"
+NUKE_DIR="$HOME/.nuke"
+TOOLS_CHECKOUT="$NUKE_DIR/SamanTools"
+# Sitio donde vive este script dentro del repo (para autodescargarse el bootstrap)
+RAW="https://raw.githubusercontent.com/${REPO_ORG}/${REPO_NAME}/${BRANCH}"
 
-echo "==> Preparando SamanTools en $TOOLS_DIR ..."
-mkdir -p "$TOOLS_DIR"
+echo "==> Preparando SamanTools en $NUKE_DIR ..."
+mkdir -p "$NUKE_DIR"
 
-# 1) Bootstrap menu.py (solo si no existe o es el viejo copiado de install.sh)
-if [ ! -f "$TOOLS_DIR/menu.py" ] || grep -q "SamanTools.registro" "$TOOLS_DIR/menu.py" 2>/dev/null; then
-  cp "$BOOTSTRAP" "$TOOLS_DIR/menu.py"
-  echo "    menu.py bootstrap instalado."
-else
-  echo "    menu.py bootstrap ya presente."
+# 1) Si este script se ejecuta desde un checkout local, usa su bootstrap;
+#    si se ejecuta desde curl (sin repo), baja el bootstrap del repo.
+BOOTSTRAP_SRC="${BOOTSTRAP_SRC:-}"
+if [ -z "$BOOTSTRAP_SRC" ] && [ -f "$(dirname "$0")/bootstrap/menu.py" ]; then
+  BOOTSTRAP_SRC="$(cd "$(dirname "$0")" && pwd)/bootstrap/menu.py"
+fi
+if [ -z "$BOOTSTRAP_SRC" ]; then
+  TMP_BOOT="$(mktemp)"
+  if curl -fsSL "$RAW/bootstrap/menu.py" -o "$TMP_BOOT" 2>/dev/null || \
+     wget -q "$RAW/bootstrap/menu.py" -O "$TMP_BOOT" 2>/dev/null; then
+    BOOTSTRAP_SRC="$TMP_BOOT"
+  fi
+fi
+if [ -z "$BOOTSTRAP_SRC" ]; then
+  echo "ERROR: no se pudo obtener el bootstrap (sin red / sin curl/wget)." >&2
+  exit 1
 fi
 
 # 2) Checkout git del repo (clone si falta, pull si ya existe)
 if [ ! -d "$TOOLS_CHECKOUT/.git" ]; then
   echo "    Clonando el repo (primera vez)..."
-  git clone --depth 1 "$REPO_URL" "$TOOLS_CHECKOUT"
+  git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TOOLS_CHECKOUT"
 else
   echo "    Checkout existente, actualizando..."
-  git -C "$TOOLS_CHECKOUT" pull --ff-only --quiet || true
+  git -C "$TOOLS_CHECKOUT" fetch origin "$BRANCH" --quiet
+  git -C "$TOOLS_CHECKOUT" reset --hard "origin/$BRANCH" --quiet
 fi
 
-# Inyectar el REPO_URL correcto en el bootstrap (si el template tenia TU_ORG)
-sed -i.bak "s|https://github.com/TU_ORG/saman-nuke-tools.git|$REPO_URL|" "$TOOLS_DIR/menu.py" 2>/dev/null || true
+# 3) Bootstrap menu.py (siempre: es la fuente de verdad del mantenimiento)
+cp "$BOOTSTRAP_SRC" "$NUKE_DIR/menu.py"
+echo "    menu.py bootstrap instalado."
+rm -f "${TMP_BOOT:-}"
 
 echo ""
 echo "==> LISTO. Reinicia Nuke."
-echo "    A partir de ahora SamanTools se actualiza automaticamente."
-echo "    (El artista NO necesita tocar nada nunca mas.)"
-echo "    Este mensaje NO debe mostrarse en otra maquina..."
+echo "    El menu SamanTools aparecera en la barra superior."
+echo "    Las actualizaciones llegan solas: aviso + boton Actualizar."
