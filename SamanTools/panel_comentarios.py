@@ -580,9 +580,21 @@ class PanelComentarios(QtWidgets.QWidget):
     def _autologin_si_hay_sesion(self):
         """Si hay refresh_token guardado, reconecta silenciosamente.
 
-        Ante CUALQUIER fallo borra la sesion y deja que el usuario inicie
-        sesion de nuevo. Nunca bloquea la apertura del panel.
+        GATE DE ACCESO: si la config del disco (.saman/vfxflow_config.json)
+        no esta disponible (unidad wupm no montada o archivo ausente), NO
+        autologinea ni reutiliza la sesion: la config vive tras los ACL de
+        LucidLink y sin ella no hay credenciales de app. Ante CUALQUIER
+        fallo borra la sesion y deja que el usuario inicie sesion de nuevo.
+        Nunca bloquea la apertura del panel.
         """
+        try:
+            from . import vfxflow_config
+
+            if not vfxflow_config.config_disco_disponible():
+                self._estado("Sin acceso: conectá la unidad wupm.")
+                return
+        except Exception:
+            pass  # sin config no se puede validar el acceso; no autologinear
         try:
             guardada = sesion_vfxflow.cargar_sesion()
             if not guardada or not guardada.get("refresh_token"):

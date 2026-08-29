@@ -124,3 +124,73 @@ def test_mensaje_error_login_google_firewall():
     assert "firewall" in mensaje_firewall
     assert "googleapis.com" in mensaje_firewall
     assert panel._mensaje_error_login_google("x", "http") == "x"
+
+
+def test_autologin_no_refresca_sin_config_disco(monkeypatch):
+    """Sin .saman/vfxflow_config.json el panel NO autologinea.
+
+    El gate de acceso: si la unidad wupm no esta (o falta el archivo), no se
+    reutiliza la sesion guardada ni se llama a refrescar_id_token.
+    """
+    from SamanTools import panel_comentarios, sesion_vfxflow, vfxflow_config
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._estado = lambda texto, error=False: None
+
+    monkeypatch.setattr(
+        vfxflow_config, "config_disco_disponible", lambda: False
+    )
+    monkeypatch.setattr(sesion_vfxflow, "cargar_sesion", lambda: {"refresh_token": "RT"})
+    refrescado = []
+
+    def _no_debe_llamarse(*a, **k):
+        refrescado.append(a)
+
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth, "refrescar_id_token", _no_debe_llamarse
+    )
+
+    panel._autologin_si_hay_sesion()
+
+    assert refrescado == []  # nunca refresco sin config de disco
+
+
+def test_autologin_refresca_con_config_disco(monkeypatch):
+    """Con config de disco disponible, el autologin normal sigue funcionando.
+
+    Se simula que config_disco_disponible() -> True y que refrescar_id_token
+    devuelve tokens; la sesion se registra y el panel muestra 'Reconectado'.
+    """
+    from SamanTools import panel_comentarios, sesion_vfxflow, vfxflow_config
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append(texto)
+    panel._registrar_sesion = lambda respuesta, email=None: None
+
+    monkeypatch.setattr(
+        vfxflow_config, "config_disco_disponible", lambda: True
+    )
+    monkeypatch.setattr(
+        sesion_vfxflow,
+        "cargar_sesion",
+        lambda: {"refresh_token": "RT", "email": "a@b.com"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "refrescar_id_token",
+        lambda refresh_token: {
+            "id_token": "ID",
+            "refresh_token": "RT2",
+            "expires_in": 3600,
+            "user_id": "uid",
+        },
+    )
+
+    panel._autologin_si_hay_sesion()
+
+    assert any("Reconectado como" in e for e in estados)

@@ -464,7 +464,9 @@ def test_canjear_codigo_autorizacion_no_envia_secret_si_falta(monkeypatch):
         "http://127.0.0.1:45000",
         "verifier123",
         "cliente-escritorio",
-        config={},
+        # Forzamos el secret vacio para no depender de la config efectiva real
+        # de la maquina (config_local.py puede tener uno en el entorno).
+        config={"google_client_secret": ""},
     )
     cuerpo = peticiones["datos"].decode()
     assert "client_secret" not in cuerpo
@@ -647,6 +649,25 @@ def test_obtener_config_efectiva_sin_archivo_mantiene_defaults(monkeypatch):
 
     assert cfg["google_client_id"] == ""
     assert cfg["api_key"] == vfxflow_config.VFXFLOW_CONFIG["api_key"]
+
+
+def test_config_disco_disponible_true_con_archivo(monkeypatch, tmp_path):
+    _escribir_config_disco(tmp_path, {"google_client_id": "DISCO_ID"})
+    monkeypatch.setattr(vfxflow_config, "entorno", EntornoFalso(base=str(tmp_path)))
+
+    assert vfxflow_config.config_disco_disponible() is True
+
+
+def test_config_disco_disponible_false_sin_base(monkeypatch):
+    monkeypatch.setattr(vfxflow_config, "entorno", EntornoFalso(base=None))
+
+    assert vfxflow_config.config_disco_disponible() is False
+
+
+def test_config_disco_disponible_false_sin_archivo(monkeypatch, tmp_path):
+    monkeypatch.setattr(vfxflow_config, "entorno", EntornoFalso(base=str(tmp_path)))
+
+    assert vfxflow_config.config_disco_disponible() is False
 
 
 def test_obtener_config_efectiva_config_local_override(monkeypatch, tmp_path):

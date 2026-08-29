@@ -74,6 +74,26 @@ VFXFLOW_CONFIG = {
 ARCHIVO_DISCO = ".saman/vfxflow_config.json"
 
 
+def _ruta_config_disco():
+    """Ruta de {base}/.saman/vfxflow_config.json, o None si no hay base.
+
+    La base la da `entorno.primera_ruta_disponible()` (import lazy para no
+    acoplar este modulo a la deteccion de la unidad). No verifica existencia:
+    solo resuelve dónde DEBERÍA estar el archivo. Nunca lanza.
+    """
+    mod_entorno = globals().get("entorno")
+    if mod_entorno is None:
+        try:
+            from . import entorno as mod_entorno
+        except (ImportError, AttributeError):
+            return None
+        globals()["entorno"] = mod_entorno
+    base = mod_entorno.primera_ruta_disponible(mod_entorno.detectar_so())
+    if not base:
+        return None
+    return os.path.join(base, *ARCHIVO_DISCO.split("/"))
+
+
 def _cargar_config_disco():
     """Devuelve el dict JSON de {base}/.saman/vfxflow_config.json, o {}.
 
@@ -81,17 +101,9 @@ def _cargar_config_disco():
     acoplar este modulo a la deteccion de la unidad). Archivo ausente, no
     legible o con JSON invalido se ignoran en silencio: quedan los defaults.
     """
-    mod_entorno = globals().get("entorno")
-    if mod_entorno is None:
-        try:
-            from . import entorno as mod_entorno
-        except (ImportError, AttributeError):
-            return {}
-        globals()["entorno"] = mod_entorno
-    base = mod_entorno.primera_ruta_disponible(mod_entorno.detectar_so())
-    if not base:
+    ruta = _ruta_config_disco()
+    if not ruta:
         return {}
-    ruta = os.path.join(base, *ARCHIVO_DISCO.split("/"))
     try:
         with open(ruta, "r", encoding="utf-8") as f:
             datos = json.load(f)
@@ -100,6 +112,20 @@ def _cargar_config_disco():
     if not isinstance(datos, dict):
         return {}
     return datos
+
+
+def config_disco_disponible():
+    """True si el archivo .saman/vfxflow_config.json existe y es legible.
+
+    Es el gate de acceso del panel: la config en el disco vive tras los ACL
+    de LucidLink (solo usuarios con la unidad montada la leen). Si la unidad
+    no esta montada o el archivo no existe, el panel NO debe autologinear ni
+    ofrecer login: sin el archivo no hay client_id/secret disponibles.
+    """
+    ruta = _ruta_config_disco()
+    if not ruta:
+        return False
+    return os.path.isfile(ruta)
 
 
 def _cargar_config_local():
