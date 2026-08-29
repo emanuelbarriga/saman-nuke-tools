@@ -37,6 +37,9 @@ def _nodo_rutas(usuario="MacServer", version="nueva", nombre="Rutas1"):
         n.knobs_d["SO_Detectado"] = nuke.KnobFake("")
         n.knobs_d["EstadoUnidad"] = nuke.KnobFake("")
         n.knobs_d["UsuarioRecomendado"] = nuke.KnobFake("")
+        n.knobs_d["ProyectoDetectado"] = nuke.KnobFake("")
+        n.knobs_d["CapituloDetectado"] = nuke.KnobFake("")
+        n.knobs_d["PlanoDetectado"] = nuke.KnobFake("")
     return n
 
 

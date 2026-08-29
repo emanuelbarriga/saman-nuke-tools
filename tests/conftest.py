@@ -107,7 +107,17 @@ def _instalar_stub_nuke():
             self.selected = v
 
     # Estado compartido de "la escena"
-    estado = {"nodos": [], "seleccionados": [], "mensajes": [], "plugins": []}
+    estado = {
+        "nodos": [],
+        "seleccionados": [],
+        "mensajes": [],
+        "plugins": [],
+        "root_name": "",
+    }
+
+    class RootFake:
+        def name(self):
+            return estado.get("root_name", "")
 
     def allNodes(cls=None):
         if cls is None:
@@ -181,6 +191,7 @@ def _instalar_stub_nuke():
         pass
 
     nuke.allNodes = allNodes
+    nuke.root = lambda: RootFake()
     nuke.selectedNodes = selectedNodes
     nuke.thisNode = thisNode
     nuke.createNode = createNode

@@ -204,6 +204,74 @@ def test_reconstruir_rutas_claves_exactas_de_los_knobs():
 
 
 # --------------------------------------------------------------------------
+# proyecto_desde_ruta
+# --------------------------------------------------------------------------
+
+
+def test_proyecto_desde_ruta_htlr_mac():
+    ruta = "/Volumes/wupm/2026/HTLR/COMP/EP_100/HTLR_100_000_00000_comp_SAMAN_V01.nk"
+    assert entorno.proyecto_desde_ruta(ruta, base="/Volumes/wupm/2026") == "HTLR"
+
+
+def test_proyecto_desde_ruta_otro_proyecto():
+    ruta = "/Volumes/wupm/2026/PCF/COMP/EP_001/PCF_001_010_comp_V01.nk"
+    assert entorno.proyecto_desde_ruta(ruta, base="/Volumes/wupm/2026") == "PCF"
+
+
+def test_proyecto_desde_ruta_windows_forward_slashes():
+    ruta = "L:/2026/HTLR/COMP/EP_100/HTLR_100_000_00000_comp_SAMAN_V01.nk"
+    assert entorno.proyecto_desde_ruta(ruta, base="L:/2026") == "HTLR"
+
+
+def test_proyecto_desde_ruta_acepta_backslashes():
+    ruta = r"L:\2026\HTLR\COMP\EP_100\HTLR_100_000_00000_comp_SAMAN_V01.nk"
+    assert entorno.proyecto_desde_ruta(ruta, base="L:/2026") == "HTLR"
+
+
+def test_proyecto_desde_ruta_sin_base_usa_candidatas(monkeypatch):
+    # Sin base: prueba contra rutas_base del SO detectado.
+    monkeypatch.setattr(
+        entorno,
+        "rutas_base",
+        lambda so, extra=None: ["/Volumes/wupm/2026", "/mnt/wupm/2026"],
+    )
+    ruta = "/Volumes/wupm/2026/HTLR/COMP/EP_100/foo.nk"
+    assert entorno.proyecto_desde_ruta(ruta) == "HTLR"
+
+
+def test_proyecto_desde_ruta_fuera_de_base_devuelve_none():
+    ruta = "/Volumes/otro/2026/HTLR/COMP/EP_100/foo.nk"
+    assert entorno.proyecto_desde_ruta(ruta, base="/Volumes/wupm/2026") is None
+
+
+def test_proyecto_desde_ruta_ruta_es_la_base_devuelve_none():
+    assert (
+        entorno.proyecto_desde_ruta(
+            "/Volumes/wupm/2026", base="/Volumes/wupm/2026"
+        )
+        is None
+    )
+
+
+def test_proyecto_desde_ruta_vacia_devuelve_none():
+    assert entorno.proyecto_desde_ruta("", base="/Volumes/wupm/2026") is None
+    assert entorno.proyecto_desde_ruta(None, base="/Volumes/wupm/2026") is None
+
+
+def test_proyecto_desde_ruta_prefijo_parcial_no_confunde():
+    # 'wupm2026' no es la base 'wupm' + '2026': startswith(b + '/') lo evita.
+    ruta = "/Volumes/wupm2026/HTLR/COMP/foo.nk"
+    assert entorno.proyecto_desde_ruta(ruta, base="/Volumes/wupm/2026") is None
+
+
+def test_proyecto_desde_ruta_con_base_con_slash_final():
+    ruta = "/Volumes/wupm/2026/HTLR/COMP/EP_100/foo.nk"
+    assert (
+        entorno.proyecto_desde_ruta(ruta, base="/Volumes/wupm/2026/") == "HTLR"
+    )
+
+
+# --------------------------------------------------------------------------
 # Integracion entorno <-> rutas (nodo con knobs de entorno)
 # --------------------------------------------------------------------------
 
@@ -406,3 +474,61 @@ def test_visibilidad_nodo_viejo_sin_knobs_no_rompe():
     _escenario(n)
     assert rutas.actualizar(n) is not None
     assert n["TO_VFX_SERVER_MAC"].visible is True
+
+
+# --------------------------------------------------------------------------
+# Sincronizar contexto del comp: proyecto/capitulo/plano detectados
+# --------------------------------------------------------------------------
+
+
+def test_sincronizar_plano_muestra_proyecto_cap_plano(monkeypatch):
+    monkeypatch.setattr(
+        entorno, "rutas_base", lambda so, extra=None: ["/Volumes/wupm/2026"]
+    )
+    monkeypatch.setattr(
+        entorno, "primera_ruta_disponible", lambda so, extra=None: None
+    )
+    n = _nodo_rutas_env()
+    n.knobs_d["ProyectoDetectado"] = nuke.KnobFake("")
+    n.knobs_d["CapituloDetectado"] = nuke.KnobFake("")
+    n.knobs_d["PlanoDetectado"] = nuke.KnobFake("")
+    _escenario(n)
+    nuke._estado["root_name"] = (
+        "/Volumes/wupm/2026/HTLR/COMP/EP_107/HTLR_107_008_00100_comp_SAMAN_V01.nk"
+    )
+    assert rutas.refrescar_estado(n) is True
+    assert n["ProyectoDetectado"].value() == "HTLR"
+    assert n["CapituloDetectado"].value() == "107"
+    assert n["PlanoDetectado"].value() == "008_00100"
+
+
+def test_sincronizar_plano_sin_knobs_no_rompe(monkeypatch):
+    monkeypatch.setattr(
+        entorno, "primera_ruta_disponible", lambda so, extra=None: None
+    )
+    n = _nodo_rutas_env()  # version vieja: sin los 3 knobs nuevos
+    _escenario(n)
+    nuke._estado["root_name"] = (
+        "/Volumes/wupm/2026/HTLR/COMP/EP_107/HTLR_107_008_00100_V01.nk"
+    )
+    assert rutas.refrescar_estado(n) is True
+    assert n["SO_Detectado"].value() in ("macOS", "Windows", "Linux")
+    assert n["UsuarioRecomendado"].value() == (
+        "Usuario recomendado segun SO: " + _usuario_esperado()
+    )
+
+
+def test_sincronizar_plano_sin_root_name_no_rompe(monkeypatch):
+    monkeypatch.setattr(
+        entorno, "primera_ruta_disponible", lambda so, extra=None: None
+    )
+    n = _nodo_rutas_env()
+    n.knobs_d["ProyectoDetectado"] = nuke.KnobFake("")
+    n.knobs_d["CapituloDetectado"] = nuke.KnobFake("")
+    n.knobs_d["PlanoDetectado"] = nuke.KnobFake("")
+    _escenario(n)
+    nuke._estado["root_name"] = ""
+    assert rutas.refrescar_estado(n) is True
+    assert n["ProyectoDetectado"].value() == ""
+    assert n["CapituloDetectado"].value() == ""
+    assert n["PlanoDetectado"].value() == ""

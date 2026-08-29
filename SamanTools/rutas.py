@@ -61,6 +61,44 @@ def _sincronizar_entorno(n):
         pass
 
 
+def _sincronizar_plano(n):
+    """
+    Detecta el contexto del comp activo (proyecto/capitulo/plano) desde
+    nuke.root().name() via SamanTools.nombres.parsear_plato y lo muestra
+    en los knobs informativos ProyectoDetectado/CapituloDetectado/
+    PlanoDetectado de la seccion Entorno. Tolerante: si los knobs no
+    existen (nodos viejos), no hay root o no se parsea, no rompe.
+    """
+    try:
+        from SamanTools import nombres
+    except Exception:
+        return
+    try:
+        root = getattr(nuke, "root", None)
+        ruta = root().name() if root is not None else ""
+    except Exception:
+        ruta = ""
+    datos = None
+    if ruta:
+        try:
+            datos = nombres.parsear_plato(ruta)
+        except Exception:
+            datos = None
+    valores = {
+        "ProyectoDetectado": (datos or {}).get("proyecto") or "",
+        "CapituloDetectado": (datos or {}).get("capitulo") or "",
+        "PlanoDetectado": (datos or {}).get("plano") or "",
+    }
+    if not any(str(v) for v in valores.values()):
+        return
+    try:
+        for nombre, valor in valores.items():
+            if nombre in n.knobs():
+                n[nombre].setValue(str(valor))
+    except Exception:
+        pass
+
+
 def _recomendar_usuario(n):
     """
     Refuerza la recomendacion de usuario en nodos con seccion de entorno
@@ -165,6 +203,7 @@ def actualizar(n=None):
 
     # Sincronizar knobs de entorno SOLO si el nodo los tiene (tolerante).
     _sincronizar_entorno(n)
+    _sincronizar_plano(n)
     _aplicar_visibilidad(n, sufijo)
 
     to_vfx = n["TO_VFX_SERVER_" + sufijo].value()
@@ -264,6 +303,7 @@ def refrescar_estado(n=None):
                 n["EstadoUnidad"].setValue(_texto_estado(estado))
         except Exception:
             pass
+        _sincronizar_plano(n)
         try:
             if "tile_color" in n.knobs():
                 n["tile_color"].setValue(color)
@@ -284,6 +324,9 @@ KNOBS_VERSION_ACTUAL = frozenset(
         "SO_Detectado",
         "EstadoUnidad",
         "UsuarioRecomendado",
+        "ProyectoDetectado",
+        "CapituloDetectado",
+        "PlanoDetectado",
     }
 )
 

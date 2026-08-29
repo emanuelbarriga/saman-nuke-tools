@@ -21,6 +21,9 @@ NoOp {
  addUserKnob {26 SO_Detectado l "SO Detectado" T " "}
  addUserKnob {26 EstadoUnidad l "Estado de la Unidad" T " "}
  addUserKnob {26 UsuarioRecomendado l "Usuario Recomendado" T "Usuario recomendado segun SO: -"}
+ addUserKnob {26 ProyectoDetectado l "Proyecto Detectado" T " "}
+ addUserKnob {26 CapituloDetectado l "Capítulo Detectado" T " "}
+ addUserKnob {26 PlanoDetectado l "Plano Detectado" T " "}
  addUserKnob {26 ""}
  addUserKnob {4 UsuarioActivo l "Usuario Activo" M {MacServer Windows Artist ""}}
  addUserKnob {1 string l Proyecto}

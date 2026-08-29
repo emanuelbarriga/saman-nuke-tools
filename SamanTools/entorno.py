@@ -185,3 +185,40 @@ def reconstruir_rutas(ruta_base, proyecto):
                 base + "/" + proy + "/" + pre.upper() + "/"
             )
     return rutas
+
+
+def proyecto_desde_ruta(ruta, base=None, so=None):
+    """
+    Identifica el proyecto a partir de la ruta de un archivo bajo la matriz.
+
+    El proyecto es la PRIMERA carpeta bajo la base del anio:
+
+        {base}/HTLR/COMP/EP_100/foo.nk  ->  "HTLR"
+
+    Si {base} se omite, prueba con las candidatas de rutas_base(so)
+    (default: el SO detectado). Devuelve None si la ruta no cae bajo
+    ninguna base o si no hay carpeta de proyecto.
+    """
+    ruta = str(ruta or "").replace("\\", "/")
+    ruta = ruta.rstrip("/") if ruta.strip() else ""
+    if not ruta:
+        return None
+
+    if base is None:
+        bases = rutas_base(so or detectar_so())
+    else:
+        bases = [base]
+
+    for b in bases:
+        b = str(b).replace("\\", "/").rstrip("/")
+        if not b:
+            continue
+        if ruta == b:
+            continue  # la ruta ES la base: no hay carpeta de proyecto
+        if not ruta.startswith(b + "/"):
+            continue  # no cae bajo esta base (evita prefijos parciales)
+        resto = ruta[len(b) + 1:]
+        partes = [p for p in resto.split("/") if p]
+        if partes:
+            return partes[0]
+    return None
