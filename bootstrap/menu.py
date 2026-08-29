@@ -242,12 +242,15 @@ def _desinstalar_ahora():
 
 
 def _agregar_boton_menu():
-    """Añade los botones de mantenimiento dentro del menú SamanTools.
+    """Añade los botones de mantenimiento SOLO si hay un checkout.
 
-    Se ejecuta DESPUÉS de cargar el menú real; si el menú no existe (por una
-    versión rota), se crea un menú mínimo con los botones de mantenimiento,
-    para que el artista siempre pueda actualizar o desinstalar.
+    Regla: sin SamanTools instalado NO se crea ningún menú. El menú
+    SamanTools (con Actualizar/Desinstalar) aparece únicamente cuando el
+    checkout existe — instalado o en estado de reparación. Así el estado
+    'desinstalado' deja el menú completamente limpio.
     """
+    if not _tiene_checkout():
+        return  # desinstalado: sin menú de SamanTools
     try:
         menu = nuke.menu("Nuke").findItem("SamanTools")
         if menu is None:
