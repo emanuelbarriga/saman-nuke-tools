@@ -84,6 +84,30 @@ def test_es_nodo_rutas_identifica_por_knobs_no_por_nombre():
     assert rutas.es_nodo_rutas(None) is False
 
 
+def test_actualizar_no_rompe_sin_knob_ruta_actual(monkeypatch):
+    _ambiente_estable(monkeypatch)
+    n = _nodo_rutas()
+    n.knobs_d.pop("RutaActual", None)  # version actual: sin la etiqueta vieja
+    nuke._estado["nodos"] = [n]
+    nuke._estado["nodo_actual"] = n
+    import __main__
+    rutas.actualizar(n)
+    assert getattr(__main__, "PYTHON_TO_VFX", None) == "/vol/TO"
+    assert getattr(__main__, "PYTHON_COMP", None) == "/vol/COMP"
+
+
+def test_es_nodo_rutas_detecta_estructura_nueva_sin_ruta_actual():
+    n = _nodo_rutas()
+    n.knobs_d.pop("RutaActual", None)  # la version actual ya no tiene RutaActual
+    assert rutas.es_nodo_rutas(n) is True
+
+
+def test_es_nodo_rutas_no_falso_positivo_con_solo_usuario_activo():
+    n = nuke.NodoFake()
+    n.knobs_d["UsuarioActivo"] = nuke.KnobFake("MacServer")
+    assert rutas.es_nodo_rutas(n) is False
+
+
 def test_es_version_actual_positivo_y_negativo():
     assert rutas.es_version_actual(_nodo_rutas(version="nueva")) is True
     assert rutas.es_version_actual(_nodo_rutas(version="vieja")) is False
@@ -120,15 +144,26 @@ def test_crear_sin_nodos_pega_una_vez_y_devuelve_nodo(monkeypatch):
     assert rutas.es_nodo_rutas(resultado)
 
 
-def test_crear_con_nodo_actual_no_pega_y_avisa(monkeypatch):
+def test_crear_con_nodo_actual_no_pega_y_enfoca_al_nodo(monkeypatch):
     n = _nodo_rutas()
     nuke._estado["nodos"] = [n]
     contador = _contador_paste(monkeypatch)
+
+    llamadas = {"panel": 0, "zoom": 0}
+    n.showControlPanel = lambda: llamadas.__setitem__("panel", llamadas["panel"] + 1)
+
+    def fake_zoom():
+        llamadas["zoom"] += 1
+
+    monkeypatch.setattr(nuke, "zoomToFitSelected", fake_zoom, raising=False)
+
     resultado = rutas.crear_o_reutilizar()
     assert contador["veces"] == 0
-    assert any("Ya hay un nodo Rutas" in m for m in nuke._estado["mensajes"])
+    assert nuke._estado["mensajes"] == []  # sin aviso: la accion conduce al nodo
     assert resultado is n
     assert n.selected is True
+    assert llamadas["panel"] == 1  # abrio las propiedades del nodo
+    assert llamadas["zoom"] == 1   # centró el Node Graph en el nodo
 
 
 def test_crear_con_nodo_viejo_acepta_reconstruir(monkeypatch):

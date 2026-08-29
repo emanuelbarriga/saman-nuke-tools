@@ -146,7 +146,7 @@ def actualizar(n=None):
       1. Captura los Reads dinamicos ([python ...]) con su ruta ANTIGUA.
       2. Actualiza PYTHON_TO_VFX / PYTHON_COMP / PYTHON_FROM_VFX en __main__.
       3. Re-evalua cada Read y ejecuta reload SOLO si su ruta resuelta cambio.
-      4. Actualiza la etiqueta RutaActual del nodo.
+      4. Actualiza la etiqueta RutaActual del nodo (si aun la tiene).
       5. Re-escanea los scripts del proyecto (SamanTools/proyecto).
 
     Devuelve True si cargo scripts del proyecto, False si no.
@@ -193,12 +193,18 @@ def actualizar(n=None):
             node["reload"].execute()
 
     # 4) Etiqueta de ruta actual (mismo formato que el nodo original).
+    #    El knob RutaActual se elimino de la version actual: solo se
+    #    actualiza si el nodo aun lo tiene (nodos viejos).
     texto_ruta = (
         "TO_VFX: {0} [PYTHON_TO_VFX]\n"
         "COMP: {1} [PYTHON_COMP]\n"
         "FROM_VFX: {2} [PYTHON_FROM_VFX]"
     ).format(to_vfx, comp, from_vfx)
-    n["RutaActual"].setValue(texto_ruta)
+    if "RutaActual" in n.knobs():
+        try:
+            n["RutaActual"].setValue(texto_ruta)
+        except Exception:
+            pass
 
     # 5) Re-escanear herramientas del proyecto.
     try:
@@ -307,9 +313,15 @@ def ruta_nk_por_defecto():
 
 def es_nodo_rutas(n):
     """
-    True si el nodo es uno de Rutas, identificado por sus knobs caracteristicos
-    (UsuarioActivo y RutaActual). No depende del nombre: el artista puede
-    renombrarlo y aun asi se detecta. Tolerante a None y a nodos raros.
+    True si el nodo es uno de Rutas, identificado por sus knobs de
+    control: UsuarioActivo + los knobs de rutas de servidor. No depende
+    del nombre: el artista puede renombrarlo y aun asi se detecta.
+
+    La senal usa TO_VFX_SERVER_* (y no RutaActual, eliminado en la
+    version actual) para seguir detectando nodos de TODAS las versiones:
+    los viejo (con RutaActual), los intermedios y los nuevos.
+
+    Tolerante a None y a nodos raros.
     """
     if n is None:
         return False
@@ -317,7 +329,12 @@ def es_nodo_rutas(n):
         knobs = n.knobs()
     except Exception:
         return False
-    return "UsuarioActivo" in knobs and "RutaActual" in knobs
+    if "UsuarioActivo" not in knobs:
+        return False
+    return any(
+        s in knobs
+        for s in ("TO_VFX_SERVER_MAC", "TO_VFX_SERVER_WINDOWS", "TO_VFX_SERVER_ARTIST")
+    )
 
 
 def encontrar_nodos_rutas():
@@ -365,6 +382,31 @@ def _seleccionar(n):
             setter(True)
     except Exception:
         pass
+
+
+def _enfocar_nodo(n):
+    """
+    Lleva al artista hasta el nodo Rutas existente: lo deja como unica
+    seleccion, centra el Node Graph en el (nuke.zoomToFitSelected) y abre
+    sus propiedades (showControlPanel). Es la UX de "pulsar el atajo y el
+    nodo aparece enfrente con su panel abierto".
+
+    Totalmente tolerante: si algo no existe (stub de tests, Nuke sin GUI,
+    nodo sin panel), se saltea sin lanzar excepciones.
+    """
+    _seleccionar(n)
+    try:
+        if hasattr(nuke, "zoomToFitSelected"):
+            nuke.zoomToFitSelected()
+    except Exception:
+        pass
+    if n is not None:
+        try:
+            abrir = getattr(n, "showControlPanel", None)
+            if abrir is not None:
+                abrir()
+        except Exception:
+            pass
 
 
 def _reconstruir_nodo(n, ruta_nk):
@@ -476,8 +518,7 @@ def crear_o_reutilizar(ruta_nk=None):
     if len(nodos) == 1:
         n = nodos[0]
         if es_version_actual(n):
-            nuke.message("Ya hay un nodo Rutas en este proyecto.")
-            _seleccionar(n)
+            _enfocar_nodo(n)
             return n
 
         actualizar = nuke.ask(
@@ -489,14 +530,14 @@ def crear_o_reutilizar(ruta_nk=None):
         if actualizar:
             return _reconstruir_nodo(n, ruta_nk)
         nuke.message("No se actualizó el nodo Rutas: se conserva la version anterior.")
-        _seleccionar(n)
+        _enfocar_nodo(n)
         return n
 
     nuke.message(
         "Hay {0} nodos Rutas en este proyecto (se admite maximo 1).\n"
         "No se borró nada: revisalos a mano y deja solo uno.".format(len(nodos))
     )
-    _seleccionar(nodos[0])
+    _enfocar_nodo(nodos[0])
     return nodos[0]
 
 
