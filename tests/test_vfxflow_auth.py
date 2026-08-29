@@ -356,6 +356,107 @@ def test_borrar_sesion(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# config efectiva (disco .saman + config_local)
+# --------------------------------------------------------------------------
+
+
+class EntornoFalso:
+    """Stub de SamanTools.entorno para aislar la lectura del disco.
+
+    `primera_ruta_disponible(so, extra=None)` devuelve `base`. Asi se controla
+    que base usa `obtener_config_efectiva` sin tocar mounts reales ni la
+    cache de estado_unidad de la maquina.
+    """
+
+    def __init__(self, base=None, so="macOS"):
+        self._base = base
+        self._so = so
+
+    def detectar_so(self):
+        return self._so
+
+    def primera_ruta_disponible(self, so, extra=None):
+        return self._base
+
+
+@pytest.fixture(autouse=True)
+def _entorno_sin_disco(monkeypatch):
+    """Hermeticidad: ningun test lee el disco wupm real ni su cache.
+
+    Reemplaza el atributo `entorno` de vfxflow_config por un stub sin base:
+    la lectura de `.saman/vfxflow_config.json` queda en None y no se ejecuta
+    ningun `ls`/estado_unidad real (los tests de vfxflow_auth que no pasan
+    config hoy usarian la config efectiva). Los tests que quieran disco lo
+    re-monkeypatchean localmente.
+    """
+    monkeypatch.setattr(
+        vfxflow_config, "entorno", EntornoFalso(base=None), raising=False
+    )
+
+
+def _escribir_config_disco(tmp_path, datos):
+    archivo = tmp_path / ".saman" / "vfxflow_config.json"
+    archivo.parent.mkdir(parents=True, exist_ok=True)
+    archivo.write_text(json.dumps(datos), encoding="utf-8")
+    return archivo
+
+
+def test_obtener_config_efectiva_lee_archivo_disco(monkeypatch, tmp_path):
+    _escribir_config_disco(tmp_path, {"google_client_id": "DISCO_ID"})
+    monkeypatch.setattr(vfxflow_config, "entorno", EntornoFalso(base=str(tmp_path)))
+    monkeypatch.setattr(vfxflow_config, "_cargar_config_local", lambda: {})
+
+    cfg = vfxflow_config.obtener_config_efectiva()
+
+    assert cfg["google_client_id"] == "DISCO_ID"
+    assert cfg["api_key"] == vfxflow_config.VFXFLOW_CONFIG["api_key"]
+
+
+def test_obtener_config_efectiva_sin_archivo_mantiene_defaults(monkeypatch):
+    monkeypatch.setattr(vfxflow_config, "_cargar_config_local", lambda: {})
+
+    cfg = vfxflow_config.obtener_config_efectiva()
+
+    assert cfg["google_client_id"] == ""
+    assert cfg["api_key"] == vfxflow_config.VFXFLOW_CONFIG["api_key"]
+
+
+def test_obtener_config_efectiva_config_local_override(monkeypatch, tmp_path):
+    _escribir_config_disco(tmp_path, {"google_client_id": "DISCO_ID"})
+    monkeypatch.setattr(vfxflow_config, "entorno", EntornoFalso(base=str(tmp_path)))
+    monkeypatch.setattr(
+        vfxflow_config,
+        "_cargar_config_local",
+        lambda: {"google_client_id": "LOCAL_ID"},
+    )
+
+    cfg = vfxflow_config.obtener_config_efectiva()
+
+    assert cfg["google_client_id"] == "LOCAL_ID"
+
+
+def test_consultar_estado_dispositivo_sin_config_usa_config_efectiva(monkeypatch):
+    monkeypatch.setattr(
+        vfxflow_config,
+        "_cargar_config_local",
+        lambda: {"google_client_id": "CLIENTE_EFECTIVO"},
+    )
+    _urlopen_responde(
+        monkeypatch,
+        {
+            "access_token": "at1",
+            "id_token": "idtoken_google",
+            "refresh_token": "refreshtoken_google",
+        },
+    )
+
+    res = vfxflow_auth.consultar_estado_dispositivo("dc1")
+
+    assert res["estado"] == "ok"
+    assert res["datos"]["id_token"] == "idtoken_google"
+
+
+# --------------------------------------------------------------------------
 # pureza (sin `import nuke`)
 # --------------------------------------------------------------------------
 

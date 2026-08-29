@@ -32,7 +32,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .vfxflow_config import VFXFLOW_CONFIG
+from . import vfxflow_config
 
 # Timeout de red para todas las llamadas (segundos).
 TIMEOUT_SEGUNDOS = 10
@@ -271,7 +271,7 @@ def loguear(email, password, config=None):
     Levanta `VfxFlowAuthError`: codigo "credenciales" (bad credentials),
     "red", "http" o "respuesta". NUNCA incluye la password en excepciones.
     """
-    cfg = config or VFXFLOW_CONFIG
+    cfg = config or vfxflow_config.obtener_config_efectiva()
     if not email or not password:
         raise VfxFlowAuthError(
             "Ingresá email y contraseña.", codigo="credenciales"
@@ -305,9 +305,10 @@ def _validar_google_client_id(cfg):
     google_client_id = (cfg or {}).get("google_client_id", "")
     if not google_client_id:
         raise VfxFlowAuthError(
-            "Falta google_client_id en VFXFLOW_CONFIG. Rellenalo en Google "
-            "Cloud Console > Credentials > OAuth client ID "
-            "('TVs and Limited Input devices').",
+            "Falta google_client_id. Creá el archivo .saman/vfxflow_config.json "
+            "en la raíz de la unidad (ej. /Volumes/wupm/2026) con "
+            '{"google_client_id": "..."}, o ponelo en config_local.py '
+            "(VFXFLOW_LOCAL_CONFIG).",
             codigo="config",
         )
     return google_client_id
@@ -320,7 +321,7 @@ def obtener_codigo_dispositivo(config=None):
     "interval"}. Requiere `google_client_id` configurado; si falta lanza
     VfxFlowAuthError codigo "config".
     """
-    cfg = config or VFXFLOW_CONFIG
+    cfg = config or vfxflow_config.obtener_config_efectiva()
     google_client_id = _validar_google_client_id(cfg)
 
     respuesta = _post_form(
@@ -364,7 +365,7 @@ def consultar_estado_dispositivo(device_code, config=None):
     no congelar Nuke. El `id_token` es el de GOOGLE (el unico que sirve para
     canjear en Firebase). El `refresh_token` de GOOGLE NUNCA se persiste.
     """
-    cfg = config or VFXFLOW_CONFIG
+    cfg = config or vfxflow_config.obtener_config_efectiva()
     google_client_id = _validar_google_client_id(cfg)
     if not device_code:
         raise VfxFlowAuthError(
@@ -412,7 +413,7 @@ def esperar_autorizacion_dispositivo(
     monkeypatchean sleep); la UI del panel usa el QTimer recurrente con
     `consultar_estado_dispositivo` por tick para no congelar Nuke.
     """
-    cfg = config or VFXFLOW_CONFIG
+    cfg = config or vfxflow_config.obtener_config_efectiva()
     _validar_google_client_id(cfg)
 
     intervalo_actual = max(intervalo, 1)
@@ -451,7 +452,7 @@ def loguear_con_google(id_token_google, config=None):
     Devuelve: {"id_token", "refresh_token", "expires_in", "local_id", "email"}
     (refresh_token es el de FIREBASE, el unico que se persiste).
     """
-    cfg = config or VFXFLOW_CONFIG
+    cfg = config or vfxflow_config.obtener_config_efectiva()
     if not id_token_google:
         raise VfxFlowAuthError(
             "No se recibió el id_token de Google.", codigo="respuesta"
@@ -486,7 +487,7 @@ def refrescar_id_token(refresh_token, config=None):
     El id_token renovado viaja como `access_token` en la respuesta de
     securetoken y se renombra a `id_token`.
     """
-    cfg = config or VFXFLOW_CONFIG
+    cfg = config or vfxflow_config.obtener_config_efectiva()
     if not refresh_token:
         raise VfxFlowAuthError(
             "No hay sesión guardada para refrescar.", codigo="respuesta"
@@ -516,7 +517,7 @@ def obtener_usuario(local_id, id_token, config=None):
     existe o no tiene rol (404 / sin campo role / doc sin estructura).
     Levanta `VfxFlowAuthError` codigo "token" si el id_token vence (401).
     """
-    cfg = config or VFXFLOW_CONFIG
+    cfg = config or vfxflow_config.obtener_config_efectiva()
     url = URL_DOCUMENTO_USUARIO.format(
         project_id=cfg[_PROJECT_ID_CAMPO], local_id=local_id
     )
