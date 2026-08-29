@@ -124,13 +124,16 @@ def _buscar_por_campo(coleccion_path, campo, valor, id_token, config=None, limit
     cfg = config or vfxflow_config.obtener_config_efectiva()
     project_id = (cfg or {}).get("project_id") or ""
     coleccion = coleccion_path.rstrip("/").split("/")[-1]
+    parent = coleccion_path.rstrip("/").rsplit("/", 1)[0] if "/" in coleccion_path else ""
 
+    # runQuery REST: el parent de la URL es el DOCUMENTO padre (o la raiz
+    # .../documents) y el `from.collectionId` va en el body. Poner la
+    # subcoleccion en la URL (ej. .../projects/{pid}/chapters:runQuery) es
+    # INVALID_ARGUMENT ("Document parent name ... lacks '/'"), verificado
+    # contra la API real.
     url = _URL_DOCUMENTOS.format(project_id=project_id)
-    if coleccion_path and "/" in coleccion_path:
-        # Solo las subcolecciones se anidan en la URL (projects/{pid}/chapters);
-        # una coleccion RAIZ se consulta en .../documents:runQuery con el
-        # collectionId en el cuerpo (modelo REST de runQuery).
-        url += "/" + coleccion_path.strip("/")
+    if parent:
+        url += "/" + parent.strip("/")
     url += ":runQuery"
 
     payload = {

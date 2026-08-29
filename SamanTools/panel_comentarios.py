@@ -404,9 +404,6 @@ class PanelComentarios(QtWidgets.QWidget):
         fila_header.addWidget(self._combo_estado)
         lay_comentarios.addLayout(fila_header)
 
-        self._label_usuario = QtWidgets.QLabel("Usuario: —", seccion_comentarios)
-        lay_comentarios.addWidget(self._label_usuario)
-
         # Input de comentario (v1.6.1 SOLO LECTURA: el envío es v1.6.2).
         fila_input = QtWidgets.QHBoxLayout()
         self._input_comentario = QtWidgets.QLineEdit(seccion_comentarios)
@@ -522,16 +519,6 @@ class PanelComentarios(QtWidgets.QWidget):
         if proyecto and capitulo is not None and plano:
             return "{0}_{1}_{2}".format(proyecto, capitulo, plano)
         return "—"
-
-    def _actualizar_label_usuario(self, conectado):
-        """Refresca "Usuario: <email>" (o "Usuario: —") del header de actividad."""
-        label = getattr(self, "_label_usuario", None)
-        if label is None:
-            return
-        if conectado:
-            label.setText("Usuario: {0}".format(self.sesion["email"]))
-        else:
-            label.setText("Usuario: —")
 
     # --------------------------------------------------------------- login
 
@@ -953,7 +940,6 @@ class PanelComentarios(QtWidgets.QWidget):
         self._seccion_sesion.setVisible(conectado)
         if conectado:
             self._label_conectado.setText(self.sesion["email"])
-        self._actualizar_label_usuario(conectado)
 
     def _on_desconectar(self):
         """Cierra la sesión local (y la persistida) y vuelve al login.
@@ -1273,7 +1259,13 @@ class PanelComentarios(QtWidgets.QWidget):
         )
 
     def _aplicar_error_actividad(self, trabajo):
-        """Publica un error del fetch: firewall para "red", texto si no."""
+        """Publica un error del fetch: firewall para "red", texto si no.
+
+        El error detallado va SOLO en el area del feed (`_mostrar_mensaje_actividad`);
+        la etiqueta de estado inferior lleva estados de accion ("cargando...",
+        "3 actividades") y NO repite el mismo texto (evita la duplicacion visual
+        que el usuario reporto en v1.6.1).
+        """
         mensaje = trabajo.get("mensaje") or "No se pudieron cargar los comentarios."
         codigo = trabajo.get("codigo")
         if codigo == "red":
@@ -1281,7 +1273,6 @@ class PanelComentarios(QtWidgets.QWidget):
         else:
             texto = mensaje
         self._mostrar_mensaje_actividad(texto, error=True)
-        self._estado(texto, error=True)
 
     def _mensaje_error_resolucion(self, resuelto):
         """Texto del error de resolucion (plano sin registrar en VFXFlow)."""

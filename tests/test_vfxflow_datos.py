@@ -106,11 +106,14 @@ def _respuesta_runquery(docs):
 
 
 class _TransporteRunQuery:
-    """Fake de `vfxflow_auth._abrir`: responde por sufijo de URL + registra body.
+    """Fake de `vfxflow_auth._abrir`: responde por collectionId y registra.
 
-    `rutas`: dict {sufijo de URL (p.ej. "/chapters:runQuery"): lista de docs o
-    int (status de HTTPError)}. Registra en `pedidos` la (url, payload) de
-    cada POST para que los tests verifiquen la query construida.
+    `rutas`: dict {collectionId del structuredQuery (p.ej. "chapters"): lista
+    de docs o int (status de HTTPError)}. Matchear por collectionId (y no por
+    sufijo de URL) es lo correcto: en el runQuery REST el collectionId va en
+    el body y el parent en la URL (la subcoleccion NUNCA va en la URL, se
+    verifico contra la API real). Registra en `pedidos` la
+    (collectionId, payload, url) de cada POST.
     """
 
     def __init__(self, rutas):
@@ -119,15 +122,24 @@ class _TransporteRunQuery:
 
     def abrir(self, req, *args, **kwargs):
         url = req.full_url
-        for sufijo in sorted(self.rutas, key=len, reverse=True):
-            if url.endswith(sufijo):
-                payload = json.loads(req.data.decode("utf-8")) if req.data else None
-                self.pedidos.append((sufijo, payload, url))
-                cuerpo = self.rutas[sufijo]
-                if isinstance(cuerpo, int):
-                    raise _error_http(cuerpo, {"error": {"message": "x"}})
-                return RespuestaFalsa(json.dumps(cuerpo).encode("utf-8"), status=200)
-        raise AssertionError("URL sin ruta de test: %s" % url)
+        payload = json.loads(req.data.decode("utf-8")) if req.data else None
+        coleccion = None
+        if payload:
+            coleccion = (
+                (payload.get("structuredQuery") or {})
+                .get("from", [{}])[0]
+                .get("collectionId")
+            )
+        clave = coleccion or url
+        if clave in self.rutas:
+            self.pedidos.append((clave, payload, url))
+            cuerpo = self.rutas[clave]
+            if isinstance(cuerpo, int):
+                raise _error_http(cuerpo, {"error": {"message": "x"}})
+            return RespuestaFalsa(json.dumps(cuerpo).encode("utf-8"), status=200)
+        raise AssertionError(
+            "URL sin ruta de test: %s (collectionId %s)" % (url, coleccion)
+        )
 
 
 def _parchar_abrir(monkeypatch, abridora):
@@ -163,13 +175,13 @@ def test_extraer_id_documento_valores_raros():
 def test_resolver_plano_completo(monkeypatch):
     transporte = _TransporteRunQuery(
         {
-            "/documents:runQuery": _respuesta_runquery(
+            "projects": _respuesta_runquery(
                 [_doc(NOMBRE_PROYECTO, {"code": "HTLR", "title": "HTLR"})]
             ),
-            "/chapters:runQuery": _respuesta_runquery(
+            "chapters": _respuesta_runquery(
                 [_doc(NOMBRE_CAPITULO, {"title": "HTLR_107", "code": "EP107"})]
             ),
-            "/shots:runQuery": _respuesta_runquery(
+            "shots": _respuesta_runquery(
                 [_doc(NOMBRE_SHOT, {"code": "008_00100"})]
             ),
         }
@@ -190,19 +202,29 @@ def test_resolver_plano_completo(monkeypatch):
     assert res["shot"]["code"] == "008_00100"
 
     # La query de la resolucion lleva limit=1 y filtra por el campo correcto.
-    proyectos = [p for p in transporte.pedidos if p[0] == "/documents:runQuery"]
+    proyectos = [p for p in transporte.pedidos if p[0] == "projects"]
     assert proyectos and proyectos[0][1]["structuredQuery"]["limit"] == 1
     filtro = proyectos[0][1]["structuredQuery"]["where"]["fieldFilter"]
     assert filtro["field"]["fieldPath"] == "code"
     assert filtro["value"]["stringValue"] == "HTLR"
-    capitulos = [p for p in transporte.pedidos if p[0] == "/chapters:runQuery"]
+    capitulos = [p for p in transporte.pedidos if p[0] == "chapters"]
     filtro_capitulo = capitulos[0][1]["structuredQuery"]["where"]["fieldFilter"]
     assert filtro_capitulo["field"]["fieldPath"] == "title"
     assert filtro_capitulo["value"]["stringValue"] == "HTLR_107"
 
+    # El collectionId va en el body y el parent (documento padre) en la URL: la
+    # subcoleccion NUNCA va en la URL (aqui el parent es projects/{pid}, no
+    # projects/{pid}/chapters).
+    url_capitulos = capitulos[0][2]
+    assert url_capitulos.endswith(
+        "/documents/projects/lxYgN96Zk8zyhsFEABOf:runQuery"
+    )
+    assert "/chapters" not in url_capitulos.split(":runQuery")[0]
+    assert capitulos[0][1]["structuredQuery"]["from"][0]["collectionId"] == "chapters"
+
 
 def test_resolver_plano_proyecto_no_encontrado_devuelve_error(monkeypatch):
-    transporte = _TransporteRunQuery({"/documents:runQuery": _respuesta_runquery([])})
+    transporte = _TransporteRunQuery({"projects": _respuesta_runquery([])})
     _parchar_abrir(monkeypatch, transporte)
 
     res = vfxflow_datos.resolver_plano(
@@ -216,10 +238,10 @@ def test_resolver_plano_proyecto_no_encontrado_devuelve_error(monkeypatch):
 def test_resolver_plano_capitulo_no_encontrado_devuelve_error(monkeypatch):
     transporte = _TransporteRunQuery(
         {
-            "/documents:runQuery": _respuesta_runquery(
+            "projects": _respuesta_runquery(
                 [_doc(NOMBRE_PROYECTO, {"code": "HTLR", "title": "HTLR"})]
             ),
-            "/chapters:runQuery": _respuesta_runquery([]),
+            "chapters": _respuesta_runquery([]),
         }
     )
     _parchar_abrir(monkeypatch, transporte)
@@ -237,13 +259,13 @@ def test_resolver_plano_capitulo_no_encontrado_devuelve_error(monkeypatch):
 def test_resolver_plano_shot_no_encontrado_devuelve_error(monkeypatch):
     transporte = _TransporteRunQuery(
         {
-            "/documents:runQuery": _respuesta_runquery(
+            "projects": _respuesta_runquery(
                 [_doc(NOMBRE_PROYECTO, {"code": "HTLR", "title": "HTLR"})]
             ),
-            "/chapters:runQuery": _respuesta_runquery(
+            "chapters": _respuesta_runquery(
                 [_doc(NOMBRE_CAPITULO, {"title": "HTLR_107"})]
             ),
-            "/shots:runQuery": _respuesta_runquery([]),
+            "shots": _respuesta_runquery([]),
         }
     )
     _parchar_abrir(monkeypatch, transporte)
@@ -275,7 +297,7 @@ def test_resolver_plano_datos_incompletos_devuelve_none():
 
 
 def test_resolver_plano_401_lanza_token(monkeypatch):
-    transporte = _TransporteRunQuery({"/documents:runQuery": 401})
+    transporte = _TransporteRunQuery({"projects": 401})
     _parchar_abrir(monkeypatch, transporte)
 
     with pytest.raises(VfxFlowAuthError) as exc:
@@ -309,7 +331,7 @@ def test_listar_actividad_ocho_tipos_orden_desc_y_campos(monkeypatch):
     t8 = "2026-08-01T15:00:00Z"  # batch_update
     transporte = _TransporteRunQuery(
         {
-            "/shotActivity:runQuery": _respuesta_runquery(
+            "shotActivity": _respuesta_runquery(
                 [
                     _doc(
                         _ruta_actividad("seguimiento"),
@@ -472,12 +494,18 @@ def test_listar_actividad_ocho_tipos_orden_desc_y_campos(monkeypatch):
     assert por_tipo["status_change"]["userRole"] == "supervisor"
 
     # La query de actividad NO lleva limit (trae todos) ni orderBy.
-    actividad_q = [p for p in transporte.pedidos if p[0] == "/shotActivity:runQuery"]
+    actividad_q = [p for p in transporte.pedidos if p[0] == "shotActivity"]
     assert "limit" not in actividad_q[0][1]["structuredQuery"]
     assert "orderBy" not in actividad_q[0][1]["structuredQuery"]
     filtro = actividad_q[0][1]["structuredQuery"]["where"]["fieldFilter"]
     assert filtro["field"]["fieldPath"] == "shotId"
     assert filtro["value"]["stringValue"] == "shot_abc"
+    # El parent de la URL es projects/{pid}, nunca projects/{pid}/shotActivity.
+    url_actividad = actividad_q[0][2]
+    assert url_actividad.endswith(
+        "/documents/projects/lxYgN96Zk8zyhsFEABOf:runQuery"
+    )
+    assert "/shotActivity" not in url_actividad.split(":runQuery")[0]
 
 
 def test_listar_comentarios_alias_devuelve_lo_mismo(monkeypatch):
@@ -486,7 +514,7 @@ def test_listar_comentarios_alias_devuelve_lo_mismo(monkeypatch):
     t2 = "2026-08-01T09:00:00Z"
     transporte = _TransporteRunQuery(
         {
-            "/shotActivity:runQuery": _respuesta_runquery(
+            "shotActivity": _respuesta_runquery(
                 [
                     _doc(
                         _ruta_actividad("viejo"),
@@ -526,7 +554,7 @@ def test_listar_comentarios_alias_devuelve_lo_mismo(monkeypatch):
 
 def test_listar_comentarios_sin_coincidencias_devuelve_vacio(monkeypatch):
     transporte = _TransporteRunQuery(
-        {"/shotActivity:runQuery": _respuesta_runquery([])}
+        {"shotActivity": _respuesta_runquery([])}
     )
     _parchar_abrir(monkeypatch, transporte)
 
@@ -539,7 +567,7 @@ def test_listar_comentarios_sin_coincidencias_devuelve_vacio(monkeypatch):
 def test_listar_actividad_solo_tipos_desconocidos_devuelve_vacio(monkeypatch):
     transporte = _TransporteRunQuery(
         {
-            "/shotActivity:runQuery": _respuesta_runquery(
+            "shotActivity": _respuesta_runquery(
                 [
                     _doc(
                         _ruta_actividad("sis"),
@@ -558,7 +586,7 @@ def test_listar_actividad_solo_tipos_desconocidos_devuelve_vacio(monkeypatch):
 
 
 def test_listar_comentarios_401_lanza_token(monkeypatch):
-    transporte = _TransporteRunQuery({"/shotActivity:runQuery": 401})
+    transporte = _TransporteRunQuery({"shotActivity": 401})
     _parchar_abrir(monkeypatch, transporte)
 
     with pytest.raises(VfxFlowAuthError) as exc:

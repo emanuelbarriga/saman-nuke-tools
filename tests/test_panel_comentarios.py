@@ -710,8 +710,8 @@ def test_cargar_comentarios_error_red_muestra_firewall(monkeypatch):
     assert panel._comentarios_trabajo_en_curso is False
     assert "firewall" in panel._label_mensaje_actividad.texto
     assert panel._label_mensaje_actividad.style  # el error se marca con estilo
-    assert any("firewall" in texto for texto, error in estados)
-    assert any(error for texto, error in estados)  # el error llega marcado
+    # El error NO se repite en la etiqueta de estado inferior (duplicado v1.6.1).
+    assert not any("firewall" in texto for texto, error in estados)
     # El feed muestra un único mensaje (sin cards).
     sin_stretch = [i for i in panel._layout_actividad.items if i != "stretch"]
     assert len(sin_stretch) == 1
@@ -741,8 +741,11 @@ def test_cargar_comentarios_resolucion_no_encontrada(monkeypatch):
     panel._cargar_comentarios_del_plano()
     panel._poll_comentarios()
 
-    assert any("El capítulo 107 no está en VFXFlow." in texto for texto, error in estados)
     assert "El capítulo 107" in panel._label_mensaje_actividad.texto
+    # El error de resolucion NO se repite en la etiqueta de estado inferior.
+    assert not any(
+        "El capítulo 107" in texto for texto, error in estados
+    )
 
 
 def test_publicar_actividad_sin_datos_muestra_mensaje():
@@ -791,22 +794,6 @@ def test_header_plano_texto():
     assert panel._header_plano_texto() == "—"
     panel._plano_activo = lambda: {"proyecto": "HTLR"}
     assert panel._header_plano_texto() == "—"
-
-
-def test_actualizar_label_usuario():
-    from SamanTools import panel_comentarios
-
-    panel = panel_comentarios.PanelComentarios.__new__(
-        panel_comentarios.PanelComentarios
-    )
-    panel.sesion = {"email": "artista@samanestudio.com"}
-    panel._label_usuario = _WidgetFake()
-
-    panel._actualizar_label_usuario(True)
-    assert panel._label_usuario.texto == "Usuario: artista@samanestudio.com"
-
-    panel._actualizar_label_usuario(False)
-    assert panel._label_usuario.texto == "Usuario: —"
 
 
 def test_mensaje_error_resolucion():
