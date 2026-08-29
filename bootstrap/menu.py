@@ -95,6 +95,31 @@ def _estado_update():
     return "ok"
 
 
+def _version_instalada():
+    """Devuelve (version, commit) del checkout instalado en TOOLS_DIR.
+
+    - version: __version__ de SamanTools/__init__.py (SemVer del repo).
+    - commit: hash corto de HEAD — la señal fiel de qué código está cargado
+      (la version SemVer solo cambia en releases formales; el commit cambia
+      con cada push).
+    Nunca lanza excepciones; ante cualquier fallo devuelve desconocido.
+    """
+    version = "desconocida"
+    try:
+        import importlib.util
+        ruta_init = os.path.join(TOOLS_DIR, "SamanTools", "__init__.py")
+        spec = importlib.util.spec_from_file_location("saman_tools_version", ruta_init)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        version = getattr(mod, "__version__", "desconocida")
+    except Exception:
+        pass
+
+    rc, out, _ = _ejecutar_git(["rev-parse", "--short", "HEAD"], timeout=15)
+    commit = out.decode(errors="replace").strip() if rc == 0 else "?"
+    return version, commit
+
+
 def _aplicar_update():
     """Hace git pull (fast-forward) y avisa el resultado. Devuelve True si ok."""
     rc, _, err = _ejecutar_git(["pull", "--ff-only", "--quiet"], timeout=120)
@@ -104,9 +129,12 @@ def _aplicar_update():
                 pass
         except Exception:
             pass
+        version, commit = _version_instalada()
         nuke.message(
             "SamanTools actualizado correctamente.\n\n"
-            "Reiniciá Nuke para cargar la nueva versión."
+            "Versión: %s\n"
+            "Commit: %s\n\n"
+            "Reiniciá Nuke para cargar la nueva versión." % (version, commit)
         )
         return True
     nuke.message(
@@ -145,7 +173,13 @@ def _actualizar_ahora():
 
     estado = _estado_update()
     if estado == "ok":
-        nuke.message("Ya tenés la última versión de SamanTools.")
+        version, commit = _version_instalada()
+        nuke.message(
+            "Ya tenés la última versión de SamanTools.\n\n"
+            "Versión: %s\n"
+            "Commit: %s\n\n"
+            "Tu copia instalada está al día con GitHub." % (version, commit)
+        )
         return
     if estado == "error":
         nuke.message("No se pudo consultar la actualización.\nVerificá tu conexión a internet.")
