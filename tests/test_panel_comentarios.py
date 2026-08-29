@@ -973,3 +973,422 @@ def test_estado_error_usa_color_contraste():
     assert panel_comentarios._COLOR_ERROR in panel._etiqueta_estado.style
     panel._estado("ok")
     assert panel._etiqueta_estado.style == ""  # sin error: vuelve al default
+
+
+# ---------------------------------------------------------------------------
+# Import de referencias (v1.6.4): helpers puros + worker + Read nodes
+# ---------------------------------------------------------------------------
+
+
+class _RespuestaRefFake:
+    """Respuesta de urllib fake: `.read()` + protocolo de contexto."""
+
+    def __init__(self, datos):
+        self._datos = datos
+
+    def read(self):
+        return self._datos
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+def test_ruta_destino_refs():
+    from SamanTools import panel_comentarios
+
+    assert panel_comentarios._ruta_destino_refs("/a/b/foo.nk") == "/a/b/ref"
+    assert panel_comentarios._ruta_destino_refs("foo.nk") == "ref"
+    assert panel_comentarios._ruta_destino_refs("") is None
+    assert panel_comentarios._ruta_destino_refs(None) is None
+
+
+def test_filename_desde_url_ref():
+    from SamanTools import panel_comentarios
+
+    url = (
+        "https://firebasestorage.googleapis.com/v0/b/"
+        "vfxpm-be912.firebasestorage.app/o/projects%2FlxYgN96Zk8zyhsFEABOf"
+        "%2Fchapters%2FK8hWolWmRruKl5bASYxM%2Fshots%2FB3W9SUJ8jgXy2f7GMlH4"
+        "%2Freferences%2FHTLR_107_008_00200.jpg?alt=media&token=abc"
+    )
+    assert (
+        panel_comentarios._filename_desde_url_ref(url) == "HTLR_107_008_00200.jpg"
+    )
+    # Sin token (misma URL antes del query).
+    assert (
+        panel_comentarios._filename_desde_url_ref(url.split("?")[0])
+        == "HTLR_107_008_00200.jpg"
+    )
+    # Percent-encodings extra se decodifican antes del basename.
+    assert (
+        panel_comentarios._filename_desde_url_ref(
+            "https://x/o/otra%20cosa.png?alt=media"
+        )
+        == "otra cosa.png"
+    )
+    # URLs raras (sin marcador /o/) -> fallback con el índice.
+    assert panel_comentarios._filename_desde_url_ref("") == "ref_0.jpg"
+    assert panel_comentarios._filename_desde_url_ref(None) == "ref_0.jpg"
+    assert (
+        panel_comentarios._filename_desde_url_ref(
+            "https://www.example.com/sin-marcador/aqui"
+        )
+        == "ref_0.jpg"
+    )
+    assert panel_comentarios._filename_desde_url_ref("raro", 3) == "ref_3.jpg"
+
+
+def test_descargar_refs_ok_y_fallos_no_cortan(tmp_path):
+    from SamanTools import panel_comentarios
+
+    urls = [
+        "https://storage/o/refs%2Fbien.jpg?alt=media&token=1",
+        "https://storage/o/refs%2Fmal.jpg?alt=media&token=2",
+    ]
+
+    def _abrir_fake(req, timeout=10):
+        if "bien" in req.full_url:
+            return _RespuestaRefFake(b"AAA")
+        raise OSError("boom red")
+
+    resultado = panel_comentarios._descargar_refs(
+        urls, str(tmp_path), abrir=_abrir_fake
+    )
+
+    assert len(resultado["ok"]) == 1
+    url, ruta_local, nombre = resultado["ok"][0]
+    assert url == urls[0]
+    assert nombre == "bien.jpg"
+    assert ruta_local == str(tmp_path / "bien.jpg")
+    with open(ruta_local, "rb") as f:
+        assert f.read() == b"AAA"
+
+    # El fallo de una URL NO corta las demas: queda registrado en "fallidos".
+    assert len(resultado["fallidos"]) == 1
+    assert resultado["fallidos"][0][0] == urls[1]
+    assert "boom" in resultado["fallidos"][0][1]
+
+
+def test_importar_refs_del_plano_ok(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda datos, token, config=None: {
+            "shot": {"referenceImages": ["https://x/o/refs%2Fa.jpg?alt=media&token=1"]}
+        },
+    )
+    monkeypatch.setattr(
+        panel_comentarios,
+        "_descargar_refs",
+        lambda urls, directorio: {
+            "ok": [("u1", directorio + "/a.jpg", "a.jpg")],
+            "fallidos": [("u2", "x")],
+        },
+    )
+
+    panel._importar_refs_del_plano(
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"},
+        "TOKEN",
+        "/vol/ref",
+    )
+
+    assert panel._refs_trabajo["estado"] == "ok"
+    assert panel._refs_trabajo["descargados"][0][1] == "/vol/ref/a.jpg"
+    assert panel._refs_trabajo["directorio"] == "/vol/ref"
+    assert len(panel._refs_trabajo["fallidos"]) == 1
+
+
+def test_importar_refs_del_plano_sin_reference_images(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda datos, token, config=None: {"shot": {"referenceImages": []}},
+    )
+    descargado = []
+    monkeypatch.setattr(
+        panel_comentarios,
+        "_descargar_refs",
+        lambda urls, directorio: descargado.append(urls) or {"ok": [], "fallidos": []},
+    )
+
+    panel._importar_refs_del_plano(
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"},
+        "TOKEN",
+        "/vol/ref",
+    )
+
+    # Sin images de referencia: "ok" informativo SIN error y sin descargar.
+    assert panel._refs_trabajo["estado"] == "ok"
+    assert panel._refs_trabajo["sin_refs"] is True
+    assert panel._refs_trabajo["mensaje"] == panel_comentarios._MENSAJE_SIN_REFS
+    assert descargado == []
+
+
+def test_importar_refs_del_plano_error_resolucion(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda datos, token, config=None: {
+            "error": "plano_no_encontrado",
+            "plano": "008_00100",
+        },
+    )
+    descargado = []
+    monkeypatch.setattr(
+        panel_comentarios,
+        "_descargar_refs",
+        lambda urls, directorio: descargado.append(urls) or {"ok": [], "fallidos": []},
+    )
+
+    panel._importar_refs_del_plano(
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"},
+        "TOKEN",
+        "/vol/ref",
+    )
+
+    assert panel._refs_trabajo["estado"] == "error"
+    assert panel._refs_trabajo["codigo"] == "resolucion"
+    assert "008_00100" in panel._refs_trabajo["mensaje"]
+    assert descargado == []
+
+
+def test_cargar_refs_sin_plano_no_hace_worker(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._plano_activo = lambda: None
+    panel._refs_trabajo_en_curso = False
+    panel._etiqueta_estado = _LabelFake()
+    hilos = []
+    monkeypatch.setattr(
+        panel_comentarios.threading,
+        "Thread",
+        lambda *a, **k: hilos.append(1) or None,
+    )
+
+    panel._cargar_refs_del_plano()
+
+    assert hilos == []
+    assert panel._refs_trabajo_en_curso is False
+    assert (
+        panel._etiqueta_estado.texto == panel_comentarios._MENSAJE_PLANO_NO_IDENTIFICADO
+    )
+
+
+def test_cargar_refs_sin_sesion_no_hace_worker(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR",
+        "capitulo": 107,
+        "plano": "008_00100",
+    }
+    panel._id_token_actual = lambda: None
+    panel._refs_trabajo_en_curso = False
+    panel._etiqueta_estado = _LabelFake()
+    hilos = []
+    monkeypatch.setattr(
+        panel_comentarios.threading,
+        "Thread",
+        lambda *a, **k: hilos.append(1) or None,
+    )
+
+    panel._cargar_refs_del_plano()
+
+    assert hilos == []
+    assert panel._refs_trabajo_en_curso is False
+    assert panel._etiqueta_estado.texto == panel_comentarios._MENSAJE_SIN_SESION_REFS
+
+
+def test_cargar_refs_comp_sin_guardar_no_hace_worker(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR",
+        "capitulo": 107,
+        "plano": "008_00100",
+    }
+    panel._id_token_actual = lambda: "TOKEN"
+    monkeypatch.setitem(nuke._estado, "root_name", "")  # comp sin guardar
+    panel._refs_trabajo_en_curso = False
+    panel._etiqueta_estado = _LabelFake()
+    hilos = []
+    monkeypatch.setattr(
+        panel_comentarios.threading,
+        "Thread",
+        lambda *a, **k: hilos.append(1) or None,
+    )
+
+    panel._cargar_refs_del_plano()
+
+    assert hilos == []
+    assert panel._etiqueta_estado.texto == panel_comentarios._MENSAJE_COMP_SIN_GUARDAR
+
+
+def test_cargar_refs_dispara_worker_y_poll_aplica(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR",
+        "capitulo": 107,
+        "plano": "008_00100",
+    }
+    panel._id_token_actual = lambda: "TOKEN"
+    panel._refs_trabajo_en_curso = False
+    panel._etiqueta_estado = _LabelFake()
+    monkeypatch.setitem(nuke._estado, "root_name", "/vol/HTLR/foo.nk")
+
+    monkeypatch.setattr(panel_comentarios.threading, "Thread", _ThreadFake)
+    disparos = []
+    monkeypatch.setattr(
+        panel_comentarios.QtCore.QTimer,
+        "singleShot",
+        lambda ms, cb: disparos.append((ms, cb)),
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda datos, token, config=None: {
+            "shot": {"referenceImages": ["https://x/o/refs%2Fa.jpg?alt=media&token=1"]}
+        },
+    )
+    monkeypatch.setattr(
+        panel_comentarios,
+        "_descargar_refs",
+        lambda urls, directorio: {
+            "ok": [("u", directorio + "/a.jpg", "a.jpg")],
+            "fallidos": [],
+        },
+    )
+    creados = []
+    monkeypatch.setattr(
+        panel_comentarios.nuke,
+        "createNode",
+        lambda tipo: creados.append(tipo) and nuke.NodoFake(tipo),
+    )
+
+    panel._cargar_refs_del_plano()
+
+    # El worker (sincrónico por el fake) dejó el resultado publicado.
+    assert panel._refs_trabajo["estado"] == "ok"
+    assert panel._refs_trabajo["descargados"][0][1] == "/vol/HTLR/ref/a.jpg"
+    assert disparos  # se programó el poll
+
+    panel._poll_refs()
+
+    assert panel._refs_trabajo_en_curso is False
+    assert creados == ["Read"]
+    assert "1 referencia importada" in panel._etiqueta_estado.texto
+    assert "/vol/HTLR/ref" in panel._etiqueta_estado.texto
+
+
+def test_aplicar_import_refs_crea_reads_relativos(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._etiqueta_estado = _LabelFake()
+    creados = []
+    monkeypatch.setattr(
+        panel_comentarios.nuke,
+        "createNode",
+        lambda tipo: creados.append(nuke.NodoFake(tipo)) or creados[-1],
+    )
+    trabajo = {
+        "estado": "ok",
+        "descargados": [
+            ("u", "/vol/ref/a.jpg", "a.jpg"),
+            ("u2", "/vol/ref/b.png", "b.png"),
+        ],
+        "fallidos": [("u3", "x")],
+        "directorio": "/vol/ref",
+    }
+
+    panel._aplicar_import_refs(trabajo)
+
+    assert len(creados) == 2
+    assert creados[0]["file"].valor == "ref/a.jpg"
+    assert creados[1]["file"].valor == "ref/b.png"
+    assert "2 referencias importadas a /vol/ref" in panel._etiqueta_estado.texto
+    assert "(1 no se pudieron descargar)" in panel._etiqueta_estado.texto
+
+
+def test_aplicar_import_refs_sin_refs_informativo():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._etiqueta_estado = _LabelFake()
+
+    panel._aplicar_import_refs(
+        {"estado": "ok", "sin_refs": True, "mensaje": panel_comentarios._MENSAJE_SIN_REFS}
+    )
+
+    assert panel._etiqueta_estado.texto == panel_comentarios._MENSAJE_SIN_REFS
+    assert panel._etiqueta_estado.style == ""  # informativo, sin estilo de error
+
+
+def test_aplicar_import_refs_error_marca_error():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._etiqueta_estado = _LabelFake()
+
+    panel._aplicar_import_refs({"estado": "error", "mensaje": "boom"})
+
+    assert panel._etiqueta_estado.texto == "boom"
+    assert panel_comentarios._COLOR_ERROR in panel._etiqueta_estado.style
+
+
+def test_poll_refs_pendiente_reprograma(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._refs_trabajo_en_curso = True
+    panel._refs_trabajo = {"estado": "pendiente"}
+    disparos = []
+    monkeypatch.setattr(
+        panel_comentarios.QtCore.QTimer,
+        "singleShot",
+        lambda ms, cb: disparos.append((ms, cb)),
+    )
+
+    panel._poll_refs()
+
+    assert disparos == [(panel_comentarios._COMENTARIOS_POLL_MS, panel._poll_refs)]
+    assert panel._refs_trabajo_en_curso is True

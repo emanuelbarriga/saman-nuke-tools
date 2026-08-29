@@ -17,7 +17,10 @@ El feed de actividad reemplaza el QTextBrowser de la v1.6.0 por un
 QScrollArea de cards. En v1.6.1 todo es solo consulta: el combo "Estado" y el
 input de comentario estan deshabilitados (el envio y el cambio de estado son
 v1.6.2). El avatar por foto (userPhotoURL) tambien queda documentado para
-despues: v1.6.1 muestra la INICIAL del usuario.
+despues: v1.6.1 muestra la INICIAL del usuario. El import de referencias
+(v1.6.4, "Importar refs") baja las imágenes de referencia del plano a
+`<dir del comp>/ref` y crea un nodo Read por cada una con ruta relativa,
+reusando el mismo patron de worker daemon + QTimer.
 
 Import de PySide con el patron de `frame_manager` (try PySide2, except
 PySide6) para mantener compatibilidad entre Nuke 14 y 17.
@@ -28,6 +31,8 @@ import os
 import re
 import threading
 import time
+import urllib.parse
+import urllib.request
 import webbrowser
 from datetime import datetime, timezone
 
@@ -77,6 +82,14 @@ _MENSAJE_PLANO_NO_IDENTIFICADO = (
 )
 _MENSAJE_SIN_SESION = "Iniciá sesión para ver actividad."
 _MENSAJE_SIN_ACTIVIDAD = "Sin actividad para este plano."
+
+# Mensajes del import de referencias (v1.6.4).
+_MENSAJE_SIN_REFS = "Este plano no tiene imágenes de referencia."
+_MENSAJE_SIN_SESION_REFS = "Iniciá sesión para importar referencias."
+_MENSAJE_COMP_SIN_GUARDAR = "Guardá el comp antes de importar referencias."
+
+# Timeout de cada descarga individual de referencia (URL firmada de storage).
+_REFS_TIMEOUT_SEGUNDOS = 10
 
 # Intervalo del QTimer que observa el resultado del fetch de actividad.
 _COMENTARIOS_POLL_MS = 500
@@ -449,6 +462,78 @@ def _cuerpo_actividad(actividad):
     return {"html": _escapar_y_linkificar(content or ""), "chips": None, "versiones": None}
 
 
+# ------------------------------------------------------- refs (v1.6.4)
+
+def _ruta_destino_refs(ruta_comp):
+    """Directorio donde se importan las refs: "<dir del comp>/ref" o None.
+
+    Sin ruta de comp (aun sin guardar) devuelve None. Puro.
+    """
+    ruta = ruta_comp or ""
+    if not str(ruta).strip():
+        return None
+    return os.path.join(os.path.dirname(str(ruta)), "ref")
+
+
+def _filename_desde_url_ref(url, indice=0):
+    """Basename decodificado de una URL firmada de storage (o fallback).
+
+    La URL firmada es `.../o/<path>%2F<filename>?alt=media&token=...': se toma
+    lo que sigue a `/o/` hasta `?alt=media`, se decodifica con
+    `urllib.parse.unquote` y se queda con el ultimo segmento. Si el parseo
+    falla (URL rara o sin `/o/`), devuelve `ref_<indice>.jpg`. Puro.
+    """
+    try:
+        texto = str(url or "")
+        inicio = texto.find("/o/")
+        if inicio < 0:
+            return "ref_{0}.jpg".format(indice)
+        resto = texto[inicio + 3:]
+        fin = resto.find("?alt=media")
+        if fin < 0:
+            fin = resto.find("?")
+        if fin >= 0:
+            resto = resto[:fin]
+        nombre = urllib.parse.unquote(resto).replace("\\", "/")
+        nombre = nombre.split("/")[-1].strip()
+        if not nombre or nombre in (".", ".."):
+            return "ref_{0}.jpg".format(indice)
+        return nombre
+    except Exception:
+        return "ref_{0}.jpg".format(indice)
+
+
+def _descargar_refs(urls, directorio, abrir=None):
+    """Descarga una lista de URLs firmadas a `directorio` (una a una).
+
+    Usa las firmadas tal cual (su token viaja en el query): GET puro con
+    `urllib.request.Request(url)`, NUNCA Bearer. Reutiliza el opener de
+    `vfxflow_auth._abrir` (que ya se memoiza). El `abrir` se recibe como
+    parametro para poder fakearlo en tests (por defecto `vfxflow_auth._abrir`).
+
+    Devuelve un dict con "ok" (lista de (url, ruta_local, filename) exitosas)
+    y "fallidos" (lista de (url, mensaje)). Un fallo de una URL NO corta las
+    demas.
+    """
+    abrir = abrir or vfxflow_auth._abrir
+    os.makedirs(directorio, exist_ok=True)
+    descargados = []
+    fallidos = []
+    for indice, url in enumerate(urls or []):
+        nombre = _filename_desde_url_ref(url, indice)
+        try:
+            req = urllib.request.Request(str(url), method="GET")
+            with abrir(req, timeout=_REFS_TIMEOUT_SEGUNDOS) as respuesta:
+                datos = respuesta.read()
+            ruta_local = os.path.join(directorio, nombre)
+            with open(ruta_local, "wb") as archivo:
+                archivo.write(datos)
+            descargados.append((str(url), ruta_local, nombre))
+        except Exception as e:
+            fallidos.append((str(url), str(e)))
+    return {"ok": descargados, "fallidos": fallidos}
+
+
 class PanelComentarios(QtWidgets.QWidget):
     """Widget docked: contexto del plano activo + login a VFXFlow."""
 
@@ -470,6 +555,11 @@ class PanelComentarios(QtWidgets.QWidget):
         # QTimer (`_poll_comentarios`) lo aplica a la UI en el hilo principal.
         self._comentarios_trabajo = None
         self._comentarios_trabajo_en_curso = False
+
+        # Estado del import de refs en worker (misma regla): `_refs_trabajo`
+        # publica "pendiente"/"ok"/"error" y el QTimer (`_poll_refs`) aplica.
+        self._refs_trabajo = None
+        self._refs_trabajo_en_curso = False
 
         self._construir_ui()
         self._arrancar_poll_plano()
@@ -550,12 +640,18 @@ class PanelComentarios(QtWidgets.QWidget):
         fila_input.addWidget(self._boton_enviar)
         lay_comentarios.addLayout(fila_input)
 
-        # Feed header: título + botón de refresco (reemplaza "Actualizar comentarios").
+        # Feed header: título + botón de refs (v1.6.4) + botón de refresco.
         fila_feed = QtWidgets.QHBoxLayout()
         label_titulo_feed = QtWidgets.QLabel("Actividad Reciente", seccion_comentarios)
         label_titulo_feed.setStyleSheet("font-weight: bold;")
         fila_feed.addWidget(label_titulo_feed)
         fila_feed.addStretch(1)
+        self._boton_importar_refs = QtWidgets.QPushButton("Importar refs", seccion_comentarios)
+        self._boton_importar_refs.setToolTip(
+            "Descargar las imágenes de referencia del plano como nodos Read"
+        )
+        self._boton_importar_refs.clicked.connect(self._on_importar_refs)
+        fila_feed.addWidget(self._boton_importar_refs)
         self._boton_refrescar = QtWidgets.QPushButton("↻", seccion_comentarios)
         self._boton_refrescar.setToolTip("Actualizar actividad")
         self._boton_refrescar.clicked.connect(self._on_actualizar_comentarios)
@@ -1501,6 +1597,161 @@ class PanelComentarios(QtWidgets.QWidget):
         )
         self._layout_actividad.addWidget(label)
         self._layout_actividad.addStretch(1)
+
+    # ------------------------------------------------------- refs (v1.6.4)
+
+    def _on_importar_refs(self):
+        """Botón "Importar refs": dispara el import del plano activo."""
+        self._cargar_refs_del_plano()
+
+    def _cargar_refs_del_plano(self):
+        """Dispara el import de refs del plano activo (worker daemon).
+
+        Precondiciones antes de tocar la red: plano identificado, sesión con
+        id_token vigente y comp guardado (el directorio destino es
+        "<dir del comp>/ref", que se computa ACA en el hilo principal para no
+        llamar a `nuke.root()` desde el worker). Sin precondiciones: mensaje
+        de estado y NO se lanza el worker. Con las precondiciones listas
+        publica `pendiente` en `_refs_trabajo`, corre el import en un thread
+        daemon y programa el QTimer (`_poll_refs`) que aplica a la UI.
+        """
+        plano = self._plano_activo()
+        if plano is None:
+            self._estado(_MENSAJE_PLANO_NO_IDENTIFICADO, error=True)
+            return
+
+        token = self._id_token_actual()
+        if not token:
+            self._estado(_MENSAJE_SIN_SESION_REFS, error=True)
+            return
+
+        directorio = _ruta_destino_refs(nuke.root().name() or "")
+        if not directorio:
+            self._estado(_MENSAJE_COMP_SIN_GUARDAR, error=True)
+            return
+
+        if getattr(self, "_refs_trabajo_en_curso", False):
+            return  # ya hay un worker de refs en vuelo
+
+        self._refs_trabajo_en_curso = True
+        self._refs_trabajo = {"estado": "pendiente"}
+        self._estado("Importando referencias…")
+        threading.Thread(
+            target=self._importar_refs_del_plano,
+            args=(plano, token, directorio),
+            daemon=True,
+        ).start()
+        QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_refs)
+
+    def _importar_refs_del_plano(self, plano, token, directorio):
+        """Worker daemon: resuelve el shot, baja las refs y publica resultado.
+
+        Nunca toca widgets ni nuke: publica en `_refs_trabajo`
+        ("ok" con `descargados`/`fallidos`, o "error" con mensaje/codigo). El
+        QTimer (`_poll_refs`) es quien aplica a la UI (incluido el createNode).
+        Sin `referenceImages`: "ok" con `sin_refs=True` (mensaje informativo,
+        no error). Sin thumbnails en v1.6.4: el foco es importar + nodo Read.
+        """
+        try:
+            resuelto = vfxflow_datos.resolver_plano(plano, token)
+            if resuelto is None or resuelto.get("error"):
+                self._refs_trabajo = {
+                    "estado": "error",
+                    "mensaje": self._mensaje_error_resolucion(resuelto),
+                    "codigo": "resolucion",
+                }
+                return
+            urls = (resuelto.get("shot") or {}).get("referenceImages") or []
+            if not urls:
+                self._refs_trabajo = {
+                    "estado": "ok",
+                    "sin_refs": True,
+                    "mensaje": _MENSAJE_SIN_REFS,
+                }
+                return
+            resultado = _descargar_refs(urls, directorio)
+            self._refs_trabajo = {
+                "estado": "ok",
+                "descargados": resultado["ok"],
+                "fallidos": resultado["fallidos"],
+                "directorio": directorio,
+            }
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._refs_trabajo = {
+                "estado": "error",
+                "mensaje": str(e),
+                "codigo": e.codigo,
+            }
+        except Exception as e:
+            self._refs_trabajo = {
+                "estado": "error",
+                "mensaje": "Error inesperado: %s" % e,
+                "codigo": "desconocido",
+            }
+
+    def _poll_refs(self):
+        """Tick del QTimer (hilo principal): aplica el resultado del import.
+
+        Solo observa `_refs_trabajo` (nunca toca widgets desde el worker).
+        Mientras es "pendiente" reprograma; con "ok"/"error" aplica y libera
+        `_refs_trabajo_en_curso`. El createNode de los Read corre ACÁ (hilo
+        principal).
+        """
+        if not getattr(self, "_refs_trabajo_en_curso", False):
+            return
+        trabajo = self._refs_trabajo or {}
+        estado = trabajo.get("estado")
+
+        if estado == "pendiente":
+            QtCore.QTimer.singleShot(
+                _COMENTARIOS_POLL_MS, self._poll_refs
+            )
+            return
+
+        self._refs_trabajo_en_curso = False
+        try:
+            self._aplicar_import_refs(trabajo)
+        except Exception as e:
+            self._estado("Error al importar referencias: %s" % e, error=True)
+
+    def _aplicar_import_refs(self, trabajo):
+        """Publica el import en `_etiqueta_estado` y crea los nodos Read.
+
+        Corre SIEMPRE en el hilo principal (QTimer). Por cada referencia
+        descargada crea un Read con ruta RELATIVA al comp guardado
+        ("ref/<filename>"); un fallo de un nodo no corta el resto. Sin
+        imágenes: mensaje informativo (no error). Nunca lanza.
+        """
+        if not trabajo:
+            return
+        estado = trabajo.get("estado")
+        if estado != "ok":
+            self._estado(
+                trabajo.get("mensaje") or "Error al importar referencias.",
+                error=True,
+            )
+            return
+
+        if trabajo.get("sin_refs"):
+            self._estado(trabajo.get("mensaje") or _MENSAJE_SIN_REFS)
+            return
+
+        descargados = trabajo.get("descargados") or []
+        fallidos = trabajo.get("fallidos") or []
+        for _url, _ruta_local, nombre in descargados:
+            try:
+                nodo = nuke.createNode("Read")
+                nodo["file"].setValue("ref/" + nombre)
+            except Exception:
+                pass  # un nodo que falla no corta el resto
+        directorio = trabajo.get("directorio") or ""
+        cantidad = len(descargados)
+        unidad = "referencia" if cantidad == 1 else "referencias"
+        verbo = "importada" if cantidad == 1 else "importadas"
+        resumen = "{0} {1} {2} a {3}".format(cantidad, unidad, verbo, directorio)
+        if fallidos:
+            resumen += " ({0} no se pudieron descargar)".format(len(fallidos))
+        self._estado(resumen)
 
     # ------------------------------------------------------------ utilidad
 
