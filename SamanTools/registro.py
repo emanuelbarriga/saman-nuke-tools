@@ -104,6 +104,12 @@ def instalar():
         "Escanear Scripts del Proyecto",
         _escanear_scripts_proyecto,
     )
+    # Comando lazy (string): el módulo panel_comentarios solo se importa al
+    # hacer clic, para no romper la carga del menú si PySide no está o no hay GUI.
+    sub_util.addCommand(
+        "Comentarios por Plano...",
+        "from SamanTools import panel_comentarios\npanel_comentarios.abrir_panel()",
+    )
 
     # --- Categoría: Insertar Nodo ---
     sub_nodos = menu.addMenu("Insertar Nodo")
