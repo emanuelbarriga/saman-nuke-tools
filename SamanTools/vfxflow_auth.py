@@ -215,6 +215,106 @@ def _proxy_configurado(so=None):
 
 
 _opener_cache = None
+_contexto_ssl_cache = None
+
+# Rutas típicas de un bundle de CA en macOS (Homebrew openssl, python.org, etc.).
+_RUTAS_CA = (
+    "/etc/ssl/cert.pem",
+    "/usr/local/etc/openssl/cert.pem",
+    "/opt/homebrew/etc/openssl/cert.pem",
+    "/opt/homebrew/etc/openssl@3/cert.pem",
+    "/usr/local/etc/openssl@3/cert.pem",
+)
+
+
+def _cafile_sistema():
+    """Devuelve la ruta de un bundle de CA usable, o None.
+
+    El Python embebido de Nuke suele estar compilado con una ruta de CA que
+    no existe en macOS: eso produce SSLCertVerificationError
+    'unable to get local issuer certificate' mientras el navegador funciona
+    (usa el Keychain del sistema). Esta funcion:
+
+      1. Respeta la env var SSL_CERT_FILE si esta definida.
+      2. Busca bundles de CA conocidos en el sistema.
+      3. En macOS, si nada existe, exporta los CA del Keychain del sistema a
+         ~/.config/saman/saman_cacert.pem (via 'security find-certificate')
+         y devuelve esa ruta. Sin exito -> None (se usara el default de urllib).
+
+    Nunca lanza.
+    """
+    env = os.environ.get("SSL_CERT_FILE")
+    if env and os.path.isfile(env):
+        return env
+    for ruta in _RUTAS_CA:
+        if os.path.isfile(ruta):
+            return ruta
+    if platform.system().lower() == "darwin":
+        return _exportar_cacert_keychain()
+    return None
+
+
+def _exportar_cacert_keychain():
+    """Exporta los certificados raiz del sistema macOS a un PEM cacheado."""
+    destino = os.path.join(
+        os.path.expanduser("~/.config/saman"), "saman_cacert.pem"
+    )
+    try:
+        if os.path.isfile(destino):
+            return destino
+        keychains = [
+            "/System/Library/Keychains/SystemRootCertificates.keychain",
+            "/System/Library/Keychains/SystemCACertificates.keychain",
+        ]
+        bloques = []
+        for keychain in keychains:
+            proc = subprocess.run(
+                ["security", "find-certificate", "-a", "-p", keychain],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                bloques.append(proc.stdout)
+        if not bloques:
+            return None
+        directorio = os.path.dirname(destino)
+        os.makedirs(directorio, exist_ok=True)
+        with open(destino, "w", encoding="utf-8") as fh:
+            fh.write("".join(bloques))
+        if os.name == "posix":
+            os.chmod(destino, 0o600)
+        return destino
+    except Exception:
+        return None
+
+
+def _contexto_ssl():
+    """Contexto SSL de urllib con el almacén de CA del sistema (cacheado).
+
+    Si encontro un bundle de CA (keychain exportado o ruta conocida), crea un
+    contexto que verifica contra el; si no, el default de urllib. Este es el
+    arreglo para el SSLCertVerificationError del Python embebido de Nuke.
+    """
+    global _contexto_ssl_cache
+    if _contexto_ssl_cache is None:
+        import ssl
+
+        cafile = _cafile_sistema()
+        if cafile:
+            try:
+                _contexto_ssl_cache = ssl.create_default_context(cafile=cafile)
+            except Exception:
+                _contexto_ssl_cache = ssl.create_default_context()
+        else:
+            _contexto_ssl_cache = ssl.create_default_context()
+    return _contexto_ssl_cache
+
+
+def _reiniciar_contexto_ssl():
+    """Limpia la cache del contexto SSL de modulo (soporte de tests)."""
+    global _contexto_ssl_cache
+    _contexto_ssl_cache = None
 
 
 def _opener():
@@ -222,16 +322,20 @@ def _opener():
 
     Con proxy: `ProxyHandler({"http": proxy, "https": proxy})`. Sin proxy:
     `ProxyHandler({})`, que desactiva la lectura automatica de env de urllib
-    (la prioridad de env ya la resolvio `_proxy_configurado`). Se cachea a
+    (la prioridad de env ya la resolvio `_proxy_configurado`). Siempre usa el
+    contexto SSL con los CA del sistema (ver _contexto_ssl). Se cachea a
     nivel de modulo; `_reiniciar_opener()` lo limpia (tests).
     """
     global _opener_cache
     if _opener_cache is None:
         proxy = _proxy_configurado()
-        handler = urllib.request.ProxyHandler(
-            {"http": proxy, "https": proxy} if proxy else {}
-        )
-        _opener_cache = urllib.request.build_opener(handler)
+        handlers = [
+            urllib.request.ProxyHandler(
+                {"http": proxy, "https": proxy} if proxy else {}
+            ),
+            urllib.request.HTTPSHandler(context=_contexto_ssl()),
+        ]
+        _opener_cache = urllib.request.build_opener(*handlers)
     return _opener_cache
 
 

@@ -612,14 +612,53 @@ def _salida_scutil(texto):
 
 @pytest.fixture(autouse=True)
 def _proxy_sin_cache():
-    """Hermeticidad: arranca cada test sin cache de proxy ni opener.
+    """Hermeticidad: arranca cada test sin cache de proxy, opener ni SSL.
 
-    `_proxy_configurado` y `_opener` cachean a nivel de modulo. Este fixture
-    los resetea antes de cada test para que los mocks de config/env/subprocess
-    sean deterministas y un test no reciba el valor cacheado de otro.
+    `_proxy_configurado`, `_opener` y `_contexto_ssl` cachean a nivel de
+    modulo. Este fixture los resetea antes de cada test para que los mocks de
+    config/env/subprocess sean deterministas y un test no reciba el valor
+    cacheado de otro.
     """
     vfxflow_auth._reiniciar_proxy()
     vfxflow_auth._reiniciar_opener()
+    vfxflow_auth._reiniciar_contexto_ssl()
+
+
+def test_cafile_sistema_respeta_env(monkeypatch, tmp_path):
+    archivo = tmp_path / "ca.pem"
+    archivo.write_text("CERTIFICADO")
+    monkeypatch.setenv("SSL_CERT_FILE", str(archivo))
+    assert vfxflow_auth._cafile_sistema() == str(archivo)
+
+
+def test_cafile_sistema_busca_rutas_conocidas(monkeypatch, tmp_path):
+    ruta_conocida = tmp_path / "cert.pem"
+    ruta_conocida.write_text("CERTIFICADO")
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.setattr(vfxflow_auth, "_RUTAS_CA", (str(ruta_conocida),))
+    monkeypatch.setattr(vfxflow_auth, "_exportar_cacert_keychain", lambda: None)
+    assert vfxflow_auth._cafile_sistema() == str(ruta_conocida)
+
+
+def test_contexto_ssl_usa_cafile(monkeypatch, tmp_path):
+    archivo = tmp_path / "ca.pem"
+    archivo.write_text("CERTIFICADO")
+    monkeypatch.setenv("SSL_CERT_FILE", str(archivo))
+    ctx = vfxflow_auth._contexto_ssl()
+    assert ctx is not None
+    # El contexto creado con cafile verifica (verify_mode = CERT_REQUIRED).
+    import ssl
+
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_opener_incluye_https_handler_con_contexto(monkeypatch):
+    # El opener debe usar HTTPSHandler con el contexto SSL del sistema.
+    op = vfxflow_auth._opener()
+    https_handlers = [
+        h for h in op.handlers if isinstance(h, urllib.request.HTTPSHandler)
+    ]
+    assert https_handlers
 
 
 def test_proxy_desde_env(monkeypatch):
