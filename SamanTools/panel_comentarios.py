@@ -15,6 +15,7 @@ PySide6) para mantener compatibilidad entre Nuke 14 y 17.
 
 import os
 import time
+import webbrowser
 
 import nuke
 
@@ -80,6 +81,9 @@ class PanelComentarios(QtWidgets.QWidget):
         self._boton_login = QtWidgets.QPushButton("Iniciar sesión", self)
         self._boton_login.clicked.connect(self._on_login)
         form.addRow(self._boton_login)
+        self._boton_google = QtWidgets.QPushButton("Continuar con Google", self)
+        self._boton_google.clicked.connect(self._on_login_google)
+        form.addRow(self._boton_google)
         layout.addWidget(seccion_login)
 
         self._etiqueta_estado = QtWidgets.QLabel(self)
@@ -147,6 +151,128 @@ class PanelComentarios(QtWidgets.QWidget):
             self._estado("Error inesperado: %s" % e, error=True)
         finally:
             self._boton_login.setEnabled(True)
+
+    def _on_login_google(self):
+        """Arranca el Device Flow de Google sin bloquear la UI de Nuke.
+
+        Deshabilita ambos botones, pide el device_code, muestra la URL y el
+        codigo al usuario (y abre el navegador si se puede) y dispara el
+        polling con QTimer: un tick cada `interval` ms. El polling NUNCA
+        congela Nuke. El refresh_token de Google no se toca ni se guarda.
+        """
+        self._boton_login.setEnabled(False)
+        self._boton_google.setEnabled(False)
+        try:
+            codigo = vfxflow_auth.obtener_codigo_dispositivo()
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._estado(str(e), error=True)
+            self._habilitar_botones_login()
+            return
+        except Exception as e:
+            self._estado("Error inesperado: %s" % e, error=True)
+            self._habilitar_botones_login()
+            return
+
+        self._google_device_code = codigo["device_code"]
+        self._google_tiempo_inicio = time.time()
+        self._google_intervalo = max(int(codigo.get("interval") or 5), 1)
+        self._google_tiempo_maximo = int(codigo.get("expires_in") or 300)
+
+        self._estado(
+            "Andá a %s\ne ingresá el código: %s"
+            % (codigo["verification_url"], codigo["user_code"])
+        )
+        try:
+            webbrowser.open(codigo["verification_url"])
+        except Exception:
+            pass  # sin navegador, el usuario abre la URL a mano
+        QtCore.QTimer.singleShot(
+            self._google_intervalo * 1000,
+            lambda: self._poll_google_login(
+                self._google_device_code,
+                self._google_intervalo,
+                self._google_tiempo_inicio,
+            ),
+        )
+
+    def _poll_google_login(self, device_code, intervalo, tiempo_inicio):
+        """Un tick del polling del Device Flow; si sigue pendiente reprograma.
+
+        Los estados authorization_pending / slow_down vuelven a programar el
+        siguiente tick con QTimer.singleShot (así la UI respira entre polls);
+        access_denied o el agotamiento del tiempo cortan el flujo.
+        """
+        if time.time() - tiempo_inicio >= self._google_tiempo_maximo:
+            self._estado(
+                "Se agotó el tiempo para autorizar el dispositivo en Google.",
+                error=True,
+            )
+            self._habilitar_botones_login()
+            return
+
+        try:
+            resultado = vfxflow_auth.consultar_estado_dispositivo(device_code)
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._estado(str(e), error=True)
+            self._habilitar_botones_login()
+            return
+        except Exception as e:
+            self._estado("Error inesperado: %s" % e, error=True)
+            self._habilitar_botones_login()
+            return
+
+        if resultado["estado"] != "ok":
+            codigo_error = resultado.get("codigo")
+            if codigo_error == "authorization_pending":
+                QtCore.QTimer.singleShot(
+                    intervalo * 1000,
+                    lambda: self._poll_google_login(
+                        device_code, intervalo, tiempo_inicio
+                    ),
+                )
+            elif codigo_error == "slow_down":
+                nuevo_intervalo = intervalo + 5
+                QtCore.QTimer.singleShot(
+                    nuevo_intervalo * 1000,
+                    lambda: self._poll_google_login(
+                        device_code, nuevo_intervalo, tiempo_inicio
+                    ),
+                )
+            elif codigo_error == "access_denied":
+                self._estado(
+                    "Inicio de sesión con Google denegado.", error=True
+                )
+                self._habilitar_botones_login()
+            else:
+                self._estado(
+                    "Google respondió con un error en el flujo de dispositivo"
+                    " (%s)." % codigo_error,
+                    error=True,
+                )
+                self._habilitar_botones_login()
+            return
+
+        try:
+            respuesta = vfxflow_auth.loguear_con_google(
+                resultado["datos"]["id_token"]
+            )
+            email = respuesta.get("email") or ""
+            self._registrar_sesion(respuesta, email=email)
+            usuario = vfxflow_auth.obtener_usuario(
+                respuesta["local_id"], respuesta["id_token"]
+            )
+            rol = usuario.get("role") or "artist"
+            self._estado("Conectado como %s (%s)" % (email, rol))
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._estado(str(e), error=True)
+        except Exception as e:
+            self._estado("Error inesperado: %s" % e, error=True)
+        finally:
+            self._habilitar_botones_login()
+
+    def _habilitar_botones_login(self):
+        self._boton_login.setEnabled(True)
+        self._boton_google.setEnabled(True)
 
     def _registrar_sesion(self, respuesta, email=None):
         """Guarda la sesion en memoria y persiste refresh_token en disco."""
