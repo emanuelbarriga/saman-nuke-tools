@@ -248,25 +248,44 @@ class PanelComentarios(QtWidgets.QWidget):
         self._etiqueta_estado.setText(texto)
 
 
-def abrir_panel():
-    """Registra (si hace falta) y muestra el panel docked en el pane actual.
+# Instancia del panel mientras este abierto en esta sesion de Nuke
+# (evita registrar duplicados y re-crear el widget al reutilizar).
+_PANEL = None
 
-    Si `nukescripts` no existe (pytest) o falla algo, no rompe: solo avisa
+# String EVALUABLE de la clase (API nukescripts.panels: registerWidgetAsPanel
+# concatena 'WidgetKnob(' + widget + ')'; la clase NO se puede pasar directa).
+_WIDGET_STRING = (
+    "__import__('SamanTools.panel_comentarios', fromlist=['PanelComentarios'])"
+    ".PanelComentarios"
+)
+
+
+def abrir_panel():
+    """Registra (si hace falta) y acopla el panel docked al pane actual.
+
+    API real de nukescripts.panels (verificado contra Nuke 17.1): NO existe
+    panels() ni getPanel(); se registra con registerWidgetAsPanel(widget,
+    name, id, create=True) que devuelve el PythonPanel, y se muestra con
+    addToPane(). El widget se pasa como STRING evaluable de la clase.
+
+    Si `nukescripts` no existe (pytest) o algo falla, no rompe: solo avisa
     cuando Nuke esta en modo GUI.
     """
+    global _PANEL
     try:
         import nukescripts.panels as p
 
-        if _ID_PANEL not in p.panels():
-            p.registerWidgetAsPanel(
-                PanelComentarios, _NOMBRE_PANEL, _ID_PANEL
+        if _PANEL is None:
+            _PANEL = p.registerWidgetAsPanel(
+                _WIDGET_STRING, _NOMBRE_PANEL, _ID_PANEL, create=True
             )
-        p.getPanel(_ID_PANEL).addToPane()
+        _PANEL.addToPane()
     except Exception:
         try:
             if getattr(nuke, "GUI", False):
                 nuke.message(
-                    "No se pudo abrir el panel (¿estás en Nuke con interfaz?)."
+                    "No se pudo abrir el panel "
+                    "(¿estás en Nuke con interfaz?)."
                 )
         except Exception:
             pass
