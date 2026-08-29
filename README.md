@@ -8,6 +8,9 @@ Incluye los nodos **Breakdown**, **Review**, **Rutas** y el menú **SamanTools**
 ```
 saman-nuke-tools/
 ├── menu.py                  # bootstrap que carga SamanTools al arrancar Nuke
+├── instalar_script_editor.py# INSTALADOR desde cero (pegá en el Script Editor)
+├── bootstrap/
+│   └── menu.py              # menu.py de mantenimiento (Actualizar/Desinstalar)
 ├── SamanTools/
 │   ├── registro.py          # registra menú superior + buscador TAB
 │   ├── proyecto.py          # carga dinámica de galerías del proyecto
@@ -19,43 +22,60 @@ saman-nuke-tools/
 │   │   ├── Review.gizmo     # comparación side-by-side
 │   │   ├── Rutas.gizmo
 │   │   └── Rutas.nk
-├── install.sh               # instalador macOS/Linux
-├── install.bat              # instalador Windows
-└── .gitignore
+├── setup_artista.sh         # instalador autocontenido macOS/Linux
+├── setup_artista.bat        # instalador Windows
+├── install.sh / install.bat # (legacy: copia a ~/.nuke)
+└── VERSIONING.md
 ```
 
-## Instalación — 3 opciones
+## Instalación — desde cero (REINSTALAR / PRIMERA VEZ)
 
-### Opción C — Auto-update via GitHub (RECOMENDADA para artistas)
+### Opción 1 — Script Editor de Nuke (RECOMENDADA, sin terminal)
 
-Los artistas ejecutan **una sola vez** el setup y a partir de ahí reciben una
-**alerta cuando hay una actualización disponible** y un botón **Actualizar
-SamanTools...** en el menú. El artista decide cuándo actualizar; nada se aplica
-sin su consentimiento. No tocan archivos nunca.
+En **cualquier equipo** (macOS/Windows/Linux), desde cero o después de una
+desinstalación:
 
-**Requisito:** el repo debe estar publicado en GitHub (público o con acceso de
-lectura para los artistas). El `menu.py` bootstrap vive en `bootstrap/menu.py`.
+1. Abre Nuke → **Script Editor** (menú *View ▸ Script Editor* o tecla `W`).
+2. Pega el contenido de [`instalar_script_editor.py`](instalar_script_editor.py)
+   (está en la raíz del repo) y ejecuta con `Ctrl+Enter`.
+3. Según el estado: clona desde cero, actualiza el checkout existente, o
+   migra una instalación vieja por-copia. Luego copia el bootstrap a `~/.nuke/menu.py`.
+4. Reinicia Nuke → aparece el menú **SamanTools**.
+
+Requisito: **Git instalado** (https://git-scm.com/downloads) — el instalador
+usa `git clone`, la vía más fiable.
+
+### Opción 2 — Terminal (curl | bash)
+
+Solo en redes donde `raw.githubusercontent.com` sea accesible (no en todas):
 
 ```bash
-# macOS/Linux — una sola vez por artista
-bash setup_artista.sh https://github.com/TU_ORG/saman-nuke-tools.git
+# macOS / Linux
+curl -sL https://raw.githubusercontent.com/emanuelbarriga/saman-nuke-tools/main/setup_artista.sh | bash
 
-# Windows — una sola vez por artista
-setup_artista.bat https://github.com/TU_ORG/saman-nuke-tools.git
+# Windows (PowerShell) — requiere Git for Windows
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/emanuelbarriga/saman-nuke-tools/main/setup_artista.sh -OutFile setup_artista.sh
+bash setup_artista.sh
 ```
 
-**Para actualizar a todos los artistas:** el mantenedor hace commit + push a
-`main`. Cada artista verá la alerta en algún arranque de Nuke (máx. 1 alerta
-cada 6 h) y decidirá si actualiza.
+### Opción 3 — Clonar el repo donde quieras
 
-> ¿Cómo funciona? `~/.nuke/menu.py` (bootstrap mínimo) clona el repo a
-> `~/.nuke/SamanTools`. En cada arranque hace `git fetch` (no modifica nada)
-> y compara contra la rama remota:
-> - **Hay versión nueva** → alerta "¿Querés actualizar ahora?" (Sí/No).
-> - El botón **SamanTools ▸ Actualizar SamanTools...** hace lo mismo a demanda.
-> - **Solo con consentimiento** se ejecuta `git pull --ff-only`.
-> - Si no hay red, usa la copia local sin romper Nuke. Una versión rota no
->   afecta a quienes no actualizaron: quedan en la estable.
+```bash
+git clone https://github.com/emanuelbarriga/saman-nuke-tools.git
+cd saman-nuke-tools && ./setup_artista.sh    # macOS/Linux
+cd saman-nuke-tools && setup_artista.bat     # Windows
+```
+
+## Actualizaciones (modelo actual)
+
+El mantenedor hace **commit + push** a `main`. En cada equipo:
+
+- El bootstrap hace `git fetch` al arrancar (no modifica nada) y compara.
+- **Hay versión nueva** → alerta "¿Querés actualizar ahora?" (Sí/No).
+- El botón **SamanTools ▸ Actualizar SamanTools...** funciona a demanda y
+  también **reinstala** si el checkout falta.
+- Solo con consentimiento se ejecuta `git pull --ff-only`.
+- Sin red → usa la copia local sin romper Nuke. Desinstalado → sin menú.
 
 ### Opción A — Clonar + NUKE_PATH (sin copiar)
 
