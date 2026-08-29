@@ -14,6 +14,7 @@ PySide6) para mantener compatibilidad entre Nuke 14 y 17.
 """
 
 import os
+import threading
 import time
 import webbrowser
 
@@ -30,6 +31,7 @@ except ImportError:
 
 from . import sesion_vfxflow
 from . import vfxflow_auth
+from . import vfxflow_config
 
 _ID_PANEL = "pe.saman.vfxflow.comentarios"
 _NOMBRE_PANEL = "Comentarios por Plano — SamanTools"
@@ -153,12 +155,34 @@ class PanelComentarios(QtWidgets.QWidget):
             self._boton_login.setEnabled(True)
 
     def _on_login_google(self):
+        """"Continuar con Google": elige loopback o Device Flow según config.
+
+        Si `google_client_id_escritorio` (client OAuth "Desktop app") está
+        configurado usa el flujo de escritorio (loopback + PKCE, mejor UX:
+        no hay que tipear un código); si no, cae al Device Flow existente
+        (`_on_login_google_device`). Sin ninguno, avisa qué falta.
+        """
+        cfg = vfxflow_config.obtener_config_efectiva()
+        if (cfg or {}).get("google_client_id_escritorio"):
+            self._on_login_google_loopback()
+        elif (cfg or {}).get("google_client_id"):
+            self._on_login_google_device()
+        else:
+            self._estado(
+                "Falta google_client_id_escritorio (loopback) y "
+                "google_client_id (device flow) en la config.",
+                error=True,
+            )
+
+    def _on_login_google_device(self):
         """Arranca el Device Flow de Google sin bloquear la UI de Nuke.
 
-        Deshabilita ambos botones, pide el device_code, muestra la URL y el
-        codigo al usuario (y abre el navegador si se puede) y dispara el
-        polling con QTimer: un tick cada `interval` ms. El polling NUNCA
-        congela Nuke. El refresh_token de Google no se toca ni se guarda.
+        Variante de respaldo (fallback) de "Continuar con Google" cuando no
+        hay `google_client_id_escritorio`. Deshabilita ambos botones, pide el
+        device_code, muestra la URL y el codigo al usuario (y abre el
+        navegador si se puede) y dispara el polling con QTimer: un tick cada
+        `interval` ms. El polling NUNCA congela Nuke. El refresh_token de
+        Google no se toca ni se guarda.
         """
         self._boton_login.setEnabled(False)
         self._boton_google.setEnabled(False)
@@ -269,6 +293,129 @@ class PanelComentarios(QtWidgets.QWidget):
             self._estado("Error inesperado: %s" % e, error=True)
         finally:
             self._habilitar_botones_login()
+
+    def _on_login_google_loopback(self):
+        """Arranca el flujo OAuth de escritorio (loopback redirect + PKCE).
+
+        Genera el par PKCE, levanta un mini server HTTP local en un puerto
+        aleatorio (serve_forever SIEMPRE en thread daemon), muestra la URL de
+        autorización y abre el navegador si se puede, y dispara el polling
+        con QTimer (~1 s). El polling NUNCA congela Nuke. El servidor se
+        cierra SIEMPRE (éxito, error, acceso denegado o timeout): nunca queda
+        huérfano. El refresh_token de Google no se toca ni se guarda.
+        """
+        self._boton_login.setEnabled(False)
+        self._boton_google.setEnabled(False)
+        self._limpiar_loopback()
+        try:
+            client_id = vfxflow_auth.obtener_client_id_escritorio()
+            verifier, challenge = vfxflow_auth.generar_pkce()
+            servidor, puerto = vfxflow_auth.crear_servidor_loopback()
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._estado(str(e), error=True)
+            self._habilitar_botones_login()
+            return
+        except Exception as e:
+            self._estado("Error inesperado: %s" % e, error=True)
+            self._habilitar_botones_login()
+            return
+
+        self._loopback_client_id = client_id
+        self._loopback_servidor = servidor
+        self._loopback_tiempo_inicio = time.time()
+        self._loopback_tiempo_maximo = 300
+        redirect_uri = "http://127.0.0.1:%d" % puerto
+
+        threading.Thread(
+            target=servidor.serve_forever, daemon=True
+        ).start()
+
+        url = vfxflow_auth.construir_url_autorizacion(
+            client_id, redirect_uri, challenge
+        )
+        self._estado("Si no se abrió el navegador, entrá a:\n%s" % url)
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass  # sin navegador, el usuario abre la URL a mano
+        QtCore.QTimer.singleShot(
+            1000,
+            lambda: self._poll_loopback(servidor, redirect_uri, verifier),
+        )
+
+    def _poll_loopback(self, servidor, redirect_uri, verifier):
+        """Un tick del polling del loopback; si sigue esperando reprograma.
+
+        Lee `servidor.resultado`: con `code` canjea el token, loguea en
+        Firebase con `loguear_con_google` (id_token de Google) y registra la
+        sesión; con `error` corta mostrando el motivo. Si aún no hay
+        respuesta reprograma en ~1 s; el timeout (~300 s) corta y cierra el
+        servidor.
+        """
+        if time.time() - self._loopback_tiempo_inicio >= self._loopback_tiempo_maximo:
+            self._limpiar_loopback()
+            self._estado(
+                "Se agotó el tiempo para autorizar el inicio de sesión con "
+                "Google.",
+                error=True,
+            )
+            self._habilitar_botones_login()
+            return
+
+        resultado = servidor.resultado
+        if not resultado:
+            QtCore.QTimer.singleShot(
+                1000,
+                lambda: self._poll_loopback(servidor, redirect_uri, verifier),
+            )
+            return
+
+        if "code" in resultado:
+            try:
+                tokens = vfxflow_auth.canjear_codigo_autorizacion(
+                    resultado["code"],
+                    redirect_uri,
+                    verifier,
+                    self._loopback_client_id,
+                )
+                respuesta = vfxflow_auth.loguear_con_google(tokens["id_token"])
+                email = respuesta.get("email") or ""
+                self._registrar_sesion(respuesta, email=email)
+                usuario = vfxflow_auth.obtener_usuario(
+                    respuesta["local_id"], respuesta["id_token"]
+                )
+                rol = usuario.get("role") or "artist"
+                self._estado("Conectado como %s (%s)" % (email, rol))
+            except vfxflow_auth.VfxFlowAuthError as e:
+                self._estado(str(e), error=True)
+            except Exception as e:
+                self._estado("Error inesperado: %s" % e, error=True)
+            finally:
+                self._limpiar_loopback()
+                self._habilitar_botones_login()
+            return
+
+        self._limpiar_loopback()
+        self._estado(
+            "Google rechazó el inicio de sesión (%s)."
+            % (resultado.get("error") or "error desconocido"),
+            error=True,
+        )
+        self._habilitar_botones_login()
+
+    def _limpiar_loopback(self):
+        """Cierra el servidor loopback si sigue vivo (nunca dejar huérfanos).
+
+        Idempotente: `cerrar()` del servidor ya es no-op tras la primera
+        llamada (la hace el propio handler al recibir el callback).
+        """
+        servidor = getattr(self, "_loopback_servidor", None)
+        if servidor is not None:
+            try:
+                servidor.cerrar()
+            except Exception:
+                pass
+        self._loopback_servidor = None
 
     def _habilitar_botones_login(self):
         self._boton_login.setEnabled(True)

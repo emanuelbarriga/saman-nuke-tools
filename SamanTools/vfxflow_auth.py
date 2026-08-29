@@ -20,13 +20,28 @@ Flujo "Continuar con Google" (Device Flow, OAuth 2.0 de Google):
        de Firebase; el refresh_token de GOOGLE se usa una sola vez dentro del
        flujo y NUNCA se guarda.
 
+Flujo "Continuar con Google" (escritorio, OAuth 2.0 loopback + PKCE):
+    1. GET accounts.google.com/o/oauth2/v2/auth con code_challenge (S256) y
+       redirect_uri `http://127.0.0.1:<puerto>` (un mini server HTTP local
+       captura el code del callback).
+    2. POST oauth2.googleapis.com/token (grant_type=authorization_code) con
+       el code y el code_verifier -> id_token de GOOGLE.
+    3. Ese id_token se canjea en Firebase con signInWithIdp (la MISMA sesion
+       que email/password y que el Device Flow). El refresh_token de GOOGLE
+       se usa una sola vez dentro del flujo y NUNCA se guarda.
+
 El id_token (1 hora) se renueva con securetoken (REST). Las llamadas HTTP
 usan `urllib.request` (stdlib, sin dependencias) con timeout de 10 s y
 NUNCA incluyen credenciales (password / tokens) en los mensajes de error.
 """
 
+import base64
+import hashlib
+import http.server
 import json
+import secrets
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -51,6 +66,7 @@ URL_GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 URL_SIGN_IN_IDP = (
     "https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key={api_key}"
 )
+URL_AUTORIZACION = "https://accounts.google.com/o/oauth2/v2/auth"
 
 
 class VfxFlowAuthError(Exception):
@@ -442,6 +458,234 @@ def esperar_autorizacion_dispositivo(
         "Se agotó el tiempo para autorizar el dispositivo en Google.",
         codigo="expirado",
     )
+
+
+# --------------------------------------------------------------------------
+# Continuar con Google (OAuth 2.0 de escritorio: loopback redirect + PKCE)
+# --------------------------------------------------------------------------
+
+# Alfabeto permitido por la RFC 7636 (PKCE) para el code_verifier.
+_ALFABETO_PKCE = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+)
+# Longitud del code_verifier (rango valido de la RFC 7636: 43 a 128 chars).
+_LONGITUD_VERIFIER = 64
+
+# Pagina que devuelve el mini server local al recibir el callback de Google.
+_TEXTO_OK_LOOPBACK = (
+    "<html><body><h3>Ya podés cerrar esta pestaña y volver a Nuke.</h3>"
+    "</body></html>"
+)
+
+
+def generar_pkce():
+    """Genera el par (code_verifier, code_challenge) para PKCE con S256.
+
+    `code_verifier` es un string aleatorio criptografico de 43-128 chars del
+    alfabeto `[A-Za-z0-9-._~]`. `code_challenge` es el SHA256 del verifier
+    codificado en base64url SIN padding (metodo S256).
+
+    Devuelve una tupla (verifier, challenge) de str.
+    """
+    verifier = "".join(
+        secrets.choice(_ALFABETO_PKCE) for _ in range(_LONGITUD_VERIFIER)
+    )
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+
+def construir_url_autorizacion(client_id, redirect_uri, code_challenge, state=""):
+    """Arma la URL de autorizacion de Google para el flujo de escritorio.
+
+    Parametros del authorization code flow (Google OAuth 2.0 for installed
+    apps): client_id, redirect_uri (`http://127.0.0.1:<puerto>`, el loopback
+    que Google acepta sin configurar en clients "Desktop app"),
+    response_type=code, scope "email profile openid" (el scope openid hace
+    que el token endpoint devuelva el id_token de Google, que es el que se
+    canjea en Firebase), code_challenge y code_challenge_method=S256.
+    `state` es opcional (anti-CSRF) y solo se incluye si se pasa.
+    """
+    parametros = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "email profile openid",
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+    }
+    if state:
+        parametros["state"] = state
+    return URL_AUTORIZACION + "?" + urllib.parse.urlencode(parametros)
+
+
+class _HandlerLoopback(http.server.BaseHTTPRequestHandler):
+    """Handler del callback loopback: captura code/error y apaga el server.
+
+    Google redirige el navegador a `http://127.0.0.1:<puerto>/?code=...` (o
+    con `error` si el usuario denego). do_GET guarda eso en
+    `self.server.resultado`, responde la pagina "ya podes cerrar" y dispara
+    `self.server.cerrar()`. `log_message` se anula para no ensuciar stdout.
+    """
+
+    def do_GET(self):
+        params = urllib.parse.parse_qs(
+            urllib.parse.urlparse(self.path).query
+        )
+        resultado = {}
+        if "code" in params:
+            resultado["code"] = params["code"][0]
+        if "error" in params:
+            resultado["error"] = params["error"][0]
+        self.server.resultado = resultado
+
+        cuerpo = _TEXTO_OK_LOOPBACK.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(cuerpo)))
+        self.end_headers()
+        self.wfile.write(cuerpo)
+        self.server.cerrar()
+
+    def log_message(self, formato, *args):
+        # No ensuciar stdout de Nuke con los logs del mini server local.
+        pass
+
+
+class _ServidorLoopback(http.server.HTTPServer):
+    """Mini server HTTP local (127.0.0.1, puerto aleatorio) del callback.
+
+    `resultado` es un dict que el handler completa con {"code": ...} y/o
+    {"error": ...}; empieza vacio. `cerrar()` lo apaga de forma segura desde
+    cualquier hilo: `HTTPServer.shutdown()` NO puede llamarse desde el hilo
+    que corre `serve_forever` (el mismo que ejecuta do_GET) porque se
+    deadlockearia esperando el is_shut_down; por eso se dispara en un hilo
+    daemon aparte.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.resultado = {}
+        self._cerrado = False
+
+    def cerrar(self):
+        """Apaga el servidor sin bloquear al hilo que lo llama (idempotente).
+
+        El handler, la espera bloqueante y la UI del panel lo llaman desde
+        hilos distintos; la segunda llamada es no-op.
+        """
+        if self._cerrado:
+            return
+        self._cerrado = True
+        threading.Thread(target=self._apagar, daemon=True).start()
+
+    def _apagar(self):
+        try:
+            self.shutdown()
+        finally:
+            self.server_close()
+
+
+def crear_servidor_loopback():
+    """Crea el mini server HTTP local y devuelve (servidor, puerto).
+
+    Escucha en 127.0.0.1 con puerto aleatorio (0 => lo asigna el SO). Ese
+    puerto es el `redirect_uri` de la autorizacion
+    (`http://127.0.0.1:<puerto>`), que Google acepta en clients de
+    escritorio sin configurarlo explicitamente. El llamador es responsable de
+    correr `serve_forever` en un thread daemon y de cerrar el servidor.
+    """
+    servidor = _ServidorLoopback(("127.0.0.1", 0), _HandlerLoopback)
+    puerto = servidor.server_address[1]
+    return servidor, puerto
+
+
+def esperar_resultado_loopback(servidor, tiempo_maximo=300):
+    """Espera (BLOQUEANTE) el code/error del callback loopback.
+
+    Hace polling de `servidor.resultado` con `time.sleep(0.1)` hasta obtener
+    code/error o agotar `tiempo_maximo`. Si no llega, cierra el servidor y
+    devuelve {"error": "timeout"}.
+
+    NO debe usarse desde la UI del panel: esa usa el QTimer recurrente con
+    `_poll_loopback` para no congelar Nuke. Esta variante es para tests,
+    consola y scripts.
+    """
+    inicio = time.time()
+    while time.time() - inicio < tiempo_maximo:
+        if servidor.resultado:
+            return servidor.resultado
+        time.sleep(0.1)
+    servidor.cerrar()
+    return {"error": "timeout"}
+
+
+def canjear_codigo_autorizacion(
+    code, redirect_uri, code_verifier, client_id, config=None
+):
+    """Canjea el code de autorizacion por tokens de Google (paso 5 OAuth).
+
+    POST form-urlencoded al token endpoint con client_id, code, code_verifier,
+    grant_type=authorization_code y redirect_uri (debe coincidir EXACTO con el
+    usado en la URL de autorizacion). Devuelve:
+        {"id_token", "refresh_token", "access_token", "expires_in"}
+    El id_token de Google (requiere el scope openid) es el que despues se
+    canjea en Firebase con `loguear_con_google`. El refresh_token de GOOGLE
+    se usa una sola vez dentro del flujo y NUNCA se persiste.
+    """
+    cfg = config or vfxflow_config.obtener_config_efectiva()
+    if not code or not code_verifier:
+        raise VfxFlowAuthError(
+            "Falta el código de autorización para canjear.", codigo="respuesta"
+        )
+
+    respuesta = _post_form(
+        URL_GOOGLE_TOKEN,
+        {
+            "client_id": client_id,
+            "code": code,
+            "code_verifier": code_verifier,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        },
+    )
+    if respuesta["estado"] == "error":
+        raise VfxFlowAuthError(
+            "Google rechazó el canje del código de autorización (%s)."
+            % respuesta["codigo"],
+            codigo="http",
+        )
+    datos = respuesta["datos"]
+    try:
+        return {
+            "id_token": datos["id_token"],
+            "refresh_token": datos["refresh_token"],
+            "access_token": datos["access_token"],
+            "expires_in": datos["expires_in"],
+        }
+    except (KeyError, TypeError):
+        raise VfxFlowAuthError(
+            "Google respondió sin el id_token esperado.", codigo="respuesta"
+        )
+
+
+def obtener_client_id_escritorio(config=None):
+    """Valida y devuelve `google_client_id_escritorio` de la config.
+
+    El client "Desktop app" habilita el loopback redirect con PKCE (el flujo
+    de escritorio preferido por UX). Si no esta configurado lanza
+    VfxFlowAuthError codigo "config" con instrucciones para crearlo.
+    """
+    cfg = config or vfxflow_config.obtener_config_efectiva()
+    client_id = (cfg or {}).get("google_client_id_escritorio", "")
+    if not client_id:
+        raise VfxFlowAuthError(
+            "Falta google_client_id_escritorio en la config (crea un OAuth "
+            "client tipo 'Desktop app' y agregalo a .saman/vfxflow_config.json "
+            "o config_local.py).",
+            codigo="config",
+        )
+    return client_id
 
 
 def loguear_con_google(id_token_google, config=None):

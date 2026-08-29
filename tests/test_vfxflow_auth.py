@@ -6,13 +6,18 @@ respuestas JSON fabricadas (RespuestaFalsa / HTTPError). No se prueba el
 widget PySide (regla del repo: 0% UI), solo la logica pura.
 """
 
+import base64
+import hashlib
 import io
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
+import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -277,6 +282,142 @@ def test_loguear_con_google_sin_token():
     with pytest.raises(VfxFlowAuthError) as exc:
         vfxflow_auth.loguear_con_google("", config=_CONFIG_GOOGLE)
     assert exc.value.codigo == "respuesta"
+
+
+# --------------------------------------------------------------------------
+# Continuar con Google (OAuth 2.0 de escritorio: loopback redirect + PKCE)
+# --------------------------------------------------------------------------
+
+
+def test_generar_pkce_longitud_y_caracteres():
+    for _ in range(5):
+        verifier, challenge = vfxflow_auth.generar_pkce()
+        assert 43 <= len(verifier) <= 128
+        assert re.fullmatch(r"[A-Za-z0-9\-._~]+", verifier)
+        esperado = base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode("ascii")).digest()
+        ).rstrip(b"=").decode("ascii")
+        assert challenge == esperado
+
+
+def test_construir_url_autorizacion():
+    url = vfxflow_auth.construir_url_autorizacion(
+        "cliente-escritorio", "http://127.0.0.1:45000", "CHALLENGE", state="abc123"
+    )
+    assert url.startswith(vfxflow_auth.URL_AUTORIZACION + "?")
+    assert "accounts.google.com/o/oauth2/v2/auth" in url
+    qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    assert qs["client_id"] == ["cliente-escritorio"]
+    assert qs["redirect_uri"] == ["http://127.0.0.1:45000"]
+    assert qs["response_type"] == ["code"]
+    assert qs["scope"] == ["email profile openid"]
+    assert qs["code_challenge"] == ["CHALLENGE"]
+    assert qs["code_challenge_method"] == ["S256"]
+    assert qs["state"] == ["abc123"]
+
+
+def test_construir_url_autorizacion_sin_state_lo_omite():
+    url = vfxflow_auth.construir_url_autorizacion(
+        "cliente-escritorio", "http://127.0.0.1:45000", "CHALLENGE"
+    )
+    qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    assert "state" not in qs
+
+
+def test_crear_servidor_loopback_captura_code():
+    servidor, puerto = vfxflow_auth.crear_servidor_loopback()
+    hilo = threading.Thread(target=servidor.serve_forever, daemon=True)
+    hilo.start()
+    try:
+        with urllib.request.urlopen(
+            "http://127.0.0.1:%d/?code=XYZ&state=S" % puerto, timeout=10
+        ) as respuesta:
+            assert respuesta.status == 200
+            cuerpo = respuesta.read().decode("utf-8")
+        assert "Ya podés cerrar esta pestaña" in cuerpo
+        resultado = vfxflow_auth.esperar_resultado_loopback(
+            servidor, tiempo_maximo=10
+        )
+        assert resultado["code"] == "XYZ"
+    finally:
+        servidor.cerrar()
+
+
+def test_esperar_resultado_loopback_timeout_cierra_y_devuelve_error():
+    servidor, _ = vfxflow_auth.crear_servidor_loopback()
+    hilo = threading.Thread(target=servidor.serve_forever, daemon=True)
+    hilo.start()
+    try:
+        resultado = vfxflow_auth.esperar_resultado_loopback(
+            servidor, tiempo_maximo=0.3
+        )
+        assert resultado == {"error": "timeout"}
+        assert servidor._cerrado is True
+    finally:
+        servidor.cerrar()
+
+
+def test_canjear_codigo_autorizacion_exitoso(monkeypatch):
+    _urlopen_responde(
+        monkeypatch,
+        {
+            "access_token": "at1",
+            "expires_in": 3600,
+            "id_token": "idtoken_google",
+            "refresh_token": "refreshtoken_google",
+            "token_type": "Bearer",
+            "scope": "email profile openid",
+        },
+    )
+    res = vfxflow_auth.canjear_codigo_autorizacion(
+        "codigo123", "http://127.0.0.1:45000", "verifier123", "cliente-escritorio"
+    )
+    assert res == {
+        "id_token": "idtoken_google",
+        "refresh_token": "refreshtoken_google",
+        "access_token": "at1",
+        "expires_in": 3600,
+    }
+
+
+def test_canjear_codigo_autorizacion_sin_id_token(monkeypatch):
+    _urlopen_responde(
+        monkeypatch,
+        {"access_token": "at1", "expires_in": 3600, "token_type": "Bearer"},
+    )
+    with pytest.raises(VfxFlowAuthError) as exc:
+        vfxflow_auth.canjear_codigo_autorizacion(
+            "codigo123", "http://127.0.0.1:45000", "verifier123", "cliente-escritorio"
+        )
+    assert exc.value.codigo == "respuesta"
+
+
+def test_canjear_codigo_autorizacion_error_google(monkeypatch):
+    _urlopen_responde_secuencia(
+        monkeypatch,
+        [({"error": "invalid_grant", "error_description": "code invalido"}, 400)],
+    )
+    with pytest.raises(VfxFlowAuthError) as exc:
+        vfxflow_auth.canjear_codigo_autorizacion(
+            "codigo_malo", "http://127.0.0.1:45000", "verifier123", "cliente-escritorio"
+        )
+    assert exc.value.codigo == "http"
+
+
+def test_obtener_client_id_escritorio_sin_config():
+    with pytest.raises(VfxFlowAuthError) as exc:
+        vfxflow_auth.obtener_client_id_escritorio(
+            config={"api_key": "k", "google_client_id_escritorio": ""}
+        )
+    assert exc.value.codigo == "config"
+    assert "google_client_id_escritorio" in str(exc.value)
+
+
+def test_obtener_client_id_escritorio_ok():
+    res = vfxflow_auth.obtener_client_id_escritorio(
+        config={"google_client_id_escritorio": "cliente-escritorio"}
+    )
+    assert res == "cliente-escritorio"
 
 
 # --------------------------------------------------------------------------

@@ -19,8 +19,19 @@ versionados.
                       crea en Google Cloud Console > APIs & Services >
                       Credentials > Create Credentials > OAuth client ID >
                       "TVs and Limited Input devices".
+    google_client_id_escritorio
+                      client_id OAuth tipo "Desktop app" (loopback redirect
+                      con PKCE) para el flujo de escritorio de "Continuar con
+                      Google". PUBLICO por diseno (en el OAuth de escritorio
+                      el secreto real es el code_verifier de PKCE, no hay
+                      client_secret). Si esta configurado, el panel lo usa con
+                      prioridad por UX (no hay que tipear un codigo); si no,
+                      cae al Device Flow. Se crea en Google Cloud Console >
+                      APIs & Services > Credentials > Create Credentials >
+                      OAuth client ID > "Desktop app".
 
-El google_client_id se carga en RUNTIME (prioridad; gana la ultima):
+Los google_client_id (ambos) se cargan en RUNTIME (prioridad; gana la
+ultima):
 
     1. VFXFLOW_CONFIG: los defaults de arriba (client_id vacio hasta que el
        admin lo reparte).
@@ -45,6 +56,11 @@ VFXFLOW_CONFIG = {
     # El client_id real se carga en runtime desde .saman/vfxflow_config.json
     # o config_local.py (ver docstring); el default queda vacio.
     "google_client_id": "",
+    # Client OAuth tipo "Desktop app" (loopback redirect) para "Continuar con
+    # Google" con PKCE; publico por diseno. Si esta configurado, el panel lo
+    # usa con prioridad sobre el Device Flow (mejor UX). Crear en Google Cloud
+    # Console > APIs & Services > Credentials > OAuth client ID > "Desktop app".
+    "google_client_id_escritorio": "",
 }
 
 # Ruta {base}/.saman/vfxflow_config.json sobre la unidad wupm del estudio.
