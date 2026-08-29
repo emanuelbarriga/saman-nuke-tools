@@ -9,7 +9,7 @@
 # ====== PEGA AQUÍ EL CONTENIDO DEL NODO (desde "NoOp {" hasta "}") ======
 NoOp {
  name RUTAS
- knobChanged "\nfrom SamanTools import rutas\nrutas.actualizar(nuke.thisNode())\n"
+ knobChanged "from SamanTools import rutas\nrutas.actualizar(nuke.thisNode())\ntry:\n    knob_cambiado = nuke.thisKnob()\nexcept Exception:\n    knob_cambiado = None\nif knob_cambiado is None or knob_cambiado.name() == \'RutaBase\':\n    rutas.refrescar_estado(nuke.thisNode())"
  tile_color 0x6aff55ff
  gl_color 0x55ffbfff
  label "PRINCIPALES \nACTIVAS\nGLOBALES"
@@ -49,6 +49,12 @@ NoOp {
  FROM_VFX_SERVER_ARTIST /mnt/RedDeArtistas/HTLR/FROM_VFX/
  addUserKnob {26 ""}
  addUserKnob {26 RutaActual l "Ruta Actual" T "TO_VFX: /Volumes/wupm/2026/HTLR/TO_VFX/ \\\[PYTHON_TO_VFX\\]\nCOMP: /Volumes/wupm/2026/HTLR/COMP/ \\\[PYTHON_COMP\\]\nFROM_VFX: /Volumes/wupm/2026/HTLR/FROM_VFX/ \\\[PYTHON_FROM_VFX\\]"}
+ addUserKnob {26 SeccionEntorno l "Entorno y estado de unidad" T " "}
+ addUserKnob {1 RutaBase l "Ruta Base"}
+ RutaBase /Volumes/wupm/2026
+ addUserKnob {26 SO_Detectado l "SO Detectado" T " "}
+ addUserKnob {26 EstadoUnidad l "Estado de la Unidad" T " "}
+ addUserKnob {22 ReconstruirRutas l "Reconstruir rutas desde base" T "import nuke\nfrom SamanTools import entorno\nfrom SamanTools import rutas\n\nn = nuke.thisNode()\nproy = n\[\'string\'\].value().strip()\nruta_base = n\[\'RutaBase\'\].value().strip()\n\nif not proy:\n    nuke.message(\'Por favor, ingrese un codigo o nombre de proyecto valido.\')\nelif not ruta_base:\n    nuke.message(\'Por favor, ingrese una ruta base valida (ej. /Volumes/wupm/2026).\')\nelse:\n    nuevas = entorno.reconstruir_rutas(ruta_base, proy)\n    for clave, valor in nuevas.items():\n        if clave in n.knobs():\n            n\[clave\].setValue(valor)\n    usuario = entorno.usuario_activo(entorno.detectar_so())\n    n\[\'UsuarioActivo\'\].setValue(usuario)\n    rutas.refrescar_estado(n)\n    rutas.actualizar(n)"}
  addUserKnob {26 text_3 l " " T " "}
  addUserKnob {26 text_scan l "" +STARTLINE T "<b>Escanear y revisar rutas estáticas fijas:</b>"}
  addUserKnob {26 Espacio_2_1 l "  " -STARTLINE T "   "}

@@ -18,6 +18,52 @@ from SamanTools import proyecto
 
 SUFIJOS = {"MacServer": "MAC", "Windows": "WINDOWS", "Artist": "ARTIST"}
 
+# Guarda antireentrada de refrescar_estado: evita un loop infinito si un
+# setValue dentro de knobChanged vuelve a disparar knobChanged.
+_refrescando = False
+
+
+def _texto_estado(estado):
+    """Texto legible para el knob EstadoUnidad a partir del dict de estado."""
+    base = "Conectado" if estado.get("conectado") else "Desconectado"
+    detalle = estado.get("detalle") or ""
+    return (base + " - " + detalle) if detalle else base
+
+
+def _sincronizar_entorno(n):
+    """
+    Si el nodo tiene knobs de entorno (SO_Detectado/RutaBase/EstadoUnidad),
+    los sincroniza: SO detectado, ruta base detectada por defecto si esta
+    vacia, y estado de la unidad. Tolerante a knobs ausentes (nodos viejos
+    o escenarios de test con solo UsuarioActivo + rutas).
+    """
+    try:
+        from SamanTools import entorno
+    except Exception:
+        return
+
+    so = entorno.detectar_so()
+    try:
+        if "SO_Detectado" in n.knobs():
+            n["SO_Detectado"].setValue(so)
+    except Exception:
+        pass
+
+    try:
+        if "RutaBase" in n.knobs():
+            ruta_base = n["RutaBase"].value()
+            ruta_base = ruta_base.strip() if ruta_base else ""
+            if not ruta_base:
+                detectada = entorno.primera_ruta_disponible(so)
+                if detectada:
+                    n["RutaBase"].setValue(detectada)
+                    ruta_base = detectada
+            if "EstadoUnidad" in n.knobs():
+                estado = entorno.estado_unidad(ruta_base)
+                n["EstadoUnidad"].setValue(_texto_estado(estado))
+    except Exception:
+        pass
+
 
 def actualizar(n=None):
     """
@@ -41,6 +87,9 @@ def actualizar(n=None):
     sufijo = SUFIJOS.get(usuario)
     if not sufijo:
         return False
+
+    # Sincronizar knobs de entorno SOLO si el nodo los tiene (tolerante).
+    _sincronizar_entorno(n)
 
     to_vfx = n["TO_VFX_SERVER_" + sufijo].value()
     comp = n["comp_SERVER_" + sufijo].value()
@@ -80,3 +129,66 @@ def actualizar(n=None):
         return proyecto.cargar_scripts_proyecto()
     except Exception:
         return False
+
+
+def refrescar_estado(n=None):
+    """
+    Refresca los knobs de estado del nodo Rutas: SO_Detectado, RutaBase
+    (rellena la detectada por defecto si esta vacia), EstadoUnidad y el
+    tile_color del nodo:
+
+        verde 0x6aff55ff -> unidad conectada
+        rojo  0xff3b30ff -> unidad desconectada
+
+    Solo toca knobs que existan; nunca lanza excepciones si falta algo.
+    Devuelve True si pudo evaluar el estado, False si no.
+    """
+    global _refrescando
+    if _refrescando:
+        return False
+    if n is None:
+        n = nuke.thisNode()
+    if n is None:
+        return False
+
+    _refrescando = True
+    try:
+        from SamanTools import entorno
+
+        so = entorno.detectar_so()
+        ruta_base = None
+        try:
+            if "RutaBase" in n.knobs():
+                ruta_base = n["RutaBase"].value()
+                ruta_base = ruta_base.strip() if ruta_base else ""
+        except Exception:
+            pass
+        if not ruta_base:
+            ruta_base = entorno.primera_ruta_disponible(so)
+
+        estado = entorno.estado_unidad(ruta_base)
+        color = 0x6aff55ff if estado["conectado"] else 0xff3b30ff
+
+        try:
+            if "SO_Detectado" in n.knobs():
+                n["SO_Detectado"].setValue(so)
+        except Exception:
+            pass
+        try:
+            if "RutaBase" in n.knobs():
+                n["RutaBase"].setValue(ruta_base or "")
+        except Exception:
+            pass
+        try:
+            if "EstadoUnidad" in n.knobs():
+                n["EstadoUnidad"].setValue(_texto_estado(estado))
+        except Exception:
+            pass
+        try:
+            if "tile_color" in n.knobs():
+                n["tile_color"].setValue(color)
+        except Exception:
+            pass
+        return True
+    finally:
+        _refrescando = False
