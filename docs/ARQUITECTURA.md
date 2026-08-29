@@ -40,7 +40,8 @@ Toolkit global de Nuke para el estudio **Samán Estudio**:
 | `menu.py` (raíz) | Carga real: `sys.path`, `pluginAddPath`, `registro.instalar()`. Se ejecuta vía `exec` desde el bootstrap. |
 | `SamanTools/registro.py` | Construye el menú SamanTools + buscador TAB. |
 | `SamanTools/proyecto.py` | Carga dinámica de galerías/gizmos del proyecto (`{PYTHON_COMP}/Scripts`). |
-| `SamanTools/rutas.py` | Lógica del nodo Rutas: actualiza `PYTHON_COMP/FROM/TO` y reload selectivo. |
+| `SamanTools/rutas.py` | Lógica del nodo Rutas: actualiza `PYTHON_COMP/FROM/TO`, reload selectivo, gestión del nodo ÚNICO (`crear_o_reutilizar` — menú y TAB usan la misma vía, máximo 1 por proyecto), recomendación de usuario según SO, visibilidad por usuario activo y `_enfocar_nodo` (navega al nodo existente + abre propiedades). |
+| `SamanTools/entorno.py` | Detección de SO, ruta base por SO (`/Volumes/wupm/2026`, `L:/2026`, `/mnt/wupm/2026`) y estado de la unidad `wupm` con timeout (mount muerto no cuelga Nuke). Puro stdlib, NO importa nuke. |
 | `instalar_script_editor.py` | Instalador desde cero (Script Editor). Idempotente: detecta 3 estados. |
 | `setup_artista.sh/.bat` | Instalador por terminal, autocontenido vía `curl\|bash` o desde checkout. |
 
@@ -96,17 +97,26 @@ Ver `VERSIONING.md`. Resumen:
 
 ## 6. Calidad y cobertura
 
-Suite pytest en `tests/` (24 tests, PASS) + stub de `nuke` en `conftest.py`.
+Suite pytest en `tests/` (72 tests, PASS) + stub de `nuke` en `conftest.py`.
 
-| Módulo | Cobertura | Nota |
-|---|---|---|
-| `rutas.py` | 97% | Lógica crítica: reload solo si la ruta resuelta cambió. |
-| `cambiar_colorspace.py` | 71% | Parseo OCIO (`\t` vs `,`). |
-| `proyecto.py` | 57% | Clasificación Galerías/Herramientas, escaneo, rutas. |
-| `registro.py` | 0% | UI Nuke, sin lógica pura testeable. |
-| `frame_manager.py` | 0% | Widget Qt, depende de Nuke/Qt runtime. |
+La cobertura exacta NO se declara a mano: `verificar_salud.py` la reporta real en
+cada corrida (módulos puros `entorno.py`/`rutas.py`/`cambiar_colorspace.py`/
+`proyecto.py` cubiertos con tests; `registro.py`/`frame_manager.py` 0% es
+aceptable — UI Nuke sin lógica pura testeable).
 
-**Regla**: no falsear cobertura. `registro.py`/`frame_manager.py` en 0% es aceptable (UI); la skill reporta el número real.
+**Regla**: no falsear cobertura. La skill reporta el número real.
+
+### Detector del nodo Rutas (importante para futuros cambios de estructura)
+
+- `es_nodo_rutas()` identifica por `UsuarioActivo` + `TO_VFX_SERVER_*` (NO por
+  `RutaActual`, eliminado en v1.1.2). El "versionado" del nodo lo define
+  `KNOBS_VERSION_ACTUAL` en `rutas.py`.
+- `Rutas.gizmo` es un ESPEJO exacto del bloque `NoOp` de `Rutas.nk`; al tocar el
+  nodo, regenerarlo y verificar `diff`.
+- Al eliminar un knob del nodo: buscar TODAS las llamadas `n["knob"]`. El stub de
+  tests NO atrapa knobs inexistentes (`NodoFake.__getitem__` devuelve un
+  `KnobFake()` por defecto), pero en Nuke real lanzan `ValueError` (bug real con
+  `RutaActual` en v1.1.2).
 
 ### Indicador de salud
 
