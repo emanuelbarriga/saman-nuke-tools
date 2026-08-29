@@ -12,6 +12,13 @@ versionados.
     project_id      id del proyecto Firebase (vfxpm-be912).
     auth_domain     dominio de autenticacion email/password.
     storage_bucket  bucket de almacenamiento (no usado en v1, por completitud).
+    proxy           opcional, pensado para config_local.py
+                      (VFXFLOW_LOCAL_CONFIG, gitignored): URL del proxy del
+                      estudio, formato "http://user:pass@host:puerto" (o
+                      "host:puerto"). Se usa para respetar el proxy del
+                      estudio; el panel ademas intenta el proxy de sistema
+                      macOS (`scutil --proxy`) y las env vars
+                      HTTPS_PROXY/HTTP_PROXY.
     google_client_id  client_id OAuth de Google para "Continuar con Google"
                       (Device Flow). Es PUBLICO por diseno (viaja en el
                       bundle JS de cualquier app web; el secreto real de una

@@ -1,9 +1,9 @@
 """
 Tests de SamanTools.vfxflow_auth y SamanTools.sesion_vfxflow (login VFXFlow).
 
-Puros, sin red real: se hace monkeypatch de `urllib.request.urlopen` con
-respuestas JSON fabricadas (RespuestaFalsa / HTTPError). No se prueba el
-widget PySide (regla del repo: 0% UI), solo la logica pura.
+Puros, sin red real: los transportes abren via `vfxflow_auth._abrir`, que se
+monkeypatchea con respuestas JSON fabricadas (RespuestaFalsa / HTTPError).
+No se prueba el widget PySide (regla del repo: 0% UI), solo la logica pura.
 """
 
 import base64
@@ -57,14 +57,17 @@ def _urlopen_responde(monkeypatch, cuerpo, status=200):
     def _fake(req, *args, **kwargs):
         return RespuestaFalsa(json.dumps(cuerpo).encode("utf-8"), status=status)
 
-    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+    # Los transportes ya no llaman `urllib.request.urlopen` directo: abren via
+    # `vfxflow_auth._abrir` (que delega en `_opener().open`). El punto de
+    # extension de los mocks es `_abrir`, no el urlopen del stdlib.
+    monkeypatch.setattr(vfxflow_auth, "_abrir", _fake)
 
 
 def _urlopen_lanza(monkeypatch, excepcion):
     def _fake(req, *args, **kwargs):
         raise excepcion
 
-    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+    monkeypatch.setattr(vfxflow_auth, "_abrir", _fake)
 
 
 def _urlopen_responde_secuencia(monkeypatch, respuestas):
@@ -82,7 +85,7 @@ def _urlopen_responde_secuencia(monkeypatch, respuestas):
             return RespuestaFalsa(json.dumps(cuerpo).encode("utf-8"), status=status)
         raise _error_http(status, cuerpo)
 
-    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+    monkeypatch.setattr(vfxflow_auth, "_abrir", _fake)
 
 
 # Config minima con google_client_id para los tests del Device Flow
@@ -595,6 +598,168 @@ def test_consultar_estado_dispositivo_sin_config_usa_config_efectiva(monkeypatch
 
     assert res["estado"] == "ok"
     assert res["datos"]["id_token"] == "idtoken_google"
+
+
+# --------------------------------------------------------------------------
+# proxy (prioridad: config_local > env > sistema macOS via scutil)
+# --------------------------------------------------------------------------
+
+
+def _salida_scutil(texto):
+    """Fake del resultado de `subprocess.run(["scutil", "--proxy"])`."""
+    return type("Proc", (), {"stdout": texto, "returncode": 0, "stderr": ""})()
+
+
+@pytest.fixture(autouse=True)
+def _proxy_sin_cache():
+    """Hermeticidad: arranca cada test sin cache de proxy ni opener.
+
+    `_proxy_configurado` y `_opener` cachean a nivel de modulo. Este fixture
+    los resetea antes de cada test para que los mocks de config/env/subprocess
+    sean deterministas y un test no reciba el valor cacheado de otro.
+    """
+    vfxflow_auth._reiniciar_proxy()
+    vfxflow_auth._reiniciar_opener()
+
+
+def test_proxy_desde_env(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy:8080")
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    monkeypatch.setattr(vfxflow_config, "obtener_config_efectiva", lambda: {})
+
+    assert vfxflow_auth._proxy_configurado() == "http://proxy:8080"
+
+
+def test_proxy_sin_config_norutina_devuelve_none(monkeypatch):
+    monkeypatch.setattr(vfxflow_config, "obtener_config_efectiva", lambda: {})
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    # scutil corre y responde sin proxy -> se ignora (best-effort).
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _salida_scutil(""))
+
+    assert vfxflow_auth._proxy_configurado(so="darwin") is None
+
+
+def test_proxy_doble_llamada_sin_reset_usa_cache(monkeypatch):
+    # Regresion del bug real: `_proxy_cache` no estaba declarado global, y la
+    # SEGUNDA llamada (con _proxy_cache_cargado=True) lanzaba UnboundLocalError.
+    # Este test llama DOS VECES seguidas SIN resetear la cache intermedia.
+    monkeypatch.setattr(vfxflow_config, "obtener_config_efectiva", lambda: {})
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+
+    primera = vfxflow_auth._proxy_configurado(so="darwin")
+    segunda = vfxflow_auth._proxy_configurado(so="darwin")
+    assert primera == segunda is None  # sin proxy: ambas None y sin excepcion
+
+
+def test_proxy_doble_llamada_cachea_valor(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy:8080")
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    monkeypatch.setattr(vfxflow_config, "obtener_config_efectiva", lambda: {})
+
+    primera = vfxflow_auth._proxy_configurado()
+    segunda = vfxflow_auth._proxy_configurado()
+    assert primera == segunda == "http://proxy:8080"
+
+
+def test_proxy_macos_scutil(monkeypatch):
+    # Multiplataforma: se fuerza so="darwin" para que la rama scutil se
+    # ejecute aun en Linux/Windows (donde platform.system() != "Darwin"). El
+    # resto se mockea igual; el test es valido en cualquier SO.
+    monkeypatch.setattr(vfxflow_config, "obtener_config_efectiva", lambda: {})
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _salida_scutil(
+            "HTTPEnable : 1\nHTTPProxy : proxylocal\nHTTPPort : 3128\n"
+        ),
+    )
+
+    assert vfxflow_auth._proxy_configurado(so="darwin") == "http://proxylocal:3128"
+
+
+def test_opener_usa_proxy_cuando_hay(monkeypatch):
+    monkeypatch.setattr(
+        vfxflow_auth, "_proxy_configurado", lambda: "http://proxy:8080"
+    )
+
+    op = vfxflow_auth._opener()
+    handlers_proxy = [
+        h for h in op.handlers if isinstance(h, urllib.request.ProxyHandler)
+    ]
+    assert handlers_proxy
+    assert handlers_proxy[0].proxies == {
+        "http": "http://proxy:8080",
+        "https": "http://proxy:8080",
+    }
+
+
+def test_opener_sin_proxy_no_configura_proxy(monkeypatch):
+    # Sin proxy: el ProxyHandler({}) desactiva el proxy de urllib; la prueba
+    # verifica que el opener resultante no enruta por ningun proxy. (ProxyHandler
+    # con dict vacio ni siquiera se registra en op.handlers: no agrega los
+    # metodos dinamicos `*_open` que opera `add_handler`.)
+    monkeypatch.setattr(vfxflow_auth, "_proxy_configurado", lambda: None)
+
+    op = vfxflow_auth._opener()
+    handlers_con_proxy = [
+        h
+        for h in op.handlers
+        if isinstance(h, urllib.request.ProxyHandler) and h.proxies
+    ]
+
+    assert not handlers_con_proxy
+
+
+def test_transporte_funciona_sin_proxy(monkeypatch):
+    # Sin proxy y con el patron de mock del resto del archivo (_abrir): una
+    # llamada de transporte devuelve lo esperado sin tocar la red real.
+    monkeypatch.setattr(vfxflow_auth, "_proxy_configurado", lambda: None)
+    _urlopen_responde(
+        monkeypatch,
+        {
+            "idToken": "idtoken1",
+            "refreshToken": "refreshtoken1",
+            "expiresIn": "3600",
+            "localId": "usuario123",
+            "email": "artista@samanestudio.com",
+        },
+    )
+
+    res = vfxflow_auth.loguear("artista@samanestudio.com", "secreto")
+
+    assert res["id_token"] == "idtoken1"
+
+
+def test_abrir_delega_en_opener_con_timeout(monkeypatch):
+    # Cableado: `_abrir` resuelve el proxy via `_opener().open(req, timeout=)`.
+    llamadas = {}
+
+    class FalsoOpener:
+        def open(self, req, **kwargs):
+            llamadas["timeout"] = kwargs.get("timeout")
+            return RespuestaFalsa(json.dumps({"ok": True}).encode("utf-8"))
+
+    monkeypatch.setattr(vfxflow_auth, "_opener", lambda: FalsoOpener())
+
+    with vfxflow_auth._abrir("https://vfxflow.invalido", timeout=10) as respuesta:
+        cuerpo = respuesta.read()
+
+    assert json.loads(cuerpo) == {"ok": True}
+    assert llamadas["timeout"] == 10
 
 
 # --------------------------------------------------------------------------

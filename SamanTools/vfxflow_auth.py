@@ -33,14 +33,23 @@ Flujo "Continuar con Google" (escritorio, OAuth 2.0 loopback + PKCE):
 El id_token (1 hora) se renueva con securetoken (REST). Las llamadas HTTP
 usan `urllib.request` (stdlib, sin dependencias) con timeout de 10 s y
 NUNCA incluyen credenciales (password / tokens) en los mensajes de error.
+
+El proxy del estudio se respeta con esta prioridad: config efectiva -> "
+proxy" (config_local.py), variables de entorno HTTPS_PROXY/HTTP_PROXY, y
+proxy de sistema macOS via `scutil --proxy` (best-effort). Sin proxy
+detectado, el comportamiento es identico al original (conexion directa).
 """
 
 import base64
 import hashlib
 import http.server
 import json
+import os
+import platform
+import re
 import secrets
 import socket
+import subprocess
 import threading
 import time
 import urllib.error
@@ -92,6 +101,155 @@ class VfxFlowAuthError(Exception):
 # Transporte HTTP (no exponer en la API publica del modulo)
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# Proxy del estudio: config_local > env > proxy de sistema macOS (scutil)
+# --------------------------------------------------------------------------
+
+_proxy_cache = None
+_proxy_cache_cargado = False
+
+# Vars de entorno con prioridad (orden de la convencion de urllib/curl).
+_VARIABLES_PROXY_ENV = (
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+)
+
+
+def _reiniciar_proxy():
+    """Limpia la cache del proxy de modulo (soporte de tests)."""
+    global _proxy_cache, _proxy_cache_cargado
+    _proxy_cache = None
+    _proxy_cache_cargado = False
+
+
+def _proxy_desde_scutil():
+    """Proxy de sistema macOS leyendo `scutil --proxy` (best-effort).
+
+    El output de `scutil --proxy` es un dict en texto plano del estilo:
+
+        <dictionary> {
+            HTTPEnable : 1
+            HTTPProxy : <host>
+            HTTPPort : <puerto>
+            HTTPSEnable : 1
+            HTTPSProxy : <host>
+            HTTPSPort : <puerto>
+            ...
+        }
+
+    Se parsea con regex simple (claves `HTTPProxy`/`HTTPPort` y sus variantes
+    HTTPS, con el puerto como secuencia de digitos). Prefiere HTTPS si esta habilitado; si no, HTTP. Devuelve
+    "http://<host>:<puerto>" o None. Nunca lanza: fallo de scutil o sin proxy
+    habilitado -> None.
+    """
+    try:
+        proc = subprocess.run(
+            ["scutil", "--proxy"], capture_output=True, timeout=2, text=True
+        )
+    except Exception:
+        return None
+    salida = proc.stdout or ""
+    lineas = salida.splitlines()
+
+    def _valor(clave):
+        for linea in lineas:
+            m = re.search(r"{0}\s*:\s*(.+)".format(clave), linea)
+            if m:
+                return m.group(1).strip()
+        return None
+
+    for prefijo in ("HTTPS", "HTTP"):
+        habilitado = _valor(prefijo + "Enable")
+        host = _valor(prefijo + "Proxy")
+        puerto = _valor(prefijo + "Port")
+        if habilitado and habilitado != "0" and host:
+            if puerto and puerto.isdigit():
+                return "http://{0}:{1}".format(host, puerto)
+            return "http://{0}".format(host)
+    return None
+
+
+def _proxy_configurado(so=None):
+    """Devuelve la URL del proxy a usar (str) o None (sin proxy).
+
+    Prioridad:
+        1. Config efectiva -> clave "proxy" (VFXFLOW_LOCAL_CONFIG de
+           config_local.py, lo declara el admin por maquina).
+        2. Variables de entorno HTTPS_PROXY/https_proxy/HTTP_PROXY/http_proxy.
+        3. Proxy de sistema macOS via `scutil --proxy` (best-effort, timeout
+           2 s). En Windows/Linux el proxy de sistema no se lee (config y env
+           son suficientes y deterministas); documentado en vfxflow_config.
+
+    `so` (opcional) fuerza el SO para las pruebas ("darwin" corre la rama
+    scutil aun en Linux/Windows); en produccion siempre es
+    `platform.system()`. El resultado se cachea a nivel de modulo para no
+    re-ejecutar scutil en cada llamada (ver _reiniciar_proxy). Nunca lanza:
+    cualquier fallo -> None.
+    """
+    global _proxy_cache, _proxy_cache_cargado
+    if _proxy_cache_cargado:
+        return _proxy_cache
+
+    proxy = None
+    try:
+        proxy = vfxflow_config.obtener_config_efectiva().get("proxy") or None
+    except Exception:
+        proxy = None
+    if not proxy:
+        for variable in _VARIABLES_PROXY_ENV:
+            valor = os.environ.get(variable)
+            if valor:
+                proxy = valor
+                break
+    if not proxy and (so or platform.system()).lower() == "darwin":
+        proxy = _proxy_desde_scutil()
+    if proxy:
+        proxy = proxy.strip()
+        if proxy and "://" not in proxy:
+            proxy = "http://" + proxy
+    _proxy_cache = proxy or None
+    _proxy_cache_cargado = True
+    return _proxy_cache
+
+
+_opener_cache = None
+
+
+def _opener():
+    """Opener de urllib memoizado con el handler de proxy adecuado.
+
+    Con proxy: `ProxyHandler({"http": proxy, "https": proxy})`. Sin proxy:
+    `ProxyHandler({})`, que desactiva la lectura automatica de env de urllib
+    (la prioridad de env ya la resolvio `_proxy_configurado`). Se cachea a
+    nivel de modulo; `_reiniciar_opener()` lo limpia (tests).
+    """
+    global _opener_cache
+    if _opener_cache is None:
+        proxy = _proxy_configurado()
+        handler = urllib.request.ProxyHandler(
+            {"http": proxy, "https": proxy} if proxy else {}
+        )
+        _opener_cache = urllib.request.build_opener(handler)
+    return _opener_cache
+
+
+def _reiniciar_opener():
+    """Limpia la cache del opener de modulo (soporte de tests)."""
+    global _opener_cache
+    _opener_cache = None
+
+
+def _abrir(req, timeout=TIMEOUT_SEGUNDOS):
+    """Abre `req` con el opener configurado y un timeout.
+
+    Unico punto de apertura de red del modulo: los transportes pasan por aca
+    para que `_opener()` resuelva el proxy una sola vez. Es el extension point
+    que parchean los tests (en lugar de `urllib.request.urlopen`).
+    """
+    return _opener().open(req, timeout=timeout)
+
 
 def _post_json(url, payload, api_key):
     """POST JSON y devuelve el objeto parseado.
@@ -105,7 +263,7 @@ def _post_json(url, payload, api_key):
     req.add_header("Content-Type", "application/json")
 
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SEGUNDOS) as respuesta:
+        with _abrir(req, timeout=TIMEOUT_SEGUNDOS) as respuesta:
             texto = respuesta.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         _levantar_error_http(e, es_firestore=False)
@@ -157,7 +315,7 @@ def _post_form(url, datos):
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
 
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SEGUNDOS) as respuesta:
+        with _abrir(req, timeout=TIMEOUT_SEGUNDOS) as respuesta:
             texto = respuesta.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         codigo, mensaje = _leer_error_oauth(e)
@@ -186,7 +344,7 @@ def _get_con_bearer(url, id_token):
     req.add_header("Authorization", "Bearer {0}".format(id_token))
 
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SEGUNDOS) as respuesta:
+        with _abrir(req, timeout=TIMEOUT_SEGUNDOS) as respuesta:
             texto = respuesta.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         # _levantar_error_http lanza (401/http) o devuelve None (404).
