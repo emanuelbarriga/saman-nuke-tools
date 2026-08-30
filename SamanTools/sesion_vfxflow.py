@@ -3,8 +3,10 @@ SamanTools.sesion_vfxflow - Persistencia segura del refresh token de VFXFlow.
 
 El refresh_token es un credential de larga vida: se persiste en disco local
 con permisos restringidos (0600 en POSIX) para que solo el usuario pueda
-leerlo. El dict persistido se LIMITA a {refresh_token, local_id, email}:
-el id_token (1 hora) y la password NUNCA se guardan.
+leerlo. Ademas del refresh_token, se persiste la identidad denormalizada del
+perfil (local_id/email/userName/userPhotoURL/role) para que el autologin y la
+escritura del panel la tengan sin red. El id_token (1 hora) y la password
+NUNCA se guardan.
 
 Todas las funciones son totales: devuelven True/None ante cualquier error y
 nunca lanzan, para no romper la UI de Nuke.
@@ -17,7 +19,17 @@ import os
 _RUTA = os.path.expanduser("~/.config/saman/vfxflow_sesion.json")
 
 # Claves que se persisten (el resto de la sesion en memoria se descarta).
-_CLAVES_PERSISTIDAS = ("refresh_token", "local_id", "email")
+# userName/userPhotoURL/role son datos de perfil (no credenciales): se
+# denormalizan aqui (patron de la app web) para el autologin y el payload de
+# escritura de actividades (userId/userName/userRole/userPhotoURL).
+_CLAVES_PERSISTIDAS = (
+    "refresh_token",
+    "local_id",
+    "email",
+    "userName",
+    "userPhotoURL",
+    "role",
+)
 
 
 def ruta_sesion():

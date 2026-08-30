@@ -96,6 +96,10 @@ _REFS_TIMEOUT_SEGUNDOS = 10
 # Campos que se codifican como timestampValue en los payloads de escritura.
 _CAMPOS_TIMESTAMP = ("createdAt", "updatedAt", "timestamp")
 
+# Color neutro del chip/menú de estado cuando el estado no trae `color`
+# (slate-600, el fallback del EnhancedShotStateSelector de la app web).
+_COLOR_ESTADO_NEUTRAL = "#616E7C"
+
 # Intervalo del QTimer que observa el resultado del fetch de actividad.
 _COMENTARIOS_POLL_MS = 500
 
@@ -272,6 +276,39 @@ QToolButton#botonResponder {
     background: transparent;
     padding: 2px 6px;
     font-weight: bold;
+}
+QToolButton#botonEstadoActual {
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 9px;
+    padding: 2px 8px;
+    color: #f1f5f9;
+}
+QToolButton#botonEstadoActual:hover {
+    background-color: #334155;
+}
+QToolButton#botonEstadoAnterior,
+QToolButton#botonEstadoSiguiente {
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    padding: 2px 6px;
+}
+QToolButton#botonEstadoAnterior:hover,
+QToolButton#botonEstadoSiguiente:hover {
+    color: #f1f5f9;
+}
+QToolButton#botonEstadoAnterior:disabled,
+QToolButton#botonEstadoSiguiente:disabled {
+    color: #475569;
+}
+QMenu {
+    background-color: #1e293b;
+    color: #f1f5f9;
+    border: 1px solid #334155;
+}
+QMenu::item:selected {
+    background-color: #334155;
 }
 QScrollArea {
     background: transparent;
@@ -843,7 +880,12 @@ def _rol_sesion(sesion):
 
 
 def _base_campos_actividad(project_id, shot_id, sesion, tipo, contenido):
-    """Campos comunes de una actividad de escritura (v1.7.0). Puro."""
+    """Campos comunes de una actividad de escritura (v1.7.0). Puro.
+
+    Denormaliza la identidad de la sesión (userId/userName/userRole/role/
+    userPhotoURL) como la app web: la sesión ahora persiste el perfil real
+    (ver `_fusionar_identidad_en_sesion` y `sesion_vfxflow`).
+    """
     sesion = sesion or {}
     ahora = _iso_ahora()
     nombre = _nombre_usuario_sesion(sesion)
@@ -857,6 +899,7 @@ def _base_campos_actividad(project_id, shot_id, sesion, tipo, contenido):
         "userName": nombre,
         "userRole": rol,
         "role": rol,
+        "userPhotoURL": sesion.get("userPhotoURL") or "",
         "isPrivate": False,
         "createdAt": ahora,
         "updatedAt": ahora,
@@ -886,6 +929,44 @@ def _campos_status_change(project_id, shot_id, sesion, previo_id, previo_nombre,
         }
     )
     return campos
+
+
+def _color_estado_chip(estado):
+    """Color del chip de estado (fallback slate-600 si no hay `color`). Puro."""
+    color = (estado or {}).get("color")
+    return str(color) if color else _COLOR_ESTADO_NEUTRAL
+
+
+def _indices_estado_anterior_siguiente(ids_ordenados, estado_actual_id):
+    """"(anterior_id, siguiente_id) por el orden del selector, o None cada uno.
+
+    Primer estado -> anterior None; último -> siguiente None; estado actual
+    fuera de la lista -> ambos None (no se navega a ciegas). `ids_ordenados`
+    ya viene en orden `order` asc. Puro (testeable sin widgets).
+    """
+    ids = list(ids_ordenados or [])
+    if not estado_actual_id or str(estado_actual_id) not in ids:
+        return (None, None)
+    indice = ids.index(str(estado_actual_id))
+    anterior = ids[indice - 1] if indice > 0 else None
+    siguiente = ids[indice + 1] if indice < len(ids) - 1 else None
+    return (anterior, siguiente)
+
+
+def _acciones_estado(estados_ordenados, estados_combo, estado_actual_id):
+    """Items del menú del selector: [(estado_id, texto, es_actual)]. Puro.
+
+    El estado actual se marca con "✓ " (texto plano: los QMenu nativos no
+    renderizan rich text en QAction de forma confiable).
+    """
+    acciones = []
+    for estado_id in estados_ordenados or []:
+        item = (estados_combo or {}).get(str(estado_id)) or {}
+        nombre = item.get("name") or str(estado_id)
+        es_actual = str(estado_id) == str(estado_actual_id)
+        texto = "✓ {0}".format(nombre) if es_actual else nombre
+        acciones.append((str(estado_id), texto, es_actual))
+    return acciones
 
 
 def _rect_crop_central(src_w, src_h, tgt_ratio=16.0 / 9.0):
@@ -953,6 +1034,32 @@ def _debe_mostrar_boton_importar(adjunto, imagenes):
     if adjunto.get("type") != "image":
         return False
     return bool(adjunto.get("url"))
+
+
+def _label_read_adjunto(contexto):
+    """Etiqueta del Read importado desde un comentario (knob `label`). Puro.
+
+    "comentario de {autor}: {contenido}" recortado a ~60 caracteres; sin autor
+    -> "comentario: {contenido}"; sin contexto -> "comentario".
+    """
+    contexto = contexto or {}
+    autor = str(contexto.get("autor") or "").strip()
+    contenido = str(contexto.get("contenido") or "").strip()
+    if autor:
+        base = (
+            "comentario de {0}: {1}".format(autor, contenido)
+            if contenido
+            else "comentario de {0}".format(autor)
+        )
+    else:
+        base = (
+            "comentario: {0}".format(contenido)
+            if contenido
+            else "comentario"
+        )
+    if len(base) > 60:
+        return base[:57].rstrip() + "..."
+    return base
 
 
 def _cuerpo_actividad(actividad):
@@ -1144,8 +1251,9 @@ class PanelComentarios(QtWidgets.QWidget):
 
         # Última resolución del plano (worker) para escribir (ids + stateId).
         self._plano_resuelto = None
-        # Estados reales del proyecto para el combo de estado.
+        # Estados reales del proyecto para el selector de estado.
         self._estados_combo = {}
+        self._estados_ordenados = []
         self._estado_actual_id = ""
 
         self._construir_ui()
@@ -1190,31 +1298,61 @@ class PanelComentarios(QtWidgets.QWidget):
         self._seccion_login = seccion_login
 
         seccion_sesion = QtWidgets.QGroupBox("Sesión VFXFlow", self)
-        form_sesion = QtWidgets.QFormLayout(seccion_sesion)
+        # Email + botón Desconectar en UNA línea: label a la izquierda, botón
+        # a la derecha (antes el form tenía el botón en fila propia).
+        fila_sesion = QtWidgets.QHBoxLayout(seccion_sesion)
+        fila_sesion.setContentsMargins(8, 6, 8, 6)
         self._label_conectado = QtWidgets.QLabel("—", self)
-        form_sesion.addRow("Conectado", self._label_conectado)
+        self._label_conectado.setWordWrap(False)
+        fila_sesion.addWidget(self._label_conectado, 1)
         self._boton_desconectar = QtWidgets.QPushButton(
             "Desconectar", self
         )
         self._boton_desconectar.clicked.connect(self._on_desconectar)
-        form_sesion.addRow(self._boton_desconectar)
+        fila_sesion.addWidget(self._boton_desconectar)
         layout.addWidget(seccion_sesion)
         self._seccion_sesion = seccion_sesion
 
         seccion_comentarios = QtWidgets.QGroupBox("Actividad por Plano", self)
         lay_comentarios = QtWidgets.QVBoxLayout(seccion_comentarios)
 
-        # Header (v1.6.1): plano identificado + combo de estado (v1.7 activo).
+        # Header (v1.6.1): plano identificado + selector de estado de 3 piezas
+        # (v1.7.1, spec EnhancedShotStateSelector): ◀ chip ▶ + menú.
         fila_header = QtWidgets.QHBoxLayout()
         self._header_plano = QtWidgets.QLabel("—", seccion_comentarios)
         self._header_plano.setStyleSheet("font-weight: bold;")
         fila_header.addWidget(self._header_plano)
         fila_header.addStretch(1)
-        self._combo_estado = QtWidgets.QComboBox(seccion_comentarios)
-        self._combo_estado.addItem("Estado")
-        self._combo_estado.setEnabled(False)
-        self._combo_estado.activated.connect(self._on_cambio_estado)
-        fila_header.addWidget(self._combo_estado)
+
+        self._estado_selector = QtWidgets.QWidget(seccion_comentarios)
+        lay_selector = QtWidgets.QHBoxLayout(self._estado_selector)
+        lay_selector.setContentsMargins(0, 0, 0, 0)
+        lay_selector.setSpacing(2)
+        self._boton_estado_anterior = QtWidgets.QToolButton(self._estado_selector)
+        self._boton_estado_anterior.setText("◀")
+        self._boton_estado_anterior.setToolTip("Estado anterior")
+        self._boton_estado_anterior.setObjectName("botonEstadoAnterior")
+        self._boton_estado_anterior.clicked.connect(self._on_estado_anterior)
+        lay_selector.addWidget(self._boton_estado_anterior)
+        self._boton_estado_actual = QtWidgets.QToolButton(self._estado_selector)
+        self._boton_estado_actual.setObjectName("botonEstadoActual")
+        self._boton_estado_actual.setToolTip("Cambiar estado")
+        self._boton_estado_actual.setTextFormat(QtCore.Qt.RichText)
+        self._boton_estado_actual.setText("Estado")
+        self._menu_estados = QtWidgets.QMenu(self._boton_estado_actual)
+        self._menu_estados.triggered.connect(self._on_estado_menu)
+        self._boton_estado_actual.setMenu(self._menu_estados)
+        self._boton_estado_actual.setPopupMode(
+            QtWidgets.QToolButton.InstantPopup
+        )
+        lay_selector.addWidget(self._boton_estado_actual)
+        self._boton_estado_siguiente = QtWidgets.QToolButton(self._estado_selector)
+        self._boton_estado_siguiente.setText("▶")
+        self._boton_estado_siguiente.setToolTip("Estado siguiente")
+        self._boton_estado_siguiente.setObjectName("botonEstadoSiguiente")
+        self._boton_estado_siguiente.clicked.connect(self._on_estado_siguiente)
+        lay_selector.addWidget(self._boton_estado_siguiente)
+        fila_header.addWidget(self._estado_selector)
         lay_comentarios.addLayout(fila_header)
 
         # Fila de modo respuesta (v1.7): "Respondiendo a <autor> — [Cancelar]".
@@ -1286,12 +1424,17 @@ class PanelComentarios(QtWidgets.QWidget):
         self._layout_actividad = QtWidgets.QVBoxLayout(self._widget_contenido_actividad)
         self._layout_actividad.setContentsMargins(0, 0, 0, 0)
         self._scroll_actividad.setWidget(self._widget_contenido_actividad)
-        self._scroll_actividad.setMinimumHeight(160)
-        lay_comentarios.addWidget(self._scroll_actividad)
+        # El feed necesita espacio: mínimo cómodo + factor de stretch para que
+        # crezca con la altura disponible del panel (antes quedaba clavado en
+        # 160 px y era incómodo explorar la actividad).
+        self._scroll_actividad.setMinimumHeight(400)
+        lay_comentarios.addWidget(self._scroll_actividad, 1)
 
         self._label_mensaje_actividad = QtWidgets.QLabel(self._widget_contenido_actividad)
         self._label_mensaje_actividad.setWordWrap(True)
-        layout.addWidget(seccion_comentarios)
+        # La sección de actividad crece con el panel (factor 1): el feed es el
+        # protagonista del widget y la etiqueta de estado mantiene su tamaño.
+        layout.addWidget(seccion_comentarios, 1)
         self._seccion_comentarios = seccion_comentarios
 
         self._etiqueta_estado = QtWidgets.QLabel(self)
@@ -1443,6 +1586,7 @@ class PanelComentarios(QtWidgets.QWidget):
             usuario = vfxflow_auth.obtener_usuario(
                 respuesta["local_id"], respuesta["id_token"]
             )
+            self._fusionar_identidad_en_sesion(usuario)
             rol = usuario.get("role") or "artist"
             self._estado("Conectado como %s (%s)" % (email, rol))
             self._aplicar_estado_sesion_ui()
@@ -1584,6 +1728,7 @@ class PanelComentarios(QtWidgets.QWidget):
             usuario = vfxflow_auth.obtener_usuario(
                 respuesta["local_id"], respuesta["id_token"]
             )
+            self._fusionar_identidad_en_sesion(usuario)
             rol = usuario.get("role") or "artist"
             self._estado("Conectado como %s (%s)" % (email, rol))
             self._aplicar_estado_sesion_ui()
@@ -1778,6 +1923,7 @@ class PanelComentarios(QtWidgets.QWidget):
                 usuario = vfxflow_auth.obtener_usuario(
                     respuesta["local_id"], respuesta["id_token"]
                 )
+                self._fusionar_identidad_en_sesion(usuario)
                 rol = usuario.get("role") or "artist"
                 self._loopback_trabajo = {"estado": "ok", "email": email, "rol": rol}
             except vfxflow_auth.VfxFlowAuthError as e:
@@ -1864,8 +2010,16 @@ class PanelComentarios(QtWidgets.QWidget):
         self._estado("Sesión cerrada.")
 
     def _registrar_sesion(self, respuesta, email=None):
-        """Guarda la sesion en memoria y persiste refresh_token en disco."""
-        sesion_previa = self.sesion or {}
+        """Guarda la sesión en memoria y persiste tokens + perfil en disco.
+
+        `local_id` sale de `respuesta.local_id` o `respuesta.user_id` (el
+        refresh devuelve `user_id`, no `local_id`): asi el autologin no pierde
+        el id (fix v1.7.x de identidad). La identidad denormalizada
+        (userName/userPhotoURL/role) prevalece de la respuesta o se conserva
+        de la sesión previa; viaja a `guardar_sesion` para el autologin y el
+        payload de escritura. Nunca guarda id_token/password.
+        """
+        sesion_previa = getattr(self, "sesion", None) or {}
         try:
             expira_en = time.time() + int(respuesta.get("expires_in", 3600))
         except (TypeError, ValueError):
@@ -1879,14 +2033,73 @@ class PanelComentarios(QtWidgets.QWidget):
                 or ""
             ),
             "local_id": (
-                respuesta.get("local_id") or sesion_previa.get("local_id")
+                respuesta.get("local_id")
+                or respuesta.get("user_id")
+                or sesion_previa.get("local_id")
+                or ""
             ),
             "email": (
                 email or respuesta.get("email") or sesion_previa.get("email")
             ),
             "expira_en": expira_en,
+            "userName": (
+                respuesta.get("userName") or sesion_previa.get("userName") or ""
+            ),
+            "userPhotoURL": (
+                respuesta.get("userPhotoURL")
+                or respuesta.get("avatarUrl")
+                or sesion_previa.get("userPhotoURL")
+                or ""
+            ),
+            "role": (respuesta.get("role") or sesion_previa.get("role") or ""),
         }
         sesion_vfxflow.guardar_sesion(self.sesion)
+
+    def _fusionar_identidad_en_sesion(self, usuario):
+        """Denormaliza el perfil `users/{uid}` en la sesión y la persiste.
+
+        `usuario` es el doc aplanado de `obtener_usuario` (name/role/
+        avatarUrl/userPhotoURL). Actualiza userName/userPhotoURL/role solo si
+        vienen (sin pisar lo ya presente) y vuelve a persistir: la identidad
+        queda disponible en el autologin y en `_base_campos_actividad`.
+        Devuelve la sesión actualizada. Nunca lanza.
+        """
+        sesion = self.sesion or {}
+        usuario = usuario or {}
+        nombre = usuario.get("name") or usuario.get("userName") or ""
+        if nombre:
+            sesion["userName"] = nombre
+        rol = usuario.get("role") or ""
+        if rol:
+            sesion["role"] = rol
+        foto = usuario.get("avatarUrl") or usuario.get("userPhotoURL") or ""
+        if foto:
+            sesion["userPhotoURL"] = foto
+        self.sesion = sesion
+        try:
+            sesion_vfxflow.guardar_sesion(self.sesion)
+        except Exception:
+            pass
+        return sesion
+
+    def _rellenar_identidad_si_falta(self):
+        """Autologin: rellena la identidad best-effort si la sesión no la trae.
+
+        Sesiones viejas (persistidas antes del fix) no tienen userName/role:
+        se consulta `users/{uid}` y se fusiona. Nunca rompe el autologin.
+        """
+        sesion = getattr(self, "sesion", None) or {}
+        if not sesion.get("local_id") or not sesion.get("id_token"):
+            return
+        if sesion.get("userName") and sesion.get("role"):
+            return
+        try:
+            usuario = vfxflow_auth.obtener_usuario(
+                sesion["local_id"], sesion["id_token"]
+            )
+            self._fusionar_identidad_en_sesion(usuario)
+        except Exception:
+            pass
 
     def _autologin_si_hay_sesion(self):
         """Si hay refresh_token guardado, reconecta silenciosamente.
@@ -1910,10 +2123,16 @@ class PanelComentarios(QtWidgets.QWidget):
             guardada = sesion_vfxflow.cargar_sesion()
             if not guardada or not guardada.get("refresh_token"):
                 return
+            # Seed con lo guardado (incluye la identidad denormalizada) para
+            # que `_registrar_sesion` la conserve al refrescar (v1.7.x).
+            if getattr(self, "sesion", None) is None:
+                self.sesion = dict(guardada)
             respuesta = vfxflow_auth.refrescar_id_token(
                 guardada["refresh_token"]
             )
             self._registrar_sesion(respuesta, email=guardada.get("email"))
+            # Sesiones viejas (antes del fix) no traen identidad: rellenarla.
+            self._rellenar_identidad_si_falta()
             email = guardada.get("email")
             if email:
                 self._estado("Reconectado como %s" % email)
@@ -2088,7 +2307,7 @@ class PanelComentarios(QtWidgets.QWidget):
 
         self._comentarios_trabajo_en_curso = False
         if estado == "ok":
-            self._poblar_combo_estado(
+            self._poblar_estado_selector(
                 trabajo.get("estados") or [],
                 trabajo.get("estado_actual") or "",
             )
@@ -2325,11 +2544,19 @@ class PanelComentarios(QtWidgets.QWidget):
         ]
         if not adjuntos:
             return []
+        # Contexto del comentario padre para marcar el Read/Text2 importado.
+        contexto = {
+            "autor": actividad.get("userName") or "",
+            "contenido": actividad.get("content") or "",
+            "comentario_id": actividad.get("id") or "",
+        }
         widgets = []
         for adj in adjuntos:
             if _debe_mostrar_boton_importar(adj, imagenes or {}):
                 ruta = imagenes.get(str(adj.get("url"))) if adj.get("url") else None
-                widgets.append(self._crear_adjunto_imagen(adj, ruta, parent))
+                widgets.append(
+                    self._crear_adjunto_imagen(adj, ruta, parent, contexto)
+                )
             else:
                 label = QtWidgets.QLabel(
                     _escapar_y_linkificar(_linea_adjunto_texto(adj)), parent
@@ -2340,11 +2567,16 @@ class PanelComentarios(QtWidgets.QWidget):
                 widgets.append(label)
         return widgets
 
-    def _crear_adjunto_imagen(self, adj, ruta_local, parent):
+    def _crear_adjunto_imagen(self, adj, ruta_local, parent, contexto=None):
         """Contenedor de un adjunto imagen: preview (si pudo) + botón importar.
 
         El botón "⬇ Importar" aparece SIEMPRE (TAREA A). Si el thumbnail cargó
-        va debajo del preview; si no, aparece junto al texto.
+        va debajo del preview; si no, aparece junto al texto. `contexto`
+        (dict con autor/contenido/comentario_id) marca el Read/Text2.
+
+        UX (v1.7.2): clic simple en la miniatura = importar (la cadena Read +
+        Text2 con el comentario y su autor); doble clic = zoom modal. El botón
+        ⬇ debajo queda como affordance explícita (redundante por diseño).
         """
         cont = QtWidgets.QWidget(parent)
         lay = QtWidgets.QVBoxLayout(cont)
@@ -2363,9 +2595,10 @@ class PanelComentarios(QtWidgets.QWidget):
             label.setTextFormat(QtCore.Qt.RichText)
             label.setOpenExternalLinks(True)
             fila.addWidget(label, 1)
-            fila.addWidget(self._crear_boton_importar(adj, cont))
+            fila.addWidget(self._crear_boton_importar(adj, cont, contexto))
             lay.addLayout(fila)
             return cont
+        boton_importar = self._crear_boton_importar(adj, cont, contexto)
         miniatura = QtWidgets.QLabel(cont)
         miniatura.setPixmap(
             pixmap.scaled(
@@ -2378,8 +2611,16 @@ class PanelComentarios(QtWidgets.QWidget):
         miniatura.setToolTip(
             "{0} — {1}".format(nombre, tamanio) if tamanio else nombre
         )
-        miniatura.mousePressEvent = (
-            lambda evento, ruta=ruta_local: self._abrir_zoom_imagen(ruta)
+
+        def _importar_por_clic():
+            if self._clic_importar_adjunto(adj, contexto, objetivo=boton_importar):
+                # Feedback mínimo sobre la miniatura mientras descarga.
+                miniatura.setToolTip("Importando…")
+                miniatura.setCursor(QtCore.Qt.WaitCursor)
+
+        miniatura.mousePressEvent = lambda evento: _importar_por_clic()
+        miniatura.mouseDoubleClickEvent = (
+            lambda evento, r=ruta_local: self._doble_clic_zoom_adjunto(r)
         )
         lay.addWidget(miniatura)
         fila = QtWidgets.QHBoxLayout()
@@ -2387,28 +2628,55 @@ class PanelComentarios(QtWidgets.QWidget):
         label_nombre.setWordWrap(True)
         fila.addWidget(label_nombre)
         fila.addStretch(1)
-        fila.addWidget(self._crear_boton_importar(adj, cont))
+        fila.addWidget(boton_importar)
         lay.addLayout(fila)
         return cont
 
-    def _crear_boton_importar(self, adj, parent):
+    def _clic_importar_adjunto(self, adj, contexto=None, objetivo=None):
+        """Handler del clic (botón ⬇ o miniatura): importa con feedback.
+
+        Si ya hay un worker de adjunto en vuelo no hace nada (False). Con
+        `objetivo` (el QToolButton ⬇) lo deshabilita y muestra "⏳…", y al
+        final dispara `_importar_adjunto(url, nombre, contexto)` — la misma
+        cadena que crea Read + Text2 con el comentario y su autor.
+        """
+        if not isinstance(adj, dict):
+            return False
+        if getattr(self, "_adjunto_trabajo_en_curso", False):
+            return False
+        url = (adj.get("url") or "").strip()
+        nombre = (adj.get("name") or "adjunto").strip()
+        if objetivo is not None:
+            for metodo, valor in (
+                ("setEnabled", False),
+                ("setToolTip", "Importando…"),
+                ("setText", "⏳…"),
+            ):
+                try:
+                    getattr(objetivo, metodo)(valor)
+                except Exception:
+                    pass
+        self._importar_adjunto(url, nombre, contexto)
+        return True
+
+    def _doble_clic_zoom_adjunto(self, ruta_local):
+        """Doble clic en la miniatura: abre el zoom modal sin bloquear el clic."""
+        self._abrir_zoom_imagen(ruta_local)
+
+    def _crear_boton_importar(self, adj, parent, contexto=None):
         """QToolButton "⬇ Importar" por adjunto de imagen (TAREA A).
 
-        Al pulsar descarga a `<dir>/ref/adjuntos/<filename>` y crea el Read.
-        Muestra "⏳…" mientras el worker del adjunto está en vuelo.
+        Al pulsar descarga a `<dir>/ref/adjuntos/<filename>` y crea el Read +
+        Text2 marcados con el comentario (`contexto`). Muestra "⏳…" mientras
+        el worker del adjunto está en vuelo. Afordance explícita: el clic en
+        la miniatura hace lo mismo.
         """
         boton = QtWidgets.QToolButton(parent)
         boton.setText("⬇ Importar")
         boton.setToolTip("Descargar el adjunto y crearlo como nodo Read")
-        url = (adj.get("url") or "").strip()
-        nombre = (adj.get("name") or "adjunto").strip()
 
         def _click():
-            if getattr(self, "_adjunto_trabajo_en_curso", False):
-                return
-            boton.setEnabled(False)
-            boton.setText("⏳…")
-            self._importar_adjunto(url, nombre)
+            self._clic_importar_adjunto(adj, contexto, objetivo=boton)
 
         boton.clicked.connect(lambda checked=False: _click())
         return boton
@@ -2436,11 +2704,14 @@ class PanelComentarios(QtWidgets.QWidget):
         except Exception:
             pass
 
-    def _importar_adjunto(self, url, nombre):
-        """Importa un adjunto imagen a `<dir>/ref/adjuntos` + nodo Read.
+    def _importar_adjunto(self, url, nombre, contexto=None):
+        """Importa un adjunto imagen a `<dir>/ref/adjuntos` + nodo Read/Text2.
 
-        Corre con descarga en worker (`_trabajo_importar_adjunto`) y el
-        createNode en QTimer (`_poll_adjunto`), nunca desde el worker.
+        `contexto` (dict con autor/contenido/comentario_id) se guarda en
+        `_adjunto_trabajo` para marcar el Read y crear el Text2 en
+        `_poll_adjunto`. Corre con descarga en worker
+        (`_trabajo_importar_adjunto`) y el createNode en QTimer, nunca desde
+        el worker.
         """
         dir_comp = os.path.dirname(nuke.root().name() or "")
         if not dir_comp:
@@ -2450,16 +2721,16 @@ class PanelComentarios(QtWidgets.QWidget):
         if getattr(self, "_adjunto_trabajo_en_curso", False):
             return
         self._adjunto_trabajo_en_curso = True
-        self._adjunto_trabajo = {"estado": "pendiente"}
+        self._adjunto_trabajo = {"estado": "pendiente", "contexto": contexto}
         self._estado("Importando adjunto…")
         threading.Thread(
             target=self._trabajo_importar_adjunto,
-            args=(url, directorio, nombre),
+            args=(url, directorio, nombre, contexto),
             daemon=True,
         ).start()
         QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_adjunto)
 
-    def _trabajo_importar_adjunto(self, url, directorio, nombre):
+    def _trabajo_importar_adjunto(self, url, directorio, nombre, contexto=None):
         """Worker daemon: descarga un adjunto y publica en `_adjunto_trabajo`."""
         try:
             resultado = _descargar_refs([str(url)], directorio)
@@ -2474,6 +2745,7 @@ class PanelComentarios(QtWidgets.QWidget):
                 "estado": "ok",
                 "nombre": filename,
                 "directorio": directorio,
+                "contexto": contexto,
             }
         except vfxflow_auth.VfxFlowAuthError as e:
             self._adjunto_trabajo = {"estado": "error", "mensaje": str(e)}
@@ -2484,7 +2756,13 @@ class PanelComentarios(QtWidgets.QWidget):
             }
 
     def _poll_adjunto(self):
-        """QTimer (hilo principal): aplica el import del adjunto y crea el Read."""
+        """QTimer (hilo principal): crea el Read (y Text2) del adjunto.
+
+        En éxito crea el Read con `file` (convención del estudio) y el knob
+        `label` con el comentario, y un nodo Text2 suelto cuyo knob `message`
+        lleva el contenido del comentario (no se conecta al Read; un fallo del
+        Text2 no rompe el Read).
+        """
         if not getattr(self, "_adjunto_trabajo_en_curso", False):
             return
         trabajo = self._adjunto_trabajo or {}
@@ -2494,12 +2772,30 @@ class PanelComentarios(QtWidgets.QWidget):
         self._adjunto_trabajo_en_curso = False
         if trabajo.get("estado") == "ok":
             try:
-                nodo = nuke.createNode("Read")
+                contexto = trabajo.get("contexto") or {}
                 comp = nuke.root().name() or ""
+                nodo = nuke.createNode("Read")
                 nodo["file"].setValue(
                     _ruta_read_ref(comp, "adjuntos/{0}".format(trabajo["nombre"]))
                 )
-                self._estado("Adjunto importado como Read.")
+                try:
+                    nodo["label"].setValue(_label_read_adjunto(contexto))
+                except Exception:
+                    pass
+                # Text2 suelto con el texto del comentario (snippet del usuario).
+                try:
+                    contenido = (contexto.get("contenido") or "").strip()
+                    nodo_texto = nuke.createNode("Text2")
+                    nodo_texto["message"].setValue(
+                        contenido or "«sin texto»"
+                    )
+                    autor = (contexto.get("autor") or "").strip()
+                    nodo_texto["label"].setValue(
+                        "comentario de {0}".format(autor) if autor else "comentario"
+                    )
+                except Exception:
+                    pass  # un Text2 que falla no rompe el Read
+                self._estado("Adjunto importado como Read (con comentario).")
             except Exception as e:
                 self._estado("Error al importar el adjunto: %s" % e, error=True)
             return
@@ -2529,10 +2825,9 @@ class PanelComentarios(QtWidgets.QWidget):
                 if not habilitado
                 else ""
             )
-        # El combo se habilita en `_poblar_combo_estado` (con estados reales).
-        combo = getattr(self, "_combo_estado", None)
-        if combo is not None and not getattr(self, "_estados_combo", None):
-            combo.setEnabled(False)
+        # El selector de estado se habilita con su propia lógica (estados +
+        # sesión + escritura en vuelo): `_aplicar_estado_selector_enabled`.
+        self._aplicar_estado_selector_enabled()
         # La fila de modo respuesta depende de la habilitación.
         fila = getattr(self, "_fila_respuesta", None)
         if fila is not None and not habilitado:
@@ -2701,53 +2996,131 @@ class PanelComentarios(QtWidgets.QWidget):
         }
         return vfxflow_auth._patch_json_bearer(url, payload, token)
 
-    # ------------------------------------------------------- combo de estado
+    # ------------------------------------------- selector de estado (v1.7.1)
 
-    def _poblar_combo_estado(self, estados, estado_actual):
-        """Rellena el combo con los estados reales y selecciona el actual.
+    def _poblar_estado_selector(self, estados, estado_actual):
+        """Actualiza el selector de 3 piezas (chip + flechas + menú).
 
-        Sin estados queda deshabilitado (tooltip). El item 0 es un placeholder
-        neutral ("Estado"); los estados dejan su id en itemData. Es la única
-        puerta de entrada al cambio de estado (`_on_cambio_estado`).
+        Guarda `_estados_combo` {id: item}, `_estados_ordenados` (ids en el
+        orden que llega: `obtener_estados` ya ordena por `order` asc) y el
+        estado actual, y re-renderiza chip/menú/habilitación. `estados` viene
+        del worker de actividad (nunca rompe el feed).
         """
         self._estados_combo = {str(e.get("id")): e for e in estados or []}
+        self._estados_ordenados = [
+            str(e["id"]) for e in estados or [] if e.get("id")
+        ]
         self._estado_actual_id = str(estado_actual) if estado_actual else ""
-        combo = getattr(self, "_combo_estado", None)
-        if combo is None:
-            return
-        combo.blockSignals(True)
-        combo.clear()
-        if not estados:
-            combo.addItem("Estado")
-            combo.setEnabled(False)
-            combo.setToolTip("Sin estados disponibles")
-        else:
-            combo.addItem("Estado")
-            indice_actual = 0
-            for e in estados:
-                combo.addItem(str(e.get("name") or e["id"]), str(e["id"]))
-                if str(e["id"]) == self._estado_actual_id:
-                    indice_actual = combo.count() - 1
-            combo.setCurrentIndex(indice_actual)
-            sesion = getattr(self, "sesion", None)
-            combo.setEnabled(bool(sesion and sesion.get("email")))
-            combo.setToolTip(
-                "Cambiar el estado del plano" if combo.isEnabled() else
-                "Iniciá sesión para cambiar el estado"
-            )
-        combo.blockSignals(False)
+        self._reconstruir_menu_estados()
+        self._refrescar_chip_estado()
+        self._aplicar_estado_selector_enabled()
 
-    def _on_cambio_estado(self, indice):
-        """Aplica el cambio de estado elegido en el combo (v1.7, directo).
+    def _reconstruir_menu_estados(self):
+        """Reconstruye el QMenu del chip con todos los estados del proyecto.
 
-        Directo (sin undo): crea la actividad status_change y el PATCH del shot
-        en un worker. El item 0 (placeholder "Estado") no dispara nada.
+        El item actual va checkable+checked y con "✓ " (QAction plano: los
+        menús nativos no renderizan rich text). El icono es un dot 16×16 del
+        color del estado, best-effort (sin paint device se omite; el chip
+        sigue mostrando el color). Decisión documentada.
         """
-        combo = getattr(self, "_combo_estado", None)
-        if combo is None or indice <= 0:
+        menu = getattr(self, "_menu_estados", None)
+        if menu is None:
             return
-        nuevo_id = combo.itemData(indice)
-        nuevo = self._estados_combo.get(str(nuevo_id))
+        menu.clear()
+        for estado_id, texto, es_actual in _acciones_estado(
+            self._estados_ordenados, self._estados_combo, self._estado_actual_id
+        ):
+            accion = menu.addAction(texto)
+            accion.setData(estado_id)
+            if es_actual:
+                accion.setCheckable(True)
+                accion.setChecked(True)
+            color = _color_estado_chip(self._estados_combo.get(estado_id))
+            try:
+                pixmap = QtWidgets.QPixmap(16, 16)
+                pixmap.fill(QtGui.QColor(color))
+                accion.setIcon(QtGui.QIcon(pixmap))
+            except Exception:
+                pass  # sin paint device no hay icono; el chip muestra el color
+
+    def _refrescar_chip_estado(self):
+        """Pinta el chip central con "● color + nombre estado actual"."""
+        chip = getattr(self, "_boton_estado_actual", None)
+        if chip is None:
+            return
+        item = self._estados_combo.get(self._estado_actual_id) or {}
+        nombre = item.get("name")
+        if not nombre:
+            chip.setText("Estado")
+            return
+        color = _color_estado_chip(item)
+        chip.setText('<span style="color:{0};">●</span> {1}'.format(color, nombre))
+
+    def _aplicar_estado_selector_enabled(self):
+        """Habilita los 3 botones del selector según sesión/plano/estados.
+
+        El chip se habilita con sesión + plano + estados reales; las flechas
+        además con tener anterior/siguiente en el orden. Durante una escritura
+        en vuelo (`_escritura_trabajo_en_curso`) todo queda deshabilitado.
+        """
+        try:
+            plano = self._plano_activo()
+        except Exception:
+            plano = None
+        sesion = getattr(self, "sesion", None)
+        base = bool(sesion and sesion.get("email") and plano)
+        base = base and not bool(getattr(self, "_escritura_trabajo_en_curso", False))
+        estados_combo = getattr(self, "_estados_combo", None) or {}
+        tiene_estados = bool(estados_combo)
+        anterior_id, siguiente_id = _indices_estado_anterior_siguiente(
+            getattr(self, "_estados_ordenados", []) or [],
+            getattr(self, "_estado_actual_id", "") or "",
+        )
+        chip = getattr(self, "_boton_estado_actual", None)
+        if chip is not None:
+            chip.setEnabled(base and tiene_estados)
+            chip.setToolTip(
+                "Sin estados disponibles"
+                if not tiene_estados
+                else "Cambiar estado"
+            )
+        btn_ant = getattr(self, "_boton_estado_anterior", None)
+        if btn_ant is not None:
+            btn_ant.setEnabled(base and tiene_estados and anterior_id is not None)
+        btn_sig = getattr(self, "_boton_estado_siguiente", None)
+        if btn_sig is not None:
+            btn_sig.setEnabled(base and tiene_estados and siguiente_id is not None)
+
+    def _on_estado_menu(self, accion):
+        """QMenu del chip: salto directo al estado elegido (handleStateChange)."""
+        estado_id = accion.data() if accion is not None else None
+        if estado_id:
+            self._cambiar_a_estado(estado_id)
+
+    def _on_estado_anterior(self):
+        """◀: va al estado anterior en el orden `order` (si existe)."""
+        anterior_id, _ = _indices_estado_anterior_siguiente(
+            self._estados_ordenados, self._estado_actual_id
+        )
+        if anterior_id:
+            self._cambiar_a_estado(anterior_id)
+
+    def _on_estado_siguiente(self):
+        """▶: va al estado siguiente en el orden `order` (si existe)."""
+        _, siguiente_id = _indices_estado_anterior_siguiente(
+            self._estados_ordenados, self._estado_actual_id
+        )
+        if siguiente_id:
+            self._cambiar_a_estado(siguiente_id)
+
+    def _cambiar_a_estado(self, nuevo_id):
+        """Aplica el cambio de estado (actividad status_change + PATCH shot).
+
+        Recibe el ID del estado (las flechas y el menú dan ids; el flujo de
+        escritura es el mismo de siempre: worker + QTimer). Si el id es el
+        actual no hace nada. En vuelo deshabilita el selector.
+        """
+        nuevo = self._estados_combo.get(str(nuevo_id)) if nuevo_id else None
         if not nuevo:
             return
         if str(nuevo_id) == self._estado_actual_id:
@@ -2781,6 +3154,7 @@ class PanelComentarios(QtWidgets.QWidget):
             (plano, token, resuelto, campos),
             "Cambiando estado…",
         )
+        self._aplicar_estado_selector_enabled()
 
     def _trabajo_cambio_estado(self, plano, token, resuelto, campos):
         """Worker: crea la actividad status_change y PATCHea el shot.

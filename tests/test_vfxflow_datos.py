@@ -722,13 +722,20 @@ def test_obtener_estados_lista(monkeypatch):
                         NOMBRE_PROYECTO + "/projectStates/st1",
                         {
                             "projectId": "lxYgN96Zk8zyhsFEABOf",
-                            "name": "APROBADO",
-                            "color": "#f59e0b",
+                            "name": "ENTREGA",
+                            "color": "#22c55e",
+                            "order": 2,
+                            "defaultPercentage": 100,
+                            "stateType": "approved",
                         },
                     ),
                     _doc(
                         NOMBRE_PROYECTO + "/projectStates/st2",
-                        {"projectId": "lxYgN96Zk8zyhsFEABOf", "name": "ENTREGA"},
+                        {
+                            "projectId": "lxYgN96Zk8zyhsFEABOf",
+                            "name": "APROBADO",
+                            "order": 1,
+                        },
                     ),
                 ]
             )
@@ -739,10 +746,47 @@ def test_obtener_estados_lista(monkeypatch):
     res = vfxflow_datos.obtener_estados(
         "lxYgN96Zk8zyhsFEABOf", "TOKEN_ID", config=_CONFIG
     )
+    # Ordenado por `order` asc: st2 (order 1) antes que st1 (order 2).
     assert res == [
-        {"id": "st1", "name": "APROBADO", "color": "#f59e0b"},
-        {"id": "st2", "name": "ENTREGA"},
+        {"id": "st2", "name": "APROBADO", "order": 1},
+        {
+            "id": "st1",
+            "name": "ENTREGA",
+            "color": "#22c55e",
+            "order": 2,
+            "defaultPercentage": 100,
+            "stateType": "approved",
+        },
     ]
+
+
+def test_obtener_estados_sin_order_al_final(monkeypatch):
+    transporte = _TransporteRunQuery(
+        {
+            "projectStates": _respuesta_runquery(
+                [
+                    _doc(
+                        NOMBRE_PROYECTO + "/projectStates/stSin",
+                        {"projectId": "lxYgN96Zk8zyhsFEABOf", "name": "SIN ORDEN"},
+                    ),
+                    _doc(
+                        NOMBRE_PROYECTO + "/projectStates/st2",
+                        {"projectId": "lxYgN96Zk8zyhsFEABOf", "name": "ORDENADO", "order": 5},
+                    ),
+                    _doc(
+                        NOMBRE_PROYECTO + "/projectStates/st1",
+                        {"projectId": "lxYgN96Zk8zyhsFEABOf", "name": "PRIMERO", "order": 2},
+                    ),
+                ]
+            )
+        }
+    )
+    _parchar_abrir(monkeypatch, transporte)
+
+    res = vfxflow_datos.obtener_estados(
+        "lxYgN96Zk8zyhsFEABOf", "TOKEN_ID", config=_CONFIG
+    )
+    assert [e["id"] for e in res] == ["st1", "st2", "stSin"]  # sin order al final
 
 
 def test_obtener_estados_error_devuelve_vacio(monkeypatch):
@@ -810,3 +854,51 @@ def test_upload_media_bearer_red_lanza_codigo_red(monkeypatch):
     with pytest.raises(VfxFlowAuthError) as exc:
         vfxflow_auth._upload_media_bearer("https://x/o", b"", "TOKEN_ID")
     assert exc.value.codigo == "red"
+
+def test_listar_actividad_adjuntos_desde_metadata(monkeypatch):
+    """Regresión v1.7.1: attachments van en metadata.attachments, no top-level.
+
+    En producción un comment con imagen trae la lista dentro de `metadata`
+    (mapValue -> attachments: arrayValue); el top-level `attachments` no
+    existe. La proyección debe normalizar metadata.attachments -> attachments
+    para que el feed encuentre el adjunto y su botón de importar.
+    """
+    t = "2026-08-01T09:00:00Z"
+    adjunto = {
+        "id": "att_xyz",
+        "type": "image",
+        "url": "https://storage/o/img.png?alt=media&token=abc",
+        "name": "img.png",
+        "size": 116354,
+        "mimeType": "image/png",
+    }
+    transporte = _TransporteRunQuery(
+        {
+            "shotActivity": _respuesta_runquery(
+                [
+                    _doc(
+                        _ruta_actividad("comentario"),
+                        {
+                            "type": "comment",
+                            "content": "Teste de imagen",
+                            "userName": "Emanuel Barriga",
+                            "userRole": "administrator",
+                            "createdAt": t,
+                            "shotId": "shot_abc",
+                            "metadata": {"attachments": [adjunto]},
+                        },
+                    )
+                ]
+            )
+        }
+    )
+    _parchar_abrir(monkeypatch, transporte)
+
+    res = vfxflow_datos.listar_actividad(
+        "lxYgN96Zk8zyhsFEABOf", "shot_abc", "TOKEN_ID", config=_CONFIG
+    )
+    assert len(res) == 1
+    adj = res[0].get("attachments")
+    assert adj == [adjunto]
+    assert adj[0]["type"] == "image"
+    assert adj[0]["url"].startswith("https://storage/o/")

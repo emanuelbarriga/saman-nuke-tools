@@ -307,6 +307,12 @@ def listar_actividad(project_id, shot_id, id_token, config=None):
         item = {clave: campos.get(clave) for clave in _CAMPOS_ACTIVIDAD}
         # id del documento (para agrupar replies bajo su comentario padre).
         item["id"] = resultado.get("id")
+        # En producción los attachments de un comment NO viven a nivel top-level:
+        # van dentro de `metadata.attachments` (array de maps). Si el top-level
+        # no trae attachments (None), se normaliza desde metadata para que el
+        # render del feed encuentre el adjunto imagen y su botón "Importar".
+        if not item.get("attachments"):
+            item["attachments"] = (campos.get("metadata") or {}).get("attachments")
         if not item.get("userRole") and item.get("role"):
             item["userRole"] = item["role"]
         actividad.append(item)
@@ -353,11 +359,15 @@ def obtener_colores_estados(project_id, id_token, config=None):
 
 
 def obtener_estados(project_id, id_token, config=None):
-    """Lista de {id, name, color} de los projectStates del proyecto.
+    """Lista de estados del proyecto, ordenada por `order` asc.
 
-    Como `obtener_colores_estados` pero expone además el `name` (para poblar
-    el combo de estado del panel). Devuelve [] ante fallo/ausencia (el combo
-    queda deshabilitado), nunca rompe la UI.
+    Proyecta de `projects/{project_id}/projectStates`: {id, name, color,
+    order, defaultPercentage, stateType, description} y `tasks` si viene
+    (decodificado por `_aplanar_firestore_fields`; si no, queda sin proyectar
+    y no rompe). El selector usa `order` como fuente de verdad (igual que el
+    EnhancedShotStateSelector de la app web): los docs sin `order` van al
+    final, estables. Devuelve [] ante fallo/ausencia (el selector queda
+    deshabilitado), nunca rompe la UI.
     """
     try:
         cfg = config or vfxflow_config.obtener_config_efectiva()
@@ -367,7 +377,7 @@ def obtener_estados(project_id, id_token, config=None):
             project_id,
             id_token,
             config=cfg,
-            limite=100,
+            limite=500,
         )
     except Exception:
         return []
@@ -378,8 +388,18 @@ def obtener_estados(project_id, id_token, config=None):
             continue
         campos = resultado.get("campos") or {}
         item = {"id": doc_id}
-        for clave in ("name", "color"):
+        for clave in ("name", "color", "stateType", "description"):
             if campos.get(clave):
                 item[clave] = str(campos[clave])
+        if campos.get("defaultPercentage") is not None:
+            item["defaultPercentage"] = campos["defaultPercentage"]
+        if campos.get("order") is not None:
+            item["order"] = campos["order"]
+        if campos.get("tasks"):
+            item["tasks"] = campos["tasks"]
         estados.append(item)
+    # `order` como fuente de verdad; sin order al final (estables).
+    estados.sort(
+        key=lambda e: (e.get("order") is None, e.get("order") if e.get("order") is not None else 0)
+    )
     return estados

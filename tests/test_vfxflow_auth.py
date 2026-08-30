@@ -575,6 +575,34 @@ def test_guardar_y_cargar_sesion_redondea(tmp_path, monkeypatch):
         assert (ruta.stat().st_mode & 0o777) == 0o600
 
 
+def test_guardar_sesion_persiste_identidad(tmp_path, monkeypatch):
+    ruta = tmp_path / "sesion.json"
+    monkeypatch.setattr(sesion_vfxflow, "_RUTA", str(ruta))
+
+    ok = sesion_vfxflow.guardar_sesion(
+        {
+            "refresh_token": "RT",
+            "local_id": "u1",
+            "email": "a@b.co",
+            "userName": "Emanuel Barriga",
+            "userPhotoURL": "https://x/a.png",
+            "role": "administrator",
+            "id_token": "no_persistir",
+        }
+    )
+    assert ok is True
+    cargada = sesion_vfxflow.cargar_sesion()
+    # v1.7.x: el perfil denormalizado viaja (sin id_token).
+    assert cargada == {
+        "refresh_token": "RT",
+        "local_id": "u1",
+        "email": "a@b.co",
+        "userName": "Emanuel Barriga",
+        "userPhotoURL": "https://x/a.png",
+        "role": "administrator",
+    }
+
+
 def test_borrar_sesion(tmp_path, monkeypatch):
     ruta = tmp_path / "sesion.json"
     monkeypatch.setattr(sesion_vfxflow, "_RUTA", str(ruta))

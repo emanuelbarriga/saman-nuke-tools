@@ -394,49 +394,52 @@ class _LineEditFake:
         self.tooltip = tooltip
 
 
-class _ComboFake:
-    """QComboBox mínimo: registra items/data y el índice seleccionado."""
+class _BotonSelectorFake:
+    """QToolButton del selector de estado: registra texto/habilitación/tooltip."""
 
     def __init__(self):
-        self.items = []
-        self.indice = 0
+        self.texto = ""
         self.habilitado = False
         self.tooltip = ""
-        self.bloqueado = False
+        self.menu = None
 
-    def blockSignals(self, b):
-        self.bloqueado = b
-        return b
+    def setText(self, texto):
+        self.texto = texto
 
-    def clear(self):
-        self.items = []
-        self.indice = 0
+    def setEnabled(self, habilitado):
+        self.habilitado = habilitado
 
-    def addItem(self, texto, data=None):
-        self.items.append((texto, data))
+    def setToolTip(self, tooltip):
+        self.tooltip = tooltip
 
-    def count(self):
-        return len(self.items)
+    def setTextFormat(self, formato):
+        pass
 
-    def itemData(self, indice):
-        if 0 <= indice < len(self.items):
-            return self.items[indice][1]
-        return None
+    def setPopupMode(self, modo):
+        pass
 
-    def setCurrentIndex(self, indice):
-        self.indice = indice
+    def setMenu(self, menu):
+        self.menu = menu
 
-    def currentIndex(self):
-        return self.indice
 
-    def setEnabled(self, b):
-        self.habilitado = b
+def _panel_con_selector():
+    """Panel __new__ con los 3 botones del selector + plano/sesión mínimos."""
+    from SamanTools import panel_comentarios
 
-    def isEnabled(self):
-        return self.habilitado
-
-    def setToolTip(self, t):
-        self.tooltip = t
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "id_token": "ID"}
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR",
+        "capitulo": 107,
+        "plano": "008_00100",
+    }
+    panel._boton_estado_anterior = _BotonSelectorFake()
+    panel._boton_estado_actual = _BotonSelectorFake()
+    panel._boton_estado_siguiente = _BotonSelectorFake()
+    panel._escritura_trabajo_en_curso = False
+    return panel
 
 
 def test_escapar_y_linkificar_escapa_html_y_enlaza_urls():
@@ -2128,66 +2131,103 @@ def test_actualizar_habilitacion_escritura():
 # ---------------------------------------------------------------------------
 
 
-def test_poblar_combo_estado_selecciona_actual():
+def test_indices_estado_anterior_siguiente():
     from SamanTools import panel_comentarios
 
-    panel = panel_comentarios.PanelComentarios.__new__(
-        panel_comentarios.PanelComentarios
-    )
-    panel.sesion = {"email": "a@b.com", "id_token": "ID"}
-    panel._combo_estado = _ComboFake()
+    ids = ["e1", "e2", "e3"]
+    assert panel_comentarios._indices_estado_anterior_siguiente(ids, "e1") == (None, "e2")
+    assert panel_comentarios._indices_estado_anterior_siguiente(ids, "e2") == ("e1", "e3")
+    assert panel_comentarios._indices_estado_anterior_siguiente(ids, "e3") == ("e2", None)
+    # Único estado: ambas flechas None.
+    assert panel_comentarios._indices_estado_anterior_siguiente(["e1"], "e1") == (None, None)
+    # Actual fuera de la lista (o sin actual): no navegar.
+    assert panel_comentarios._indices_estado_anterior_siguiente(ids, "zzz") == (None, None)
+    assert panel_comentarios._indices_estado_anterior_siguiente(ids, "") == (None, None)
+
+
+def test_acciones_estado_marca_actual():
+    from SamanTools import panel_comentarios
+
     estados = [{"id": "e1", "name": "APROBADO"}, {"id": "e2", "name": "ENTREGA"}]
+    combo = {str(e["id"]): e for e in estados}
+    acciones = panel_comentarios._acciones_estado(["e1", "e2"], combo, "e2")
+    assert acciones == [("e1", "APROBADO", False), ("e2", "✓ ENTREGA", True)]
 
-    panel._poblar_combo_estado(estados, "e2")
 
-    assert panel._combo_estado.items[0] == ("Estado", None)
-    assert panel._combo_estado.items[1] == ("APROBADO", "e1")
-    assert panel._combo_estado.items[2] == ("ENTREGA", "e2")
-    assert panel._combo_estado.indice == 2
-    assert panel._combo_estado.habilitado is True
+def test_poblar_estado_selector_selecciona_actual():
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_selector()
+    estados = [
+        {"id": "e1", "name": "Recibido", "color": "#3B82F6", "order": 1},
+        {"id": "e2", "name": "Aprobado", "color": "#22C55E", "order": 2},
+    ]
+
+    panel._poblar_estado_selector(estados, "e2")
+
+    assert panel._estados_ordenados == ["e1", "e2"]
     assert panel._estado_actual_id == "e2"
-    assert panel._estados_combo == {"e1": {"id": "e1", "name": "APROBADO"},
-                                    "e2": {"id": "e2", "name": "ENTREGA"}}
+    assert panel._estados_combo["e1"]["order"] == 1
+    chip = panel._boton_estado_actual
+    assert "#22C55E" in chip.texto and "Aprobado" in chip.texto
+    # Actual en el último índice: siguiente deshabilitado, anterior habilitado.
+    assert panel._boton_estado_siguiente.habilitado is False
+    assert panel._boton_estado_anterior.habilitado is True
+    assert panel._boton_estado_actual.habilitado is True
 
 
-def test_poblar_combo_estado_vacio_deshabilitado():
+def test_poblar_estado_selector_vacio_deshabilitado():
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_selector()
+    panel._poblar_estado_selector([], "")
+    assert panel._estados_ordenados == []
+    assert panel._boton_estado_actual.texto == "Estado"
+    assert panel._boton_estado_actual.habilitado is False
+    assert "Sin estados" in panel._boton_estado_actual.tooltip
+    assert panel._boton_estado_anterior.habilitado is False
+    assert panel._boton_estado_siguiente.habilitado is False
+
+
+def test_poblar_estado_selector_sin_widgets_no_rompe():
     from SamanTools import panel_comentarios
 
     panel = panel_comentarios.PanelComentarios.__new__(
         panel_comentarios.PanelComentarios
     )
     panel.sesion = {"email": "a@b.com"}
-    panel._combo_estado = _ComboFake()
-
-    panel._poblar_combo_estado([], "")
-
-    assert panel._combo_estado.habilitado is False
-    assert "Sin estados" in panel._combo_estado.tooltip
-    assert len(panel._combo_estado.items) == 1
+    panel._poblar_estado_selector([{"id": "e", "name": "E"}], "e")
+    assert panel._estados_combo == {"e": {"id": "e", "name": "E"}}
+    assert panel._estados_ordenados == ["e"]
 
 
-def test_poblar_combo_estado_sin_combo_no_rompe():
+def test_selector_deshabilitado_durante_escritura():
     from SamanTools import panel_comentarios
 
-    panel = panel_comentarios.PanelComentarios.__new__(
-        panel_comentarios.PanelComentarios
+    panel = _panel_con_selector()
+    panel._poblar_estado_selector(
+        [{"id": "e1", "name": "A"}, {"id": "e2", "name": "B"}], "e1"
     )
-    panel._poblar_combo_estado([{"id": "e", "name": "E"}], "e")
-    assert panel._estados_combo == {"e": {"id": "e", "name": "E"}}
+    assert panel._boton_estado_siguiente.habilitado is True
+    panel._escritura_trabajo_en_curso = True
+    panel._aplicar_estado_selector_enabled()
+    assert panel._boton_estado_actual.habilitado is False
+    assert panel._boton_estado_siguiente.habilitado is False
+    assert panel._boton_estado_anterior.habilitado is False
 
 
-def test_on_cambio_estado_ignora_placeholder_y_same():
+def test_cambiar_a_estado_same_no_rompe_y_activa_cambio():
     from SamanTools import panel_comentarios
 
     panel = panel_comentarios.PanelComentarios.__new__(
         panel_comentarios.PanelComentarios
     )
     panel.sesion = {"email": "a@b.com", "local_id": "uid", "id_token": "IT"}
-    panel._combo_estado = _ComboFake()
     panel._estados_combo = {
         "e1": {"id": "e1", "name": "APROBADO"},
         "e2": {"id": "e2", "name": "ENTREGA"},
     }
+    panel._estados_ordenados = ["e1", "e2"]
     panel._estado_actual_id = "e1"
     panel._plano_resuelto = {
         "project_id": "pid",
@@ -2204,20 +2244,43 @@ def test_on_cambio_estado_ignora_placeholder_y_same():
     panel._escritura_trabajo_en_curso = False
     lanzados = []
     panel._lanzar_escritura = lambda *a, **k: lanzados.append(a)
-    panel._combo_estado.items = [("Estado", None), ("APROBADO", "e1"), ("ENTREGA", "e2")]
 
-    panel._on_cambio_estado(0)  # placeholder
+    panel._cambiar_a_estado("e1")  # ya es el actual: no hace nada
     assert lanzados == []
 
-    panel._on_cambio_estado(1)  # ya está en ese estado
+    panel._cambiar_a_estado("noexiste")  # id desconocido: no hace nada
     assert lanzados == []
 
-    panel._on_cambio_estado(2)  # otro estado -> lanza el worker
+    panel._cambiar_a_estado("e2")  # otro estado -> lanza el worker
     assert lanzados and lanzados[0][0] == panel._trabajo_cambio_estado
     campos = lanzados[0][1][3]
     assert campos["newState"] == "e2"
     assert campos["newStateName"] == "ENTREGA"
     assert campos["previousStateName"] == "APROBADO"
+
+
+def test_flechas_llaman_con_ids_correctos():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._estados_ordenados = ["e1", "e2", "e3"]
+    panel._estado_actual_id = "e2"
+    llamado = []
+    panel._cambiar_a_estado = lambda nuevo_id: llamado.append(nuevo_id)
+
+    panel._on_estado_anterior()
+    panel._on_estado_siguiente()
+    assert llamado == ["e1", "e3"]
+
+    # Sin anterior (primer estado) / sin siguiente (último): nada.
+    panel._estado_actual_id = "e1"
+    llamado.clear()
+    panel._on_estado_anterior()
+    assert llamado == []
+    panel._on_estado_siguiente()
+    assert llamado == ["e2"]
 
 
 def test_trabajo_cambio_estado_patch_shot(monkeypatch):
@@ -2408,3 +2471,430 @@ def test_poll_escritura_pendiente_reprograma(monkeypatch):
 
     assert disparos == [(panel_comentarios._COMENTARIOS_POLL_MS, panel._poll_escritura)]
     assert panel._escritura_trabajo_en_curso is True
+
+
+# ---------------------------------------------------------------------------
+# Import de adjunto marcado con el comentario (Read + Text2)
+# ---------------------------------------------------------------------------
+
+
+class _KnobFakeV2:
+    """Knob mínimo que recuerda el valor seteado."""
+
+    def __init__(self):
+        self.valor = None
+
+    def setValue(self, valor):
+        self.valor = valor
+
+
+class _NodoFakeV2:
+    """Nodo fake: registra knobs por nombre y los inputs que se conectan."""
+
+    def __init__(self, cls):
+        self.cls = cls
+        self.knobs = {
+            "file": _KnobFakeV2(),
+            "label": _KnobFakeV2(),
+            "message": _KnobFakeV2(),
+        }
+        self.inputs_llamadas = []
+
+    def __getitem__(self, clave):
+        if clave not in self.knobs:
+            self.knobs[clave] = _KnobFakeV2()
+        return self.knobs[clave]
+
+    def setInput(self, *args):
+        self.inputs_llamadas.append(args)
+
+
+def test_label_read_adjunto():
+    from SamanTools import panel_comentarios
+
+    # autor + contenido.
+    assert (
+        panel_comentarios._label_read_adjunto(
+            {"autor": "Ana", "contenido": "Mirá este paso"}
+        )
+        == "comentario de Ana: Mirá este paso"
+    )
+    # contenido largo se recorta a ~60 caracteres.
+    largo = "Un comentario muy largo " * 6
+    res = panel_comentarios._label_read_adjunto(
+        {"autor": "Ana", "contenido": largo}
+    )
+    assert len(res) <= 60
+    assert res.endswith("...")
+    # sin autor.
+    assert (
+        panel_comentarios._label_read_adjunto({"contenido": "hola"})
+        == "comentario: hola"
+    )
+    # sin contexto/None.
+    assert panel_comentarios._label_read_adjunto({}) == "comentario"
+    assert panel_comentarios._label_read_adjunto(None) == "comentario"
+
+
+def test_poll_adjunto_crea_read_y_text2_con_contexto(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    monkeypatch.setitem(
+        nuke._estado,
+        "root_name",
+        "/vol/HTLR/COMP/EP_102/Carp/Carp_V01.nk",
+    )
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._etiqueta_estado = _LabelFake()
+    panel._adjunto_trabajo_en_curso = True
+    panel._adjunto_trabajo = {
+        "estado": "ok",
+        "nombre": "cap.jpg",
+        "directorio": "/vol/ref/adjuntos",
+        "contexto": {
+            "autor": "Ana",
+            "contenido": "Mirá este paso",
+            "comentario_id": "c1",
+        },
+    }
+    creados = []
+
+    def _crear(tipo):
+        nodo = _NodoFakeV2(tipo)
+        creados.append(nodo)
+        return nodo
+
+    monkeypatch.setattr(panel_comentarios.nuke, "createNode", _crear)
+    disparos = []
+    monkeypatch.setattr(
+        panel_comentarios.QtCore.QTimer,
+        "singleShot",
+        lambda ms, cb: disparos.append((ms, cb)),
+    )
+
+    panel._poll_adjunto()
+
+    assert panel._adjunto_trabajo_en_curso is False
+    assert [c.cls for c in creados] == ["Read", "Text2"]
+    read, text2 = creados
+    # Read con la convención del estudio + label con el comentario.
+    assert read["file"].valor == (
+        "[python {PYTHON_COMP}]/EP_102/Carp/ref/adjuntos/cap.jpg"
+    )
+    assert read["label"].valor == "comentario de Ana: Mirá este paso"
+    # Text2 suelto con el contenido del comentario.
+    assert text2["message"].valor == "Mirá este paso"
+    assert text2["label"].valor == "comentario de Ana"
+    assert text2.inputs_llamadas == []  # NO conectado al Read
+    assert disparos == []
+
+
+def test_poll_adjunto_sin_texto_usa_marca(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._etiqueta_estado = _LabelFake()
+    panel._adjunto_trabajo_en_curso = True
+    panel._adjunto_trabajo = {
+        "estado": "ok",
+        "nombre": "cap.jpg",
+        "directorio": "/v/ref",
+        "contexto": {"autor": "", "contenido": "", "comentario_id": "c1"},
+    }
+    creados = []
+    monkeypatch.setattr(
+        panel_comentarios.nuke,
+        "createNode",
+        lambda tipo: creados.append(_NodoFakeV2(tipo)) or creados[-1],
+    )
+
+    panel._poll_adjunto()
+
+    text2 = creados[1]
+    assert text2["message"].valor == "«sin texto»"
+    assert text2["label"].valor == "comentario"
+    assert panel._etiqueta_estado.texto == (
+        "Adjunto importado como Read (con comentario)."
+    )
+
+
+def test_poll_adjunto_sin_contexto_no_rompe(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._etiqueta_estado = _LabelFake()
+    panel._adjunto_trabajo_en_curso = True
+    panel._adjunto_trabajo = {"estado": "ok", "nombre": "cap.jpg",
+                              "directorio": "/v/ref"}
+    creados = []
+    monkeypatch.setattr(
+        panel_comentarios.nuke,
+        "createNode",
+        lambda tipo: creados.append(_NodoFakeV2(tipo)) or creados[-1],
+    )
+
+    panel._poll_adjunto()
+
+    assert [c.cls for c in creados] == ["Read", "Text2"]
+    assert creados[0]["label"].valor == "comentario"
+
+
+# ---------------------------------------------------------------------------
+# Fix identidad de la escritura (v1.7.x): user_id del refresh + perfil
+# ---------------------------------------------------------------------------
+
+
+def test_registrar_sesion_refresh_toma_user_id_como_local_id(monkeypatch):
+    from SamanTools import panel_comentarios, sesion_vfxflow
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    guardadas = []
+    monkeypatch.setattr(
+        sesion_vfxflow, "guardar_sesion", lambda s: guardadas.append(s) or True
+    )
+
+    # El refresh devuelve `user_id`, NO `local_id` (bug reportado).
+    panel._registrar_sesion(
+        {"id_token": "ID", "refresh_token": "RT2", "expires_in": 3600,
+         "user_id": "uid1"}
+    )
+    assert panel.sesion["local_id"] == "uid1"
+    assert guardadas and guardadas[0]["local_id"] == "uid1"
+
+
+def test_registrar_sesion_conserva_y_acepta_identidad(monkeypatch):
+    from SamanTools import panel_comentarios, sesion_vfxflow
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    monkeypatch.setattr(sesion_vfxflow, "guardar_sesion", lambda s: True)
+    panel.sesion = {
+        "id_token": "ID0", "refresh_token": "RT0", "local_id": "uid0",
+        "email": "a@b.co", "expira_en": 10,
+        "userName": "Viejo", "userPhotoURL": "foto0", "role": "admin",
+    }
+
+    # Respuesta de refresh sin identidad: conserva la previa + user_id.
+    panel._registrar_sesion(
+        {"id_token": "ID1", "refresh_token": "RT1", "expires_in": 3600,
+         "user_id": "uid1"}
+    )
+    assert panel.sesion["local_id"] == "uid1"
+    assert panel.sesion["userName"] == "Viejo"
+    assert panel.sesion["role"] == "admin"
+    assert panel.sesion["userPhotoURL"] == "foto0"
+
+    # Respuesta con identidad nueva: prevalece.
+    panel._registrar_sesion(
+        {"id_token": "ID2", "refresh_token": "RT2", "expires_in": 3600,
+         "user_id": "uid2", "userName": "Nuevo", "userPhotoURL": "foto2",
+         "role": "artist"}
+    )
+    assert panel.sesion["userName"] == "Nuevo"
+    assert panel.sesion["role"] == "artist"
+    assert panel.sesion["userPhotoURL"] == "foto2"
+
+
+def test_fusionar_identidad_en_sesion(monkeypatch):
+    from SamanTools import panel_comentarios, sesion_vfxflow
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"local_id": "u1", "id_token": "ID",
+                    "email": "a@b.co", "userName": ""}
+    guardadas = []
+    monkeypatch.setattr(
+        sesion_vfxflow, "guardar_sesion", lambda s: guardadas.append(s) or True
+    )
+
+    panel._fusionar_identidad_en_sesion(
+        {"role": "administrator", "name": "Emanuel Barriga",
+         "avatarUrl": "https://x/a.png"}
+    )
+    assert panel.sesion["userName"] == "Emanuel Barriga"
+    assert panel.sesion["role"] == "administrator"
+    assert panel.sesion["userPhotoURL"] == "https://x/a.png"
+    assert guardadas and guardadas[-1]["userName"] == "Emanuel Barriga"
+
+    # Un doc sin name no pisa el userName ya fusionado.
+    panel._fusionar_identidad_en_sesion({"role": "artist"})
+    assert panel.sesion["userName"] == "Emanuel Barriga"
+    assert panel.sesion["role"] == "artist"
+    assert panel.sesion["userPhotoURL"] == "https://x/a.png"
+
+
+def test_base_campos_actividad_incluye_identidad_real():
+    from SamanTools import panel_comentarios
+
+    sesion = {
+        "local_id": "u1",
+        "email": "e.b@samanestudio.com",
+        "userName": "Emanuel Barriga",
+        "role": "administrator",
+        "userPhotoURL": "https://x/a.png",
+    }
+    campos = panel_comentarios._base_campos_actividad(
+        "pid", "sid", sesion, "comment", "x"
+    )
+    assert campos["userId"] == "u1"
+    assert campos["userName"] == "Emanuel Barriga"
+    assert campos["userRole"] == "administrator"
+    assert campos["role"] == "administrator"
+    assert campos["userPhotoURL"] == "https://x/a.png"
+
+    # Sin sesión: defaults actuales ("" / "artista" / "").
+    vacios = panel_comentarios._base_campos_actividad(
+        "pid", "sid", {}, "comment", "x"
+    )
+    assert vacios["userId"] == ""
+    assert vacios["userName"] == "artista"
+    assert vacios["userRole"] == "artist"
+    assert vacios["userPhotoURL"] == ""
+
+
+def test_autologin_rellena_identidad_sesion_vieja(monkeypatch):
+    from SamanTools import panel_comentarios, sesion_vfxflow, vfxflow_config
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append(texto)
+    panel._registrar_sesion = lambda respuesta, email=None: setattr(
+        panel, "sesion",
+        {"id_token": "ID", "refresh_token": "RT2", "local_id": "uid1",
+         "email": email or "a@b.com", "expira_en": 100},
+    )
+    monkeypatch.setattr(vfxflow_config, "config_disco_disponible", lambda: True)
+    monkeypatch.setattr(
+        sesion_vfxflow, "cargar_sesion",
+        lambda: {"refresh_token": "RT", "email": "a@b.com"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth, "refrescar_id_token",
+        lambda rt: {"id_token": "ID", "refresh_token": "RT2",
+                    "expires_in": 3600, "user_id": "uid1"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth, "obtener_usuario",
+        lambda uid, tok: {"role": "administrator", "name": "Emanuel Barriga",
+                          "avatarUrl": "https://x/a.png"},
+    )
+    guardadas = []
+    monkeypatch.setattr(
+        sesion_vfxflow, "guardar_sesion", lambda s: guardadas.append(s) or True
+    )
+
+    panel._autologin_si_hay_sesion()
+
+    assert panel.sesion["userName"] == "Emanuel Barriga"
+    assert panel.sesion["role"] == "administrator"
+    assert panel.sesion["userPhotoURL"] == "https://x/a.png"
+    assert any("Reconectado" in e for e in estados)
+
+
+def test_autologin_no_consulta_usuario_si_ya_tiene_identidad(monkeypatch):
+    from SamanTools import panel_comentarios, sesion_vfxflow, vfxflow_config
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append(texto)
+    panel.sesion = None
+    monkeypatch.setattr(vfxflow_config, "config_disco_disponible", lambda: True)
+    monkeypatch.setattr(
+        sesion_vfxflow, "cargar_sesion",
+        lambda: {"refresh_token": "RT", "email": "a@b.com",
+                 "userName": "Emanuel Barriga", "role": "admin",
+                 "userPhotoURL": "f"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth, "refrescar_id_token",
+        lambda rt: {"id_token": "ID", "refresh_token": "RT2",
+                    "expires_in": 3600},
+    )
+    consultado = []
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth, "obtener_usuario",
+        lambda uid, tok: consultado.append(1) or {},
+    )
+    monkeypatch.setattr(sesion_vfxflow, "guardar_sesion", lambda s: True)
+
+    panel._autologin_si_hay_sesion()
+
+    assert consultado == []  # identidad ya presente: no consultar users/{uid}
+    assert panel.sesion["userName"] == "Emanuel Barriga"
+    assert any("Reconectado" in e for e in estados)
+
+
+# ---------------------------------------------------------------------------
+# v1.7.2 — clic en miniatura importa; doble clic abre zoom
+# ---------------------------------------------------------------------------
+
+
+def test_clic_importar_adjunto_importa_con_contexto():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._adjunto_trabajo_en_curso = False
+    llamadas = []
+    panel._importar_adjunto = (
+        lambda url, nombre, contexto=None: llamadas.append((url, nombre, contexto))
+    )
+    adj = {"url": "https://x/o/a.jpg?alt=media", "name": "a.jpg"}
+    contexto = {"autor": "Ana", "contenido": "mirá", "comentario_id": "c1"}
+    objetivo = _BotonSelectorFake()
+
+    ok = panel._clic_importar_adjunto(adj, contexto, objetivo=objetivo)
+
+    assert ok is True
+    # El clic dispara la MISMA cadena que el botón ⬇ (Read + Text2 con autor).
+    assert llamadas == [("https://x/o/a.jpg?alt=media", "a.jpg", contexto)]
+    assert objetivo.habilitado is False
+    assert objetivo.texto == "⏳…"
+    assert objetivo.tooltip == "Importando…"
+
+
+def test_clic_importar_adjunto_ignora_en_vuelo():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._adjunto_trabajo_en_curso = True
+    llamadas = []
+    panel._importar_adjunto = (
+        lambda url, nombre, contexto=None: llamadas.append((url, nombre))
+    )
+
+    ok = panel._clic_importar_adjunto({"url": "u", "name": "n"}, {})
+
+    assert ok is False
+    assert llamadas == []  # no disparar dos importaciones a la vez
+
+
+def test_doble_clic_zoom_adjunto():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    llamado = []
+    panel._abrir_zoom_imagen = lambda ruta, parent=None: llamado.append(ruta)
+
+    panel._doble_clic_zoom_adjunto("/tmp/x.jpg")
+
+    assert llamado == ["/tmp/x.jpg"]
