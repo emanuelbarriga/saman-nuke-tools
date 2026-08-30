@@ -1492,16 +1492,11 @@ class PanelComentarios(QtWidgets.QWidget):
     def _construir_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
 
-        titulo = QtWidgets.QLabel("Comentarios por Plano — v1 (login)", self)
-        titulo.setAlignment(QtAlignment.AlignCenter)
-        titulo.setStyleSheet("font-weight: bold;")
-        layout.addWidget(titulo)
-
         seccion_plano = QtWidgets.QGroupBox("Plano activo", self)
-        grilla = QtWidgets.QGridLayout(seccion_plano)
-        self._label_proyecto = self._fila_contexto(grilla, 0, "Proyecto")
-        self._label_capitulo = self._fila_contexto(grilla, 1, "Capítulo")
-        self._label_plano = self._fila_contexto(grilla, 2, "Plano")
+        lay_plano = QtWidgets.QHBoxLayout(seccion_plano)
+        self._label_plano = QtWidgets.QLabel("—", self)
+        self._label_plano.setStyleSheet("font-weight: bold;")
+        lay_plano.addWidget(self._label_plano)
         layout.addWidget(seccion_plano)
 
         seccion_login = QtWidgets.QGroupBox("Login VFXFlow", self)
@@ -1687,7 +1682,7 @@ class PanelComentarios(QtWidgets.QWidget):
         # El feed necesita espacio: mínimo cómodo + factor de stretch para que
         # crezca con la altura disponible del panel (antes quedaba clavado en
         # 160 px y era incómodo explorar la actividad).
-        self._scroll_actividad.setMinimumHeight(400)
+        self._scroll_actividad.setMinimumHeight(350)
         # Hover-scroll: la rueda funcione con solo pasar el mouse sobre el feed
         # (sin tener que hacer clic primero). El QScrollArea instala un filter
         # que captura los Wheel de él y de TODOS sus descendientes (cards,
@@ -1717,12 +1712,6 @@ class PanelComentarios(QtWidgets.QWidget):
 
         # Tema oscuro acorde a Nuke, SOLO en este widget (nunca global).
         self.setStyleSheet(_ESTILO_PANEL)
-
-    def _fila_contexto(self, grilla, fila, nombre):
-        grilla.addWidget(QtWidgets.QLabel(nombre), fila, 0)
-        valor = QtWidgets.QLabel("—")
-        grilla.addWidget(valor, fila, 1)
-        return valor
 
     # ---------------------------------------------------- contexto del plano
 
@@ -1758,14 +1747,14 @@ class PanelComentarios(QtWidgets.QWidget):
             capitulo = datos.get("capitulo") if datos else None
             plano = datos.get("plano") if datos else None
 
-            self._label_proyecto.setText(proyecto or "—")
-            self._label_capitulo.setText(
-                str(capitulo) if capitulo is not None else "—"
-            )
             self._label_plano.setText(plano or "—")
+            if proyecto or capitulo is not None:
+                partes = [
+                    p for p in (proyecto, str(capitulo) if capitulo is not None else None)
+                    if p
+                ]
+                self._label_plano.setText(" · ".join(partes) + ((" · " + plano) if plano else ""))
         except Exception:
-            self._label_proyecto.setText("—")
-            self._label_capitulo.setText("—")
             self._label_plano.setText("—")
         self._header_plano.setText(self._header_plano_texto())
 
