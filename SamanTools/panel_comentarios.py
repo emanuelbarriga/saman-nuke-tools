@@ -1032,12 +1032,16 @@ def _color_estado_chip(estado):
 
 
 def _icono_dot_estado(color):
-    """QIcon 16×16 del color (el "●" del selector), o None si no hay paint.
+    """QIcon 16×16 del color (el "●" del selector), o None si no hay GUI.
 
     QToolButton/QAction no renderizan rich text; el color del estado viaja
     como icono cuadrado pequeño (igual que la app web usa un círculo). Sin
-    plataforma gráfica devuelve None (el texto queda sin color, no rompe).
+    QGuiApplication devuelve None: construir un QPixmap sin app hace SIGABRT
+    en algunas builds de PySide (y en tests no hay app). Puro/a prueba de
+    crashes.
     """
+    if QtWidgets.QApplication.instance() is None:
+        return None
     try:
         pixmap = QtGui.QPixmap(16, 16)
         pixmap.fill(QtGui.QColor(str(color)))
@@ -1113,6 +1117,8 @@ def _convertir_jpg_1280x720(ruta_origen, ruta_destino, calidad=90):
     Sin Pillow: usa QImage de QtGui (funciona sin QApplication, son objetos de
     datos). Devuelve `ruta_destino` en éxito o None si no pudo leer/guardar.
     Puede correr en el hilo principal (rápido) o en un worker.
+    Nota: el flujo de subida v1.7.2 usa el export por subgrafo Nuke
+    (`_exportar_nodo_jpg`); este helper queda como alternativa sin Nuke.
     """
     try:
         imagen = QtGui.QImage(ruta_origen)
@@ -1128,6 +1134,109 @@ def _convertir_jpg_1280x720(ruta_origen, ruta_destino, calidad=90):
         return ruta_destino
     except Exception:
         return None
+
+
+def _timestamp_export():
+    """Timestamp YYYYMMDDHHMM (local) para el nombre del jpg exportado. Puro."""
+    return datetime.now().strftime("%Y%m%d%H%M")
+
+
+def _nombre_export_jpg(datos_plano, timestamp):
+    """Nombre del jpg de export: <canonico_sin_ext>_<ts>.jpg. Puro.
+
+    El canónico sale de `nombres.parsear_plato(...)["canonico"]` sin
+    extensión; sin canónico (o con separadores en el nombre) usa el fallback
+    "plano_<timestamp>.jpg".
+    """
+    canonico = (datos_plano or {}).get("canonico") or ""
+    base = os.path.splitext(str(canonico))[0].replace("/", "_").strip()
+    if base:
+        return "{0}_{1}.jpg".format(base, timestamp)
+    return "plano_{0}.jpg".format(timestamp)
+
+
+def _ejecutar_render_nuke(write):
+    """Ejecuta un Write de frame único (render o execute según la versión)."""
+    try:
+        nuke.render(write, 1, 1)
+    except AttributeError:
+        nuke.execute(write, 1, 1)
+
+
+def _exportar_nodo_jpg(nodo, ruta_destino):
+    """Exporta `nodo` a jpg 1280×720 con un subgrafo temporal de Nuke.
+
+    SOLO en hilo principal (Nuke scripting no es thread-safe): crea
+    Dot -> Reformat(1280×720) -> Crop -> OCIODisplay -> Write, ejecuta el
+    frame 1 y borra SIEMPRE los nodos temporales en finally (orden inverso,
+    cada uno con try/except). Si OCIODisplay o sus knobs no existen en la
+    versión, pasa directo (RAW) sin romper (decisión documentada). Devuelve
+    True si el render generó un archivo válido en `ruta_destino`.
+    """
+    nodos_tmp = []
+    try:
+        dot = nuke.nodes.Dot()
+        dot.setInput(0, nodo)
+        try:
+            dot["label"].setValue("IN")
+        except Exception:
+            pass
+        nodos_tmp.append(dot)
+
+        reformat = nuke.nodes.Reformat()
+        reformat.setInput(0, dot)
+        try:
+            reformat["format"].setValue("1280 720 0 0 1280 720 1 HD_720")
+        except Exception:
+            try:
+                reformat["format"].setValue("HD_720")
+            except Exception:
+                pass
+        nodos_tmp.append(reformat)
+
+        crop = nuke.nodes.Crop()
+        crop.setInput(0, reformat)
+        try:
+            crop["box"].setValue([0, 0, 1280, 720])
+        except Exception:
+            pass
+        nodos_tmp.append(crop)
+
+        ocio = None
+        try:
+            ocio = nuke.nodes.OCIODisplay()
+            ocio.setInput(0, crop)
+            ocio["colorspace"].setValue("scene_linear")
+            ocio["display"].setValue("sRGB - Display")
+            ocio["view"].setValue("ACES 2.0 - SDR 100 nits (Rec.709)")
+            nodos_tmp.append(ocio)
+        except Exception:
+            ocio = None  # sin OCIODisplay: se exporta RAW (crop directo)
+
+        write = nuke.nodes.Write()
+        write.setInput(0, ocio if ocio is not None else crop)
+        write["file"].setValue(str(ruta_destino))
+        for knob, valor in (("file_type", "jpeg"), ("raw", True),
+                            ("checkHashOnRead", False)):
+            try:
+                write[knob].setValue(valor)
+            except Exception:
+                pass
+        nodos_tmp.append(write)
+
+        if os.path.exists(ruta_destino):
+            try:
+                os.remove(ruta_destino)  # no re-render sobre un viejo colgado
+            except OSError:
+                pass
+        _ejecutar_render_nuke(write)
+        return os.path.exists(ruta_destino) and os.path.getsize(ruta_destino) > 0
+    finally:
+        for nodo_tmp in reversed(nodos_tmp):
+            try:
+                nuke.delete(nodo_tmp)
+            except Exception:
+                pass
 
 
 def _debe_mostrar_boton_importar(adjunto, imagenes):
@@ -3419,7 +3528,13 @@ class PanelComentarios(QtWidgets.QWidget):
     # ------------------------------------------------------- subir imagen (B.3)
 
     def _on_subir_imagen(self):
-        """🖼: elige imagen, la procesa a 1280×720 jpg y la sube (worker)."""
+        """🖼: exporta el nodo seleccionado a jpg 1280×720 y lo sube.
+
+        El export del subgrafo corre en el HILO PRINCIPAL (Nuke scripting no
+        es thread-safe; un frame 1280×720 tarda ~1-2 s, aceptable). El upload
+        (red) va al worker existente (`_trabajo_subir_imagen`). Se necesita
+        EXACTAMENTE un nodo seleccionado.
+        """
         plano = self._plano_activo()
         token = self._id_token_actual()
         if not plano or not token:
@@ -3429,32 +3544,60 @@ class PanelComentarios(QtWidgets.QWidget):
             return
         if getattr(self, "_escritura_trabajo_en_curso", False):
             return
-        ruta, _filtro = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Subir imagen", "",
-            "Imágenes (*.jpg *.jpeg *.png *.tif *.tiff *.exr);;Todos (*)",
-        )
-        if not ruta:
+        try:
+            nodos = nuke.selectedNodes()
+        except Exception:
+            nodos = []
+        if not nodos:
+            self._estado("Seleccioná un nodo para exportar la imagen.", error=True)
             return
-        jpg_temporal = _ruta_jpg_temporal()
-        if not _convertir_jpg_1280x720(ruta, jpg_temporal):
-            self._estado("No se pudo procesar la imagen.", error=True)
+        if len(nodos) > 1:
+            self._estado("Seleccioná UN solo nodo para exportar.", error=True)
+            return
+        dir_comp = os.path.dirname(nuke.root().name() or "")
+        if not dir_comp:
+            self._estado("Guardá el comp antes de exportar.", error=True)
+            return
+        carpeta_export = os.path.join(dir_comp, "ref", "temp")
+        try:
+            os.makedirs(carpeta_export, exist_ok=True)
+        except OSError as e:
+            self._estado("No se pudo crear ref/temp: %s" % e, error=True)
+            return
+        nombre = _nombre_export_jpg(plano, _timestamp_export())
+        ruta_destino = os.path.join(carpeta_export, nombre)
+        try:
+            exportado = _exportar_nodo_jpg(nodos[0], ruta_destino)
+        except Exception as e:
+            self._estado("No se pudo exportar la imagen: %s" % e, error=True)
+            return
+        if not exportado:
+            self._estado("El render no generó la imagen.", error=True)
             return
         try:
-            size = os.path.getsize(jpg_temporal)
+            size = os.path.getsize(ruta_destino)
         except OSError:
             size = 0
-        nombre = os.path.basename(ruta)
         self._lanzar_escritura(
             self._trabajo_subir_imagen,
-            (jpg_temporal, plano, token, nombre, size, self.sesion or {}),
+            (ruta_destino, plano, token, nombre, size, self.sesion or {}),
             "Subiendo imagen…",
         )
 
     def _trabajo_subir_imagen(
         self, jpg_temporal, plano, token, nombre_origen, size, sesion
     ):
-        """Worker: resuelve shot, sube el jpg a storage y crea file_upload."""
+        """Worker: resuelve shot, sube el jpg a storage y crea file_upload.
+
+        Al éxito borra el jpg temporal exportado (no deja gigas en ref/temp).
+        """
         try:
+            if not os.path.exists(jpg_temporal):
+                self._escritura_trabajo = {
+                    "estado": "error",
+                    "mensaje": "No se encontró el archivo temporal de la imagen.",
+                }
+                return
             resuelto = vfxflow_datos.resolver_plano(plano, token)
             if resuelto is None or resuelto.get("error"):
                 self._escritura_trabajo = {
@@ -3523,6 +3666,10 @@ class PanelComentarios(QtWidgets.QWidget):
             ]
             self._crear_documento_actividad(project_id, campos, token)
             self._escritura_trabajo = {"estado": "ok", "mensaje": "Imagen subida."}
+            try:
+                os.remove(jpg_temporal)  # export temporal: no dejar basura
+            except OSError:
+                pass
         except vfxflow_auth.VfxFlowAuthError as e:
             self._escritura_trabajo = {
                 "estado": "error",

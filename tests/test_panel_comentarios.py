@@ -2547,6 +2547,27 @@ def test_trabajo_subir_imagen_publica_ok(tmp_path, monkeypatch):
     assert "tok1" in adj["url"]["stringValue"]
     assert adj["name"] == {"stringValue": "cap.jpg"}
     assert adj["size"] == {"integerValue": "99"}
+    # El export temporal se borra al terminar el worker (ok).
+    assert not os.path.exists(jpg)
+
+
+def test_trabajo_subir_imagen_sin_temp_devuelve_error(monkeypatch, tmp_path):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._trabajo_subir_imagen(
+        str(tmp_path / "no_existe.jpg"),
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"},
+        "T",
+        "cap.jpg",
+        99,
+        {"email": "a@b.com", "local_id": "uid"},
+    )
+
+    assert panel._escritura_trabajo["estado"] == "error"
+    assert "temporal" in panel._escritura_trabajo["mensaje"]
 
 
 # ---------------------------------------------------------------------------
@@ -3150,3 +3171,248 @@ def test_escapar_y_linkificar_markdown_bold_y_urls():
     salida2 = panel_comentarios._escapar_y_linkificar("**<script>alert(1)</script>**")
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in salida2
     assert "<b>&lt;script&gt;alert(1)&lt;/script&gt;</b>" in salida2
+
+
+# ---------------------------------------------------------------------------
+# v1.7.2-bis: subida por export del nodo seleccionado (subgrafo Nuke)
+# ---------------------------------------------------------------------------
+
+
+class _KnobExportFake:
+    def __init__(self, nombre):
+        self.nombre = nombre
+        self.valor = None
+
+    def setValue(self, valor):
+        self.valor = valor
+
+    def value(self):
+        return self.valor
+
+
+class _NodoExportFake:
+    def __init__(self, cls):
+        self.cls = cls
+        self.inputs = []
+        self.knobs = {}
+
+    def setInput(self, indice, nodo):
+        self.inputs.append((indice, nodo))
+
+    def __getitem__(self, clave):
+        if clave not in self.knobs:
+            self.knobs[clave] = _KnobExportFake(clave)
+        return self.knobs[clave]
+
+
+class _NukeExportStub:
+    """Stub de `nuke` para el export: nodos, render/execute, delete, select."""
+
+    def __init__(self, render_disponible=True, ocio_disponible=True):
+        import types as _types
+
+        self.creados = []
+        self.borrados = []
+        self.renderes = []
+        self.ejecutes = []
+        self.selected_nodos = []
+        self.root_name = ""
+        self.render_disponible = render_disponible
+        self.ocio_disponible = ocio_disponible
+        self.nodes = _types.SimpleNamespace()
+        for cls in ("Dot", "Reformat", "Crop", "OCIODisplay", "Write"):
+            setattr(self.nodes, cls, self._factory(cls))
+        if render_disponible:
+            self.render = self._render
+        self.execute = self._execute
+
+    def _factory(self, cls):
+        def factory():
+            if cls == "OCIODisplay" and not self.ocio_disponible:
+                raise RuntimeError("OCIODisplay no disponible")
+            nodo = _NodoExportFake(cls)
+            self.creados.append(nodo)
+            return nodo
+
+        return factory
+
+    def selectedNodes(self):
+        return self.selected_nodos
+
+    def root(self):
+        import types as _types
+
+        r = _types.SimpleNamespace()
+        r.name = lambda: self.root_name
+        return r
+
+    def delete(self, nodo):
+        self.borrados.append(nodo)
+
+    def _render(self, *args):
+        self.renderes.append(args)
+        self._escribir_archivo(args[0])
+
+    def _execute(self, *args):
+        self.ejecutes.append(args)
+        self._escribir_archivo(args[0])
+
+    def _escribir_archivo(self, write):
+        with open(write["file"].valor, "wb") as fh:
+            fh.write(b"JPGDATA")
+
+
+def test_nombre_export_jpg():
+    from SamanTools import panel_comentarios
+
+    assert panel_comentarios._nombre_export_jpg(
+        {"canonico": "HTLR_107_008_00100_V01.nk"}, "202608291230"
+    ) == "HTLR_107_008_00100_V01_202608291230.jpg"
+    assert panel_comentarios._nombre_export_jpg({}, "202608291230") == (
+        "plano_202608291230.jpg"
+    )
+    assert panel_comentarios._nombre_export_jpg(None, "202608291230") == (
+        "plano_202608291230.jpg"
+    )
+
+
+def test_exportar_nodo_jpg_crea_subgrafo_y_limpia(tmp_path, monkeypatch):
+    from SamanTools import panel_comentarios
+
+    stub = _NukeExportStub()
+    monkeypatch.setattr(panel_comentarios, "nuke", stub)
+    ruta = str(tmp_path / "export.jpg")
+    entrada = _NodoExportFake("Entrada")
+
+    ok = panel_comentarios._exportar_nodo_jpg(entrada, ruta)
+
+    assert ok is True
+    assert os.path.exists(ruta) and os.path.getsize(ruta) > 0
+    # Subgrafo creado en orden: Dot, Reformat, Crop, OCIODisplay, Write.
+    assert [n.cls for n in stub.creados] == [
+        "Dot", "Reformat", "Crop", "OCIODisplay", "Write",
+    ]
+    dot, reformat, crop, ocio, write = stub.creados
+    # Inputs encadenados.
+    assert dot.inputs == [(0, entrada)]
+    assert reformat.inputs == [(0, dot)]
+    assert crop.inputs == [(0, reformat)]
+    assert ocio.inputs == [(0, crop)]
+    assert write.inputs == [(0, ocio)]
+    # Knobs clave.
+    assert reformat["format"].valor == "1280 720 0 0 1280 720 1 HD_720"
+    assert crop["box"].valor == [0, 0, 1280, 720]
+    assert write["file"].valor == ruta
+    assert write["file_type"].valor == "jpeg"
+    assert write["raw"].valor is True
+    assert ocio["display"].valor == "sRGB - Display"
+    # Se ejecutó el render del frame 1.
+    assert stub.renderes == [(write, 1, 1)]
+    # Limpieza SIEMPRE en orden inverso (no dejar basura en el comp).
+    assert stub.borrados == list(reversed(stub.creados))
+
+
+def test_exportar_nodo_jpg_sin_ociodisplay_pasa_a_crop(tmp_path, monkeypatch):
+    from SamanTools import panel_comentarios
+
+    stub = _NukeExportStub(ocio_disponible=False)
+    monkeypatch.setattr(panel_comentarios, "nuke", stub)
+    ruta = str(tmp_path / "export.jpg")
+    entrada = _NodoExportFake("Entrada")
+
+    ok = panel_comentarios._exportar_nodo_jpg(entrada, ruta)
+
+    assert ok is True
+    # Sin OCIODisplay: 4 nodos, el Write entra por el Crop (RAW).
+    assert [n.cls for n in stub.creados] == ["Dot", "Reformat", "Crop", "Write"]
+    dot, reformat, crop, write = stub.creados
+    assert write.inputs == [(0, crop)]
+    assert stub.borrados == list(reversed(stub.creados))
+
+
+def test_exportar_nodo_jpg_usa_execute_si_no_hay_render(tmp_path, monkeypatch):
+    from SamanTools import panel_comentarios
+
+    stub = _NukeExportStub(render_disponible=False)
+    monkeypatch.setattr(panel_comentarios, "nuke", stub)
+    ruta = str(tmp_path / "export.jpg")
+    entrada = _NodoExportFake("Entrada")
+
+    ok = panel_comentarios._exportar_nodo_jpg(entrada, ruta)
+
+    assert ok is True
+    assert stub.renderes == []
+    assert stub.ejecutes  # cayó al alias viejo nuke.execute
+    assert stub.borrados == list(reversed(stub.creados))
+
+
+def test_on_subir_imagen_sin_nodo_seleccionado(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "id_token": "IT"}
+    panel._id_token_actual = lambda: "TOKEN"
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR", "capitulo": 107, "plano": "008_00100",
+        "canonico": "HTLR_107_008_00100_V01.nk",
+    }
+    panel._escritura_trabajo_en_curso = False
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append(texto)
+    stub = _NukeExportStub()
+    stub.selected_nodos = []
+    monkeypatch.setattr(panel_comentarios, "nuke", stub)
+    lanzados = []
+    panel._lanzar_escritura = lambda *a, **k: lanzados.append(a)
+
+    panel._on_subir_imagen()
+
+    assert lanzados == []
+    assert any("Seleccioná un nodo" in e for e in estados)
+
+
+def test_on_subir_imagen_exporta_y_lanza(tmp_path, monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "local_id": "u", "id_token": "IT"}
+    panel._id_token_actual = lambda: "TOKEN"
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR", "capitulo": 107, "plano": "008_00100",
+        "canonico": "HTLR_107_008_00100_V01.nk",
+    }
+    panel._escritura_trabajo_en_curso = False
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append(texto)
+    stub = _NukeExportStub()
+    stub.selected_nodos = [_NodoExportFake("Sel")]
+    stub.root_name = str(tmp_path / "EP_102" / "Carp" / "Carp_V01.nk")
+    monkeypatch.setattr(panel_comentarios, "nuke", stub)
+    exportado = []
+
+    def _exportar(nodo, ruta):
+        exportado.append((nodo, ruta))
+        with open(ruta, "wb") as fh:
+            fh.write(b"JPG")
+        return True
+
+    monkeypatch.setattr(panel_comentarios, "_exportar_nodo_jpg", _exportar)
+    lanzados = []
+    panel._lanzar_escritura = (
+        lambda callable_, args, mensaje: lanzados.append((callable_, args, mensaje))
+    )
+
+    panel._on_subir_imagen()
+
+    assert exportado  # exportó el nodo a ref/temp
+    ruta_export = exportado[0][1]
+    assert ruta_export.endswith(".jpg")
+    assert "/ref/temp/" in ruta_export
+    assert lanzados and lanzados[0][0] == panel._trabajo_subir_imagen
+    jpg, plano, token, nombre, size, sesion = lanzados[0][1]
+    assert jpg == ruta_export
+    assert nombre.startswith("HTLR_107_008_00100_V01_")
