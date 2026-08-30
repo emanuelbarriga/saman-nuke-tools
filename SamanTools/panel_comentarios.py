@@ -302,6 +302,30 @@ QToolButton#botonEstadoAnterior:disabled,
 QToolButton#botonEstadoSiguiente:disabled {
     color: #475569;
 }
+QPushButton#botonGuardarEstado {
+    background-color: #14532d;
+    color: #f1f5f9;
+    border: 1px solid #166534;
+    border-radius: 3px;
+    padding: 2px 8px;
+}
+QPushButton#botonGuardarEstado:hover {
+    background-color: #166534;
+}
+QPushButton#botonCancelarEstado {
+    background-color: #7f1d1d;
+    color: #f1f5f9;
+    border: 1px solid #b91c1c;
+    border-radius: 3px;
+    padding: 2px 8px;
+}
+QPushButton#botonCancelarEstado:hover {
+    background-color: #b91c1c;
+}
+QPushButton:disabled {
+    background-color: #262626;
+    color: #6a6a6a;
+}
 QMenu {
     background-color: #1e293b;
     color: #f1f5f9;
@@ -803,6 +827,19 @@ def _styles_chip_color(color):
     )
 
 
+def _styles_chip_pendiente():
+    """QSS inline del chip en estado PENDIENTE (ámbar, spec de la app web).
+
+    bg-amber-900/50 + border-amber-600 + text-amber-300: #78350f / #d97706 /
+    #fcd34d. Se aplica con setStyleSheet sobre el QToolButton del selector.
+    Puro.
+    """
+    return (
+        "background-color:#78350f; border:1px solid #d97706; "
+        "border-radius:9px; padding:2px 8px; color:#fcd34d;"
+    )
+
+
 def _ids_estados(actividad):
     """(id_previo, id_nuevo) de estados o None (para colorear chips). Puro."""
     prev = actividad.get("previousState")
@@ -1002,7 +1039,7 @@ def _icono_dot_estado(color):
     plataforma gráfica devuelve None (el texto queda sin color, no rompe).
     """
     try:
-        pixmap = QtWidgets.QPixmap(16, 16)
+        pixmap = QtGui.QPixmap(16, 16)
         pixmap.fill(QtGui.QColor(str(color)))
         return QtGui.QIcon(pixmap)
     except Exception:
@@ -1327,6 +1364,9 @@ class PanelComentarios(QtWidgets.QWidget):
         self._estados_combo = {}
         self._estados_ordenados = []
         self._estado_actual_id = ""
+        # Cambio de estado OPTIMISTIC PENDING (sin red): id del estado elegido
+        # pendiente de Guardar; None = sin pendiente.
+        self._estado_pendiente_id = None
 
         self._construir_ui()
         self._arrancar_poll_plano()
@@ -1425,6 +1465,22 @@ class PanelComentarios(QtWidgets.QWidget):
         self._boton_estado_siguiente.setObjectName("botonEstadoSiguiente")
         self._boton_estado_siguiente.clicked.connect(self._on_estado_siguiente)
         lay_selector.addWidget(self._boton_estado_siguiente)
+        # Save/Undo del cambio de estado (optimistic pending): visibles solo
+        # cuando hay un estado pendiente de confirmar.
+        self._boton_guardar_estado = QtWidgets.QPushButton("💾 Guardar", self._estado_selector)
+        self._boton_guardar_estado.setObjectName("botonGuardarEstado")
+        self._boton_guardar_estado.setToolTip("Guardar el cambio de estado")
+        self._boton_guardar_estado.setEnabled(False)
+        self._boton_guardar_estado.setVisible(False)
+        self._boton_guardar_estado.clicked.connect(self._on_guardar_estado)
+        lay_selector.addWidget(self._boton_guardar_estado)
+        self._boton_cancelar_estado = QtWidgets.QPushButton("↩️", self._estado_selector)
+        self._boton_cancelar_estado.setObjectName("botonCancelarEstado")
+        self._boton_cancelar_estado.setToolTip("Cancelar el cambio de estado")
+        self._boton_cancelar_estado.setEnabled(False)
+        self._boton_cancelar_estado.setVisible(False)
+        self._boton_cancelar_estado.clicked.connect(self._on_cancelar_estado)
+        lay_selector.addWidget(self._boton_cancelar_estado)
         fila_header.addWidget(self._estado_selector)
         lay_comentarios.addLayout(fila_header)
 
@@ -2673,7 +2729,7 @@ class PanelComentarios(QtWidgets.QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
         pixmap = (
-            QtWidgets.QPixmap(ruta_local) if ruta_local else QtWidgets.QPixmap()
+            QtGui.QPixmap(ruta_local) if ruta_local else QtGui.QPixmap()
         )
         if pixmap.isNull():
             # Sin preview (codecs/cache): texto + botón en la misma fila.
@@ -2774,7 +2830,7 @@ class PanelComentarios(QtWidgets.QWidget):
     def _abrir_zoom_imagen(self, ruta_local, parent=None):
         """Modal con la imagen en tamaño completo (escalada a la pantalla)."""
         try:
-            pixmap = QtWidgets.QPixmap(ruta_local)
+            pixmap = QtGui.QPixmap(ruta_local)
             if pixmap.isNull():
                 return
             dialogo = QtWidgets.QDialog(parent or self)
@@ -3030,6 +3086,10 @@ class PanelComentarios(QtWidgets.QWidget):
             if trabajo.get("publicado"):
                 self._input_comentario.clear()
                 self._cancelar_modo_respuesta()
+            # El cambio de estado confirmado ya no está pendiente: volver al
+            # selector normal (el reload trae el estado_actual nuevo).
+            self._estado_pendiente_id = None
+            self._aplicar_estado_selector_enabled()
             self._estado(trabajo.get("mensaje") or "Hecho.")
             self._cargar_comentarios_del_plano()
             return
@@ -3131,28 +3191,44 @@ class PanelComentarios(QtWidgets.QWidget):
                 accion.setIcon(icono)
 
     def _refrescar_chip_estado(self):
-        """Pinta el chip central con "● color + nombre estado actual"."""
+        """Pinta el chip central (icono color + nombre)/ámbar si pendiente."""
         chip = getattr(self, "_boton_estado_actual", None)
         if chip is None:
             return
-        item = self._estados_combo.get(self._estado_actual_id) or {}
+        estados_combo = getattr(self, "_estados_combo", None) or {}
+        pendiente = getattr(self, "_estado_pendiente_id", None)
+        if pendiente:
+            item = estados_combo.get(str(pendiente)) or {}
+            nombre = item.get("name")
+            if nombre:
+                chip.setText(str(nombre))
+                chip.setStyleSheet(_styles_chip_pendiente())
+                chip.setToolTip(
+                    "Estado pendiente: {0} — guardá para aplicar".format(nombre)
+                )
+                return
+        # Estado real (sin pendiente).
+        item = estados_combo.get(self._estado_actual_id or "") or {}
         nombre = item.get("name")
+        chip.setStyleSheet("")
         if not nombre:
             chip.setText("Estado")
             return
         color = _color_estado_chip(item)
-        # Sin rich text (QToolButton): el color va como icono dot + texto plano.
         icono = _icono_dot_estado(color)
         if icono is not None:
             chip.setIcon(icono)
         chip.setText(str(nombre))
+        chip.setToolTip("Cambiar estado")
 
     def _aplicar_estado_selector_enabled(self):
-        """Habilita los 3 botones del selector según sesión/plano/estados.
+        """Habilita el selector y los botones Guardar/Undo según el estado.
 
-        El chip se habilita con sesión + plano + estados reales; las flechas
-        además con tener anterior/siguiente en el orden. Durante una escritura
-        en vuelo (`_escritura_trabajo_en_curso`) todo queda deshabilitado.
+        El chip y las flechas se habilitan con sesión + plano + estados; las
+        flechas además según tener anterior/siguiente. Durante una escritura en
+        vuelo (`_escritura_trabajo_en_curso`) todo queda deshabilitado. Con
+        estado pendiente: Guardar y Undo visibles+habilitados (guardan el
+        cambio de estado optimista). Sin pendiente: ambos ocultos.
         """
         try:
             plano = self._plano_activo()
@@ -3160,9 +3236,11 @@ class PanelComentarios(QtWidgets.QWidget):
             plano = None
         sesion = getattr(self, "sesion", None)
         base = bool(sesion and sesion.get("email") and plano)
-        base = base and not bool(getattr(self, "_escritura_trabajo_en_curso", False))
+        en_curso = bool(getattr(self, "_escritura_trabajo_en_curso", False))
+        base = base and not en_curso
         estados_combo = getattr(self, "_estados_combo", None) or {}
         tiene_estados = bool(estados_combo)
+        pendiente = getattr(self, "_estado_pendiente_id", None)
         anterior_id, siguiente_id = _indices_estado_anterior_siguiente(
             getattr(self, "_estados_ordenados", []) or [],
             getattr(self, "_estado_actual_id", "") or "",
@@ -3170,52 +3248,103 @@ class PanelComentarios(QtWidgets.QWidget):
         chip = getattr(self, "_boton_estado_actual", None)
         if chip is not None:
             chip.setEnabled(base and tiene_estados)
-            chip.setToolTip(
-                "Sin estados disponibles"
-                if not tiene_estados
-                else "Cambiar estado"
-            )
+            if pendiente:
+                item = estados_combo.get(str(pendiente)) or {}
+                chip.setToolTip(
+                    "Estado pendiente: {0} — guardá para aplicar".format(
+                        item.get("name") or pendiente
+                    )
+                )
+            elif not tiene_estados:
+                chip.setToolTip("Sin estados disponibles")
+            else:
+                chip.setToolTip("Cambiar estado")
         btn_ant = getattr(self, "_boton_estado_anterior", None)
         if btn_ant is not None:
             btn_ant.setEnabled(base and tiene_estados and anterior_id is not None)
         btn_sig = getattr(self, "_boton_estado_siguiente", None)
         if btn_sig is not None:
             btn_sig.setEnabled(base and tiene_estados and siguiente_id is not None)
+        btn_guardar = getattr(self, "_boton_guardar_estado", None)
+        if btn_guardar is not None:
+            btn_guardar.setVisible(bool(pendiente))
+            btn_guardar.setEnabled(base and bool(pendiente))
+        btn_cancelar = getattr(self, "_boton_cancelar_estado", None)
+        if btn_cancelar is not None:
+            btn_cancelar.setVisible(bool(pendiente))
+            btn_cancelar.setEnabled(base and bool(pendiente))
+
+    def _establecer_estado_pendiente(self, nuevo_id):
+        """Pone el cambio de estado en modo PENDIENTE (optimistic, sin red).
+
+        `nuevo_id == estado actual` cancela el pendiente (vuelve al original);
+        otro id lo setea, pinta el chip ámbar y muestra Guardar/Undo. La
+        escritura NO ocurre hasta pulsar Guardar (como la app web).
+        """
+        if not nuevo_id:
+            return
+        estados_combo = getattr(self, "_estados_combo", None) or {}
+        if str(nuevo_id) == self._estado_actual_id:
+            self._estado_pendiente_id = None
+        else:
+            if str(nuevo_id) not in estados_combo:
+                return
+            self._estado_pendiente_id = str(nuevo_id)
+        self._refrescar_chip_estado()
+        self._aplicar_estado_selector_enabled()
+
+    def _on_cancelar_estado(self):
+        """↩️ Undo: descarta el pendiente SOLO en memoria (sin red)."""
+        self._estado_pendiente_id = None
+        self._refrescar_chip_estado()
+        self._aplicar_estado_selector_enabled()
+
+    def _on_guardar_estado(self):
+        """💾 Guardar: aplica el estado pendiente (escribir con ese id)."""
+        pendiente = self._estado_pendiente_id
+        if not pendiente:
+            return
+        if getattr(self, "_escritura_trabajo_en_curso", False):
+            return
+        if self._aplicar_cambio_estado(pendiente):
+            self._aplicar_estado_selector_enabled()
 
     def _on_estado_menu(self, accion):
-        """QMenu del chip: salto directo al estado elegido (handleStateChange)."""
+        """QMenu del chip: salto directo al estado elegido (pendiente)."""
         estado_id = accion.data() if accion is not None else None
         if estado_id:
-            self._cambiar_a_estado(estado_id)
+            self._establecer_estado_pendiente(estado_id)
 
     def _on_estado_anterior(self):
-        """◀: va al estado anterior en el orden `order` (si existe)."""
+        """◀: deja pendiente el estado anterior en el orden `order`."""
         anterior_id, _ = _indices_estado_anterior_siguiente(
             self._estados_ordenados, self._estado_actual_id
         )
         if anterior_id:
-            self._cambiar_a_estado(anterior_id)
+            self._establecer_estado_pendiente(anterior_id)
 
     def _on_estado_siguiente(self):
-        """▶: va al estado siguiente en el orden `order` (si existe)."""
+        """▶: deja pendiente el estado siguiente en el orden `order`."""
         _, siguiente_id = _indices_estado_anterior_siguiente(
             self._estados_ordenados, self._estado_actual_id
         )
         if siguiente_id:
-            self._cambiar_a_estado(siguiente_id)
+            self._establecer_estado_pendiente(siguiente_id)
 
-    def _cambiar_a_estado(self, nuevo_id):
-        """Aplica el cambio de estado (actividad status_change + PATCH shot).
+    def _aplicar_cambio_estado(self, nuevo_id):
+        """Escribe el cambio de estado (actividad status_change + PATCH shot).
 
-        Recibe el ID del estado (las flechas y el menú dan ids; el flujo de
-        escritura es el mismo de siempre: worker + QTimer). Si el id es el
-        actual no hace nada. En vuelo deshabilita el selector.
+        Recibe el ID (Guardar lo llama con el pendiente). Si el id es el
+        actual no hace nada; si no puede escribir (plano/sesión no resueltos)
+        avisa y devuelve False. Devuelve True si se lanzó el worker.
         """
-        nuevo = self._estados_combo.get(str(nuevo_id)) if nuevo_id else None
+        nuevo = None
+        if nuevo_id:
+            nuevo = (getattr(self, "_estados_combo", None) or {}).get(str(nuevo_id))
         if not nuevo:
-            return
+            return False
         if str(nuevo_id) == self._estado_actual_id:
-            return  # ya está en ese estado
+            return False  # ya está en ese estado
         plano = self._plano_activo()
         token = self._id_token_actual()
         resuelto = getattr(self, "_plano_resuelto", None)
@@ -3223,7 +3352,7 @@ class PanelComentarios(QtWidgets.QWidget):
             self._estado(
                 "Actualizá la actividad primero (resolver el plano).", error=True
             )
-            return
+            return False
         shot = resuelto.get("shot") or {}
         previo_id = shot.get("stateId") or ""
         previo_nombre = shot.get("status") or ""
@@ -3239,13 +3368,13 @@ class PanelComentarios(QtWidgets.QWidget):
             nuevo.get("name") or nuevo.get("id"),
         )
         if getattr(self, "_escritura_trabajo_en_curso", False):
-            return
+            return False
         self._lanzar_escritura(
             self._trabajo_cambio_estado,
             (plano, token, resuelto, campos),
-            "Cambiando estado…",
+            "Guardando estado…",
         )
-        self._aplicar_estado_selector_enabled()
+        return True
 
     def _trabajo_cambio_estado(self, plano, token, resuelto, campos):
         """Worker: crea la actividad status_change y PATCHea el shot.

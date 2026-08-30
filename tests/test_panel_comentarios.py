@@ -403,6 +403,7 @@ class _BotonSelectorFake:
         self.tooltip = ""
         self.menu = None
         self.icono = None
+        self.style = ""
 
     def setText(self, texto):
         self.texto = texto
@@ -416,6 +417,9 @@ class _BotonSelectorFake:
     def setIcon(self, icono):
         self.icono = icono
 
+    def setStyleSheet(self, estilo):
+        self.style = estilo or ""
+
     def setTextFormat(self, formato):
         pass
 
@@ -426,8 +430,30 @@ class _BotonSelectorFake:
         self.menu = menu
 
 
+class _BotonAccionFake:
+    """QPushButton de Save/Undo: registra habilitación/visibilidad/tooltip."""
+
+    def __init__(self):
+        self.habilitado = False
+        self.visible = True
+        self.texto = ""
+        self.tooltip = ""
+
+    def setEnabled(self, habilitado):
+        self.habilitado = habilitado
+
+    def setVisible(self, visible):
+        self.visible = visible
+
+    def setText(self, texto):
+        self.texto = texto
+
+    def setToolTip(self, tooltip):
+        self.tooltip = tooltip
+
+
 def _panel_con_selector():
-    """Panel __new__ con los 3 botones del selector + plano/sesión mínimos."""
+    """Panel __new__ con el selector completo + plano/sesión mínimos."""
     from SamanTools import panel_comentarios
 
     panel = panel_comentarios.PanelComentarios.__new__(
@@ -442,6 +468,12 @@ def _panel_con_selector():
     panel._boton_estado_anterior = _BotonSelectorFake()
     panel._boton_estado_actual = _BotonSelectorFake()
     panel._boton_estado_siguiente = _BotonSelectorFake()
+    panel._boton_guardar_estado = _BotonAccionFake()
+    panel._boton_cancelar_estado = _BotonAccionFake()
+    panel._estado_pendiente_id = None
+    panel._estados_combo = {}
+    panel._estados_ordenados = []
+    panel._estado_actual_id = ""
     panel._escritura_trabajo_en_curso = False
     return panel
 
@@ -2229,7 +2261,7 @@ def test_selector_deshabilitado_durante_escritura():
     assert panel._boton_estado_anterior.habilitado is False
 
 
-def test_cambiar_a_estado_same_no_rompe_y_activa_cambio():
+def test_aplicar_cambio_estado_escribe_directo():
     from SamanTools import panel_comentarios
 
     panel = panel_comentarios.PanelComentarios.__new__(
@@ -2258,13 +2290,13 @@ def test_cambiar_a_estado_same_no_rompe_y_activa_cambio():
     lanzados = []
     panel._lanzar_escritura = lambda *a, **k: lanzados.append(a)
 
-    panel._cambiar_a_estado("e1")  # ya es el actual: no hace nada
+    assert panel._aplicar_cambio_estado("e1") is False  # ya es el actual
     assert lanzados == []
 
-    panel._cambiar_a_estado("noexiste")  # id desconocido: no hace nada
+    assert panel._aplicar_cambio_estado("noexiste") is False
     assert lanzados == []
 
-    panel._cambiar_a_estado("e2")  # otro estado -> lanza el worker
+    assert panel._aplicar_cambio_estado("e2") is True  # otro estado -> escribe
     assert lanzados and lanzados[0][0] == panel._trabajo_cambio_estado
     campos = lanzados[0][1][3]
     assert campos["newState"] == "e2"
@@ -2272,7 +2304,7 @@ def test_cambiar_a_estado_same_no_rompe_y_activa_cambio():
     assert campos["previousStateName"] == "APROBADO"
 
 
-def test_flechas_llaman_con_ids_correctos():
+def test_flechas_marcan_pendiente_sin_escribir():
     from SamanTools import panel_comentarios
 
     panel = panel_comentarios.PanelComentarios.__new__(
@@ -2281,11 +2313,11 @@ def test_flechas_llaman_con_ids_correctos():
     panel._estados_ordenados = ["e1", "e2", "e3"]
     panel._estado_actual_id = "e2"
     llamado = []
-    panel._cambiar_a_estado = lambda nuevo_id: llamado.append(nuevo_id)
+    panel._establecer_estado_pendiente = lambda nuevo_id: llamado.append(nuevo_id)
 
     panel._on_estado_anterior()
     panel._on_estado_siguiente()
-    assert llamado == ["e1", "e3"]
+    assert llamado == ["e1", "e3"]  # NO escribe: solo marca pendiente
 
     # Sin anterior (primer estado) / sin siguiente (último): nada.
     panel._estado_actual_id = "e1"
@@ -2294,6 +2326,117 @@ def test_flechas_llaman_con_ids_correctos():
     assert llamado == []
     panel._on_estado_siguiente()
     assert llamado == ["e2"]
+
+
+def test_establecer_estado_pendiente_ambar_y_cancelar():
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_selector()
+    panel._poblar_estado_selector(
+        [
+            {"id": "e1", "name": "Recibido"},
+            {"id": "e2", "name": "En proceso"},
+            {"id": "e3", "name": "Aprobado"},
+        ],
+        "e1",
+    )
+    assert panel._estado_pendiente_id is None
+    assert panel._boton_guardar_estado.visible is False
+
+    # Elegir otro estado -> pendiente ámbar + Guardar/Undo visibles.
+    panel._establecer_estado_pendiente("e2")
+    assert panel._estado_pendiente_id == "e2"
+    chip = panel._boton_estado_actual
+    assert chip.texto == "En proceso"
+    assert "#78350f" in chip.style and "#fcd34d" in chip.style
+    assert "pendiente" in chip.tooltip
+    assert panel._boton_guardar_estado.visible is True
+    assert panel._boton_guardar_estado.habilitado is True
+    assert panel._boton_cancelar_estado.visible is True
+    assert panel._boton_cancelar_estado.habilitado is True
+
+    # Re-elegir OTRO estado reemplaza el pendiente.
+    panel._establecer_estado_pendiente("e3")
+    assert panel._estado_pendiente_id == "e3"
+    assert panel._boton_estado_actual.texto == "Aprobado"
+
+    # Re-elegir el estado ACTUAL cancela el pendiente (vuelve al original).
+    panel._establecer_estado_pendiente("e1")
+    assert panel._estado_pendiente_id is None
+    assert panel._boton_estado_actual.texto == "Recibido"
+    assert panel._boton_estado_actual.style == ""
+    assert panel._boton_guardar_estado.visible is False
+
+
+def test_on_cancelar_estado_sin_red():
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_selector()
+    panel._poblar_estado_selector(
+        [{"id": "e1", "name": "Recibido"}, {"id": "e2", "name": "Entregado"}], "e1"
+    )
+    panel._establecer_estado_pendiente("e2")
+    escrituras = []
+    panel._aplicar_cambio_estado = lambda nuevo_id: escrituras.append(nuevo_id) or True
+
+    panel._on_cancelar_estado()
+
+    assert escrituras == []  # Undo es SOLO memoria, sin red
+    assert panel._estado_pendiente_id is None
+    assert panel._boton_estado_actual.texto == "Recibido"
+    assert panel._boton_estado_actual.style == ""
+    assert panel._boton_guardar_estado.visible is False
+
+
+def test_on_guardar_estado_escribe_pendiente():
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_selector()
+    panel._poblar_estado_selector(
+        [{"id": "e1", "name": "Recibido"}, {"id": "e2", "name": "Entregado"}], "e1"
+    )
+    panel._establecer_estado_pendiente("e2")
+    escrituras = []
+    panel._aplicar_cambio_estado = lambda nuevo_id: escrituras.append(nuevo_id) or True
+
+    panel._on_guardar_estado()
+
+    assert escrituras == ["e2"]  # Guardar escribe SOLO con el pendiente
+
+    # Sin pendiente / en vuelo: no escribe.
+    panel._estado_pendiente_id = None
+    panel._on_guardar_estado()
+    panel._establecer_estado_pendiente("e2")
+    panel._escritura_trabajo_en_curso = True
+    panel._on_guardar_estado()
+    assert escrituras == ["e2"]
+
+
+def test_aplicar_estado_selector_enabled_pendiente_y_escritura():
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_selector()
+    panel._poblar_estado_selector(
+        [{"id": "e1", "name": "Recibido"}, {"id": "e2", "name": "Entregado"}], "e1"
+    )
+    panel._establecer_estado_pendiente("e2")
+    assert panel._boton_guardar_estado.habilitado is True
+    assert panel._boton_cancelar_estado.habilitado is True
+    assert panel._boton_estado_actual.habilitado is True
+
+    # Durante la escritura todo queda deshabilitado (los botones siguen
+    # visibles para que se vea el pendiente, pero no clicables).
+    panel._escritura_trabajo_en_curso = True
+    panel._aplicar_estado_selector_enabled()
+    assert panel._boton_guardar_estado.habilitado is False
+    assert panel._boton_cancelar_estado.habilitado is False
+    assert panel._boton_estado_actual.habilitado is False
+
+    # Al cancelar (fuera de escritura) los botones se ocultan.
+    panel._escritura_trabajo_en_curso = False
+    panel._on_cancelar_estado()
+    assert panel._boton_guardar_estado.visible is False
+    assert panel._boton_cancelar_estado.visible is False
 
 
 def test_trabajo_cambio_estado_patch_shot(monkeypatch):
