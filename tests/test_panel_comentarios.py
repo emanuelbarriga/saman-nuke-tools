@@ -3373,12 +3373,13 @@ def test_on_subir_imagen_sin_nodo_seleccionado(monkeypatch):
     assert any("Seleccioná un nodo" in e for e in estados)
 
 
-def test_on_subir_imagen_exporta_y_lanza(tmp_path, monkeypatch):
+def test_on_subir_imagen_exporta_y_queda_pendiente(tmp_path, monkeypatch):
     from SamanTools import panel_comentarios
 
     panel = panel_comentarios.PanelComentarios.__new__(
         panel_comentarios.PanelComentarios
     )
+    panel._adjunto_pendiente = None
     panel.sesion = {"email": "a@b.com", "local_id": "u", "id_token": "IT"}
     panel._id_token_actual = lambda: "TOKEN"
     panel._plano_activo = lambda: {
@@ -3386,6 +3387,8 @@ def test_on_subir_imagen_exporta_y_lanza(tmp_path, monkeypatch):
         "canonico": "HTLR_107_008_00100_V01.nk",
     }
     panel._escritura_trabajo_en_curso = False
+    panel._fila_adjunto = _WidgetFake()
+    panel._label_adjunto_pendiente = _WidgetFake()
     estados = []
     panel._estado = lambda texto, error=False: estados.append(texto)
     stub = _NukeExportStub()
@@ -3412,7 +3415,366 @@ def test_on_subir_imagen_exporta_y_lanza(tmp_path, monkeypatch):
     ruta_export = exportado[0][1]
     assert ruta_export.endswith(".jpg")
     assert "/ref/temp/" in ruta_export
-    assert lanzados and lanzados[0][0] == panel._trabajo_subir_imagen
-    jpg, plano, token, nombre, size, sesion = lanzados[0][1]
-    assert jpg == ruta_export
-    assert nombre.startswith("HTLR_107_008_00100_V01_")
+    # NO sube: queda como `_adjunto_pendiente` con preview.
+    assert lanzados == []  # no se disparó el upload directo
+    assert panel._adjunto_pendiente["ruta"] == ruta_export
+    assert panel._adjunto_pendiente["nombre"].startswith("HTLR_107_008_00100_V01_")
+    assert panel._adjunto_pendiente["size"] == 3
+    assert "Adjunto:" in panel._label_adjunto_pendiente.texto
+    assert panel._fila_adjunto.visible is True
+
+# ---------------------------------------------------------------------------
+# Adjunto pendiente del comentario (🖼 exporta, ➔ envía) — metadata.attachments
+# ---------------------------------------------------------------------------
+
+
+def test_on_quitar_adjunto_borra_temp_y_limpia(tmp_path):
+    from SamanTools import panel_comentarios
+
+    jpg = str(tmp_path / "cap.jpg")
+    with open(jpg, "wb") as fh:
+        fh.write(b"JPG")
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._adjunto_pendiente = {"ruta": jpg, "nombre": "cap.jpg", "size": 3}
+    panel._fila_adjunto = _WidgetFake()
+    panel._label_adjunto_pendiente = _WidgetFake()
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append(texto)
+
+    panel._on_quitar_adjunto()
+
+    assert panel._adjunto_pendiente is None
+    assert not os.path.exists(jpg)  # se borró el jpg temporal
+    assert panel._fila_adjunto.visible is False
+    assert any("Adjunto quitado" in e for e in estados)
+
+
+def test_subir_imagen_storage_token_y_media_link(monkeypatch, tmp_path):
+    from SamanTools import panel_comentarios
+    from SamanTools.vfxflow_auth import VfxFlowAuthError
+
+    jpg = str(tmp_path / "a.jpg")
+    with open(jpg, "wb") as fh:
+        fh.write(b"JPG")
+    urls_subida = []
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_upload_media_bearer",
+        lambda url, datos, token, content_type: urls_subida.append(url) or {"name": "x"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_get_con_bearer",
+        lambda url, token: {"downloadTokens": "tok1,tok2"},
+    )
+
+    res = panel_comentarios._subir_imagen_storage(
+        "pid", jpg, "a.jpg", 3, {"email": "a@b.com", "local_id": "uid"}, "T"
+    )
+    assert urls_subida
+    assert res["url"].startswith("https://firebasestorage.googleapis.com/v0/b/")
+    assert "alt=media&token=tok1" in res["url"]
+    assert res["name"] == "a.jpg"
+    assert res["size"] == 3
+    assert res["mimeType"] == "image/jpeg"
+    assert res["type"] == "image"
+
+    # Fallback mediaLink si el storage no da download token.
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_get_con_bearer",
+        lambda url, token: {"mediaLink": "https://media.ml"},
+    )
+    res2 = panel_comentarios._subir_imagen_storage(
+        "pid", jpg, "a.jpg", 3, {"email": "a@b.com", "local_id": "uid"}, "T"
+    )
+    assert res2["url"] == "https://media.ml"
+
+    # Sin token ni mediaLink: lanza (nunca rompe con url vacía).
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth, "_get_con_bearer", lambda url, token: {}
+    )
+    with pytest.raises(VfxFlowAuthError):
+        panel_comentarios._subir_imagen_storage(
+            "pid", jpg, "a.jpg", 3, {"email": "a@b.com", "local_id": "uid"}, "T"
+        )
+
+
+def test_trabajo_crear_actividad_con_adjunto_publica_comment_metadata(
+    monkeypatch, tmp_path
+):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "local_id": "u", "id_token": "IT"}
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda d, t, config=None: {
+            "project_id": "pid", "chapter_id": "cid", "shot_id": "sid", "shot": {},
+        },
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_upload_media_bearer",
+        lambda url, datos, token, content_type: {"name": "x"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_get_con_bearer",
+        lambda url, token: {"downloadTokens": "dt1"},
+    )
+    creadas = []
+    panel._crear_documento_actividad = (
+        lambda pid, campos, token: creadas.append(campos) or {}
+    )
+    jpg = str(tmp_path / "cap.jpg")
+    with open(jpg, "wb") as fh:
+        fh.write(b"JPG")
+    adjunto = {"ruta": jpg, "nombre": "cap.jpg", "size": 3}
+    campos = panel_comentarios._base_campos_actividad(
+        "", "", {"email": "a@b.com", "local_id": "u"}, "comment", "mirá esto"
+    )
+
+    panel._trabajo_crear_actividad(
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"}, campos, "T",
+        adjunto,
+    )
+
+    assert panel._escritura_trabajo["estado"] == "ok"
+    # El adjunto viaja en metadata.attachments (NO top-level) y type comment.
+    assert campos["type"] == "comment"
+    attachments = campos["metadata"]["attachments"]
+    assert len(attachments) == 1
+    assert attachments[0]["url"].startswith("https://firebasestorage.googleapis.com")
+    assert attachments[0]["name"] == "cap.jpg"
+    assert attachments[0]["type"] == "image"
+    assert creadas  # se creó el doc
+    assert not os.path.exists(jpg)  # temp borrado al éxito
+
+
+def test_trabajo_crear_actividad_upload_falla_mantiene_pendiente(monkeypatch, tmp_path):
+    from SamanTools import panel_comentarios
+    from SamanTools.vfxflow_auth import VfxFlowAuthError
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "local_id": "u", "id_token": "IT"}
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda d, t, config=None: {
+            "project_id": "pid", "chapter_id": "cid", "shot_id": "sid", "shot": {},
+        },
+    )
+
+    def _boom(url, datos, token, content_type):
+        raise VfxFlowAuthError("sin permisos", codigo="http")
+
+    monkeypatch.setattr(panel_comentarios.vfxflow_auth, "_upload_media_bearer", _boom)
+    jpg = str(tmp_path / "cap.jpg")
+    with open(jpg, "wb") as fh:
+        fh.write(b"JPG")
+    adjunto = {"ruta": jpg, "nombre": "cap.jpg", "size": 3}
+    creadas = []
+    panel._crear_documento_actividad = (
+        lambda pid, campos, token: creadas.append(campos) or {}
+    )
+    campos = panel_comentarios._base_campos_actividad(
+        "", "", {"email": "a@b.com", "local_id": "u"}, "comment", "x"
+    )
+
+    panel._trabajo_crear_actividad(
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"}, campos, "T",
+        adjunto,
+    )
+
+    assert panel._escritura_trabajo["estado"] == "error"
+    assert creadas == []  # el comentario NO se crea
+    assert os.path.exists(jpg)  # el adjunto pendiente NO se pierde
+
+
+def test_trabajo_crear_actividad_reply_con_adjunto(monkeypatch, tmp_path):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "local_id": "u", "id_token": "IT"}
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda d, t, config=None: {
+            "project_id": "pid", "chapter_id": "cid", "shot_id": "sid", "shot": {},
+        },
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_upload_media_bearer",
+        lambda url, datos, token, content_type: {"name": "x"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_get_con_bearer",
+        lambda url, token: {"downloadTokens": "dt1"},
+    )
+    creadas = []
+    panel._crear_documento_actividad = (
+        lambda pid, campos, token: creadas.append(campos) or {}
+    )
+    jpg = str(tmp_path / "cap.jpg")
+    with open(jpg, "wb") as fh:
+        fh.write(b"JPG")
+    adjunto = {"ruta": jpg, "nombre": "cap.jpg", "size": 3}
+    campos = panel_comentarios._base_campos_actividad(
+        "", "", {"email": "a@b.com", "local_id": "u"}, "reply", "resp"
+    )
+    campos["parentId"] = "c1"
+
+    panel._trabajo_crear_actividad(
+        {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"}, campos, "T",
+        adjunto,
+    )
+
+    assert panel._escritura_trabajo["estado"] == "ok"
+    assert campos["type"] == "reply"
+    assert campos["parentId"] == "c1"
+    assert campos["metadata"]["attachments"][0]["type"] == "image"
+
+
+# ---------------------------------------------------------------------------
+# v1.7.3 — fix: cambio de estado escribe el shot (payload mínimo, orden correcto)
+# ---------------------------------------------------------------------------
+
+
+def test_actualizar_estado_shot_payload_sin_status_con_progress(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._estados_combo = {
+        "e2": {"id": "e2", "name": "ENTREGA", "defaultPercentage": 80}
+    }
+    resuelto = {"project_id": "pid", "chapter_id": "cid", "shot_id": "sid"}
+    capturas = []
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_patch_json_bearer",
+        lambda url, payload, token: capturas.append((url, payload, token))
+        or {"name": "shot"},
+    )
+
+    panel._actualizar_estado_shot(resuelto, "e2", "ENTREGA", "T")
+
+    assert capturas
+    url, payload, token = capturas[0]
+    assert url.endswith("/projects/pid/chapters/cid/shots/sid")
+    fields = payload["fields"]
+    # NUNCA escribe `status` (estaba en el bug: Firestore lo rechazaba).
+    assert "status" not in fields
+    assert "status" not in payload["updateMask"]["fieldPaths"]
+    assert fields["stateId"] == {"stringValue": "e2"}
+    assert "timestampValue" in fields["updatedAt"]
+    # progress = defaultPercentage del estado NUEVO.
+    assert fields["progress"] == {"integerValue": "80"}
+    assert payload["updateMask"]["fieldPaths"] == ["stateId", "updatedAt", "progress"]
+
+
+def test_actualizar_estado_shot_sin_default_no_progress(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._estados_combo = {"e2": {"id": "e2", "name": "ENTREGA"}}
+    resuelto = {"project_id": "pid", "chapter_id": "cid", "shot_id": "sid"}
+    capturas = []
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_patch_json_bearer",
+        lambda url, payload, token: capturas.append(payload) or {},
+    )
+
+    panel._actualizar_estado_shot(resuelto, "e2", "ENTREGA", "T")
+
+    payload = capturas[0]
+    assert "progress" not in payload["fields"]  # sin defaultPercentage: se omite
+    assert payload["updateMask"]["fieldPaths"] == ["stateId", "updatedAt"]
+
+
+def test_trabajo_cambio_estado_orden_shot_primero():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    orden = []
+    panel._actualizar_estado_shot = (
+        lambda *a, **k: orden.append("patch") or None
+    )
+    panel._crear_documento_actividad = (
+        lambda *a, **k: orden.append("create") or {}
+    )
+    campos = panel_comentarios._campos_status_change(
+        "pid", "sid", {"email": "a@b.com"}, "e1", "APROBADO", "e2", "ENTREGA"
+    )
+    resuelto = {"project_id": "pid", "chapter_id": "cid", "shot_id": "sid"}
+
+    panel._trabajo_cambio_estado({"p": "d"}, "T", resuelto, campos)
+
+    assert orden == ["patch", "create"]  # el shot primero, la actividad después
+
+
+def test_trabajo_cambio_estado_patch_falla_no_crea_actividad():
+    from SamanTools import panel_comentarios
+    from SamanTools.vfxflow_auth import VfxFlowAuthError
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._actualizar_estado_shot = (
+        lambda *a, **k: (_ for _ in ()).throw(
+            VfxFlowAuthError("sin permisos", codigo="http")
+        )
+    )
+    llamada = []
+    panel._crear_documento_actividad = lambda *a, **k: llamada.append(1) or {}
+    campos = panel_comentarios._campos_status_change(
+        "pid", "sid", {"email": "a@b.com"}, "e1", "APROBADO", "e2", "ENTREGA"
+    )
+    resuelto = {"project_id": "pid", "chapter_id": "cid", "shot_id": "sid"}
+
+    panel._trabajo_cambio_estado({"p": "d"}, "T", resuelto, campos)
+
+    assert panel._escritura_trabajo["estado"] == "error"
+    assert llamada == []  # el shot no cambió -> NO se escribe la actividad
+    assert "No se pudo actualizar el estado del shot" in panel._escritura_trabajo["mensaje"]
+
+
+def test_trabajo_cambio_estado_actividad_falla_tras_shot_ok():
+    from SamanTools import panel_comentarios
+    from SamanTools.vfxflow_auth import VfxFlowAuthError
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._actualizar_estado_shot = lambda *a, **k: {"name": "shot"}
+    panel._crear_documento_actividad = (
+        lambda *a, **k: (_ for _ in ()).throw(VfxFlowAuthError("x", codigo="http"))
+    )
+    campos = panel_comentarios._campos_status_change(
+        "pid", "sid", {"email": "a@b.com"}, "e1", "APROBADO", "e2", "ENTREGA"
+    )
+    resuelto = {"project_id": "pid", "chapter_id": "cid", "shot_id": "sid"}
+
+    panel._trabajo_cambio_estado({"p": "d"}, "T", resuelto, campos)
+
+    # El estado del shot YA cambió: ok con aviso (el log no aborta el save).
+    assert panel._escritura_trabajo["estado"] == "ok"
+    assert "no se pudo registrar la actividad" in panel._escritura_trabajo["mensaje"]

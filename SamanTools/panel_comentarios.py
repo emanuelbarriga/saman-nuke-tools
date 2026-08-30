@@ -1458,6 +1458,10 @@ class PanelComentarios(QtWidgets.QWidget):
         self._adjunto_trabajo = None
         self._adjunto_trabajo_en_curso = False
 
+        # Adjunto pendiente del comentario (🖼 exporta y queda acá; viaja con
+        # el ➔ Enviar vía metadata.attachments). None = sin adjunto.
+        self._adjunto_pendiente = None
+
         # Escritura (v1.7.0): comentario/reply, estado y subida corren en un
         # worker y `_poll_escritura` aplica en el hilo principal.
         self._escritura_trabajo = None
@@ -1624,10 +1628,28 @@ class PanelComentarios(QtWidgets.QWidget):
         fila_input.addWidget(self._boton_enviar)
         self._boton_subir_imagen = QtWidgets.QPushButton("🖼", seccion_comentarios)
         self._boton_subir_imagen.setEnabled(False)
-        self._boton_subir_imagen.setToolTip("Subir imagen de referencia 1280×720")
+        self._boton_subir_imagen.setToolTip(
+            "Exportar el nodo seleccionado como adjunto del comentario (1280×720)"
+        )
         self._boton_subir_imagen.clicked.connect(self._on_subir_imagen)
         fila_input.addWidget(self._boton_subir_imagen)
         lay_comentarios.addLayout(fila_input)
+
+        # Fila del adjunto pendiente: preview "Adjunto: <name> (<size> KB)" + ✕.
+        self._fila_adjunto = QtWidgets.QWidget(seccion_comentarios)
+        lay_adjunto = QtWidgets.QHBoxLayout(self._fila_adjunto)
+        lay_adjunto.setContentsMargins(0, 0, 0, 0)
+        self._label_adjunto_pendiente = QtWidgets.QLabel("", self._fila_adjunto)
+        self._label_adjunto_pendiente.setObjectName("verboActividad")
+        lay_adjunto.addWidget(self._label_adjunto_pendiente)
+        lay_adjunto.addStretch(1)
+        self._boton_quitar_adjunto = QtWidgets.QToolButton(self._fila_adjunto)
+        self._boton_quitar_adjunto.setText("✕ Quitar")
+        self._boton_quitar_adjunto.setToolTip("Quitar el adjunto pendiente")
+        self._boton_quitar_adjunto.clicked.connect(self._on_quitar_adjunto)
+        lay_adjunto.addWidget(self._boton_quitar_adjunto)
+        self._fila_adjunto.setVisible(False)
+        lay_comentarios.addWidget(self._fila_adjunto)
 
         # Feed header: título + botón de refs (v1.6.4) + botón de refresco.
         fila_feed = QtWidgets.QHBoxLayout()
@@ -3110,9 +3132,14 @@ class PanelComentarios(QtWidgets.QWidget):
         self._input_comentario.setPlaceholderText("Escribe comentario.")
 
     def _on_enviar_comentario(self):
-        """➔/Enter: valida y lanza la creación del comment o reply (worker)."""
+        """➔/Enter: valida y lanza la creación del comment o reply (worker).
+
+        Con `_adjunto_pendiente`, el worker sube la imagen y la adjunta vía
+        `metadata.attachments` (comment/reply con imagen, como la plataforma).
+        """
         texto = self._input_comentario.text().strip()
-        if not texto:
+        adjunto = getattr(self, "_adjunto_pendiente", None) or {}
+        if not texto and not adjunto:
             return
         plano = self._plano_activo()
         token = self._id_token_actual()
@@ -3132,7 +3159,7 @@ class PanelComentarios(QtWidgets.QWidget):
             campos["parentId"] = self._reply_padre_id
         self._lanzar_escritura(
             self._trabajo_crear_actividad,
-            (plano, campos, token),
+            (plano, campos, token, adjunto or None),
             "Publicando {0}…".format("respuesta" if tipo == "reply" else "comentario"),
         )
 
@@ -3144,8 +3171,14 @@ class PanelComentarios(QtWidgets.QWidget):
         threading.Thread(target=trabajo_callable, args=args, daemon=True).start()
         QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_escritura)
 
-    def _trabajo_crear_actividad(self, plano, campos, token):
-        """Worker: resuelve el plano y crea la actividad en shotActivity."""
+    def _trabajo_crear_actividad(self, plano, campos, token, adjunto=None):
+        """Worker: resuelve el plano y crea la actividad en shotActivity.
+
+        Con `adjunto` (dict pendiente) sube la imagen a storage primero y la
+        adjunta como `metadata.attachments` (comment/reply con imagen, NO
+        file_upload separado). Si la subida falla, el adjunto pendiente QUEDA
+        y el comentario no se crea. Al éxito borra el jpg temporal.
+        """
         try:
             resuelto = vfxflow_datos.resolver_plano(plano, token)
             if resuelto is None or resuelto.get("error"):
@@ -3157,6 +3190,33 @@ class PanelComentarios(QtWidgets.QWidget):
             self._plano_resuelto = resuelto
             campos["shotId"] = resuelto["shot_id"]
             campos["projectId"] = resuelto["project_id"]
+            if adjunto:
+                try:
+                    subido = _subir_imagen_storage(
+                        resuelto["project_id"],
+                        adjunto.get("ruta") or "",
+                        adjunto.get("nombre") or "adjunto.jpg",
+                        adjunto.get("size") or 0,
+                        self.sesion or {},
+                        token,
+                    )
+                except vfxflow_auth.VfxFlowAuthError as e:
+                    self._escritura_trabajo = {
+                        "estado": "error",
+                        "mensaje": self._mensaje_error_escritura(e),
+                    }
+                    return  # el adjunto pendiente queda: no se pierde la imagen
+                except Exception as e:
+                    self._escritura_trabajo = {
+                        "estado": "error",
+                        "mensaje": "No se pudo subir la imagen: %s" % e,
+                    }
+                    return
+                campos["metadata"] = {
+                    "attachments": [
+                        dict(subido, id="att_{0}".format(int(time.time() * 1000)))
+                    ]
+                }
             self._crear_documento_actividad(resuelto["project_id"], campos, token)
             tipo = campos.get("type") or "actividad"
             self._escritura_trabajo = {
@@ -3166,6 +3226,11 @@ class PanelComentarios(QtWidgets.QWidget):
                 else ("Respuesta publicada." if tipo == "reply" else "Publicado."),
                 "publicado": True,
             }
+            if adjunto:
+                try:
+                    os.remove(adjunto.get("ruta") or "")  # export temporal
+                except (OSError, TypeError):
+                    pass
         except vfxflow_auth.VfxFlowAuthError as e:
             self._escritura_trabajo = {
                 "estado": "error",
@@ -3195,6 +3260,8 @@ class PanelComentarios(QtWidgets.QWidget):
             if trabajo.get("publicado"):
                 self._input_comentario.clear()
                 self._cancelar_modo_respuesta()
+                self._adjunto_pendiente = None
+                self._ocultar_adjunto_pendiente_ui()
             # El cambio de estado confirmado ya no está pendiente: volver al
             # selector normal (el reload trae el estado_actual nuevo).
             self._estado_pendiente_id = None
@@ -3234,7 +3301,18 @@ class PanelComentarios(QtWidgets.QWidget):
         )
 
     def _actualizar_estado_shot(self, resuelto, nuevo_id, nuevo_nombre, token):
-        """PATCH del doc del shot con stateId/status (updateMask)."""
+        """PATCH del doc del shot con el payload MÍNIMO real (v1.7.3 fix).
+
+        Solo escribe lo que existe en el doc del shot en producción:
+          - `stateId` (stringValue, nuevo_id)
+          - `updatedAt` (timestampValue, ahora)
+          - `progress` (integerValue = defaultPercentage del estado NUEVO) SOLO
+            si ese estado tiene `defaultPercentage` (de `self._estados_combo`).
+        NUNCA escribe `status` (el doc real no lo tiene y Firestore rechaza el
+        write con updateMask). `updateMask` = solo los campos realmente
+        escritos. `nuevo_nombre` se conserva en la firma por compat pero ya no
+        se escribe (decisión documentada).
+        """
         cfg = vfxflow_config.obtener_config_efectiva()
         fb = (cfg or {}).get("project_id") or resuelto["project_id"]
         url = (
@@ -3246,13 +3324,18 @@ class PanelComentarios(QtWidgets.QWidget):
             cid=resuelto["chapter_id"],
             sid=resuelto["shot_id"],
         )
-        payload = {
-            "fields": {
-                "stateId": {"stringValue": str(nuevo_id)},
-                "status": {"stringValue": str(nuevo_nombre)},
-            },
-            "updateMask": {"fieldPaths": ["stateId", "status"]},
+        fields = {
+            "stateId": {"stringValue": str(nuevo_id)},
+            "updatedAt": {"timestampValue": _iso_ahora()},
         }
+        update_mask = ["stateId", "updatedAt"]
+        nuevo = (getattr(self, "_estados_combo", None) or {}).get(str(nuevo_id))
+        if nuevo is not None and nuevo.get("defaultPercentage") is not None:
+            fields["progress"] = {
+                "integerValue": str(int(nuevo["defaultPercentage"]))
+            }
+            update_mask.append("progress")
+        payload = {"fields": fields, "updateMask": {"fieldPaths": update_mask}}
         return vfxflow_auth._patch_json_bearer(url, payload, token)
 
     # ------------------------------------------- selector de estado (v1.7.1)
@@ -3486,40 +3569,46 @@ class PanelComentarios(QtWidgets.QWidget):
         return True
 
     def _trabajo_cambio_estado(self, plano, token, resuelto, campos):
-        """Worker: crea la actividad status_change y PATCHea el shot.
+        """Worker: 1º PATCH del shot con el estado nuevo, 2º actividad.
 
-        Si el PATCH del shot falla por rules, la actividad queda creada y se
-        avisa (decisión documentada): el feed registra el cambio igual.
+        Orden de la app web (saveShotChanges -> logShotUpdateActivity): si el
+        PATCH del shot falla -> estado error y NO se crea la actividad. Si el
+        shot cambió pero la actividad falla -> estado "ok" con aviso (el estado
+        del shot YA cambió; el log no aborta el save, como la app).
         """
         try:
-            self._crear_documento_actividad(resuelto["project_id"], campos, token)
-        except (vfxflow_auth.VfxFlowAuthError, Exception) as e:
+            self._actualizar_estado_shot(
+                resuelto, campos["newState"], campos["newStateName"], token
+            )
+        except vfxflow_auth.VfxFlowAuthError as e:
             self._escritura_trabajo = {
                 "estado": "error",
-                "mensaje": self._mensaje_error_escritura(e),
+                "mensaje": "No se pudo actualizar el estado del shot: {0}".format(
+                    self._mensaje_error_escritura(e)
+                ),
+            }
+            return
+        except Exception as e:
+            self._escritura_trabajo = {
+                "estado": "error",
+                "mensaje": "No se pudo actualizar el estado del shot: %s" % e,
             }
             return
         try:
-            self._actualizar_estado_shot(
-                resuelto,
-                campos["newState"],
-                campos["newStateName"],
-                token,
-            )
+            self._crear_documento_actividad(resuelto["project_id"], campos, token)
         except vfxflow_auth.VfxFlowAuthError as e:
             self._escritura_trabajo = {
                 "estado": "ok",
                 "mensaje": (
-                    "Estado registrado en la actividad; no se pudo actualizar "
-                    "el shot ({0})".format(self._mensaje_error_escritura(e))
-                ),
+                    "Estado actualizado; no se pudo registrar la actividad ({0})"
+                ).format(self._mensaje_error_escritura(e)),
             }
             return
         except Exception as e:
             self._escritura_trabajo = {
                 "estado": "ok",
                 "mensaje": (
-                    "Estado registrado; no se pudo actualizar el shot (%s)" % e
+                    "Estado actualizado; no se pudo registrar la actividad (%s)" % e
                 ),
             }
             return
@@ -3528,12 +3617,13 @@ class PanelComentarios(QtWidgets.QWidget):
     # ------------------------------------------------------- subir imagen (B.3)
 
     def _on_subir_imagen(self):
-        """🖼: exporta el nodo seleccionado a jpg 1280×720 y lo sube.
+        """🖼: exporta el nodo seleccionado y lo deja como ADJUNTO PENDIENTE.
 
         El export del subgrafo corre en el HILO PRINCIPAL (Nuke scripting no
-        es thread-safe; un frame 1280×720 tarda ~1-2 s, aceptable). El upload
-        (red) va al worker existente (`_trabajo_subir_imagen`). Se necesita
-        EXACTAMENTE un nodo seleccionado.
+        es thread-safe; ~1-2 s, aceptable). NO sube: el adjunto queda
+        `_adjunto_pendiente` y viaja con el ➔ Enviar (comment/reply con
+        `metadata.attachments`). Un adjunto pendiente previo se REEMPLAZA
+        (se borra su jpg temporal viejo) — decisión documentada.
         """
         plano = self._plano_activo()
         token = self._id_token_actual()
@@ -3578,18 +3668,64 @@ class PanelComentarios(QtWidgets.QWidget):
             size = os.path.getsize(ruta_destino)
         except OSError:
             size = 0
-        self._lanzar_escritura(
-            self._trabajo_subir_imagen,
-            (ruta_destino, plano, token, nombre, size, self.sesion or {}),
-            "Subiendo imagen…",
-        )
+        # Reemplazo del adjunto pendiente: borrar el jpg temporal viejo.
+        anterior = getattr(self, "_adjunto_pendiente", None) or {}
+        ruta_anterior = anterior.get("ruta")
+        if ruta_anterior and ruta_anterior != ruta_destino:
+            try:
+                os.remove(ruta_anterior)
+            except OSError:
+                pass
+        self._adjunto_pendiente = {
+            "ruta": ruta_destino,
+            "nombre": nombre,
+            "size": size,
+        }
+        self._mostrar_adjunto_pendiente_ui()
+        self._estado("Adjunto listo para enviar con el comentario.")
+
+    def _mostrar_adjunto_pendiente_ui(self):
+        """Muestra el preview del adjunto pendiente en la fila del input."""
+        adj = self._adjunto_pendiente or {}
+        fila = getattr(self, "_fila_adjunto", None)
+        label = getattr(self, "_label_adjunto_pendiente", None)
+        if fila is None or label is None:
+            return
+        nombre = adj.get("nombre") or "adjunto.jpg"
+        tam = _formatear_tamano_bytes(adj.get("size"))
+        texto = "Adjunto: {0}".format(nombre)
+        if tam:
+            texto += " ({0})".format(tam)
+        label.setText(texto)
+        fila.setVisible(True)
+
+    def _ocultar_adjunto_pendiente_ui(self):
+        """Oculta la fila del adjunto pendiente."""
+        fila = getattr(self, "_fila_adjunto", None)
+        if fila is not None:
+            fila.setVisible(False)
+
+    def _on_quitar_adjunto(self):
+        """✕ Quitar: descarta el adjunto pendiente y borra su jpg temporal."""
+        adj = self._adjunto_pendiente or {}
+        ruta = adj.get("ruta")
+        if ruta:
+            try:
+                os.remove(ruta)
+            except OSError:
+                pass
+        self._adjunto_pendiente = None
+        self._ocultar_adjunto_pendiente_ui()
+        self._estado("Adjunto quitado.")
 
     def _trabajo_subir_imagen(
         self, jpg_temporal, plano, token, nombre_origen, size, sesion
     ):
-        """Worker: resuelve shot, sube el jpg a storage y crea file_upload.
+        """Worker: sube el jpg a storage y crea una actividad file_upload.
 
-        Al éxito borra el jpg temporal exportado (no deja gigas en ref/temp).
+        Se mantiene como path alternativo (file_upload directo); el botón 🖼 ya
+        no lo usa (ahora arma comment/reply con `metadata.attachments`). Al
+        éxito borra el jpg temporal (no deja gigas en ref/temp).
         """
         try:
             if not os.path.exists(jpg_temporal):
@@ -3607,46 +3743,9 @@ class PanelComentarios(QtWidgets.QWidget):
                 return
             self._plano_resuelto = resuelto
             project_id = resuelto["project_id"]
-            cfg = vfxflow_config.obtener_config_efectiva()
-            bucket = (cfg or {}).get("storage_bucket") or "vfxpm-be912.firebasestorage.app"
-            local_id = (sesion or {}).get("local_id") or "anon"
-            ruta_storage = "projects/{0}/image_comments/{1}_{2}.jpg".format(
-                project_id, local_id, int(time.time())
+            adjunto = _subir_imagen_storage(
+                project_id, jpg_temporal, nombre_origen, size, sesion, token
             )
-            encoded = urllib.parse.quote(ruta_storage, safe="")
-            with open(jpg_temporal, "rb") as fh:
-                datos = fh.read()
-            url_subida = (
-                "https://firebasestorage.googleapis.com/upload/storage/v1/b/"
-                "{b}/o?uploadType=media&name={n}"
-            ).format(b=bucket, n=encoded)
-            vfxflow_auth._upload_media_bearer(url_subida, datos, token, "image/jpeg")
-            # Token de descarga para la URL firmada del adjunto.
-            meta_url = (
-                "https://firebasestorage.googleapis.com/v0/b/{b}/o/{n}"
-            ).format(b=bucket, n=encoded)
-            meta = vfxflow_auth._get_con_bearer(meta_url, token) or {}
-            tokens = (
-                meta.get("downloadTokens")
-                or meta.get("downloadToken")
-                or meta.get("downloadURL")
-                or ""
-            )
-            if tokens:
-                firma = str(tokens).split(",")[0].strip()
-                url_adjunto = (
-                    "https://firebasestorage.googleapis.com/v0/b/{b}/o/{n}"
-                    "?alt=media&token={t}"
-                ).format(b=bucket, n=encoded, t=firma)
-            else:
-                media = meta.get("mediaLink") or ""
-                if not media:
-                    self._escritura_trabajo = {
-                        "estado": "error",
-                        "mensaje": "El storage no devolvió token de descarga.",
-                    }
-                    return
-                url_adjunto = media
             campos = _base_campos_actividad(
                 project_id,
                 resuelto["shot_id"],
@@ -3655,14 +3754,7 @@ class PanelComentarios(QtWidgets.QWidget):
                 nombre_origen,
             )
             campos["attachments"] = [
-                {
-                    "id": "att_{0}".format(int(time.time() * 1000)),
-                    "type": "image",
-                    "url": url_adjunto,
-                    "name": nombre_origen,
-                    "size": size,
-                    "mimeType": "image/jpeg",
-                }
+                dict(adjunto, id="att_{0}".format(int(time.time() * 1000)))
             ]
             self._crear_documento_actividad(project_id, campos, token)
             self._escritura_trabajo = {"estado": "ok", "mensaje": "Imagen subida."}
@@ -3947,8 +4039,65 @@ class PanelComentarios(QtWidgets.QWidget):
         self._etiqueta_estado.setText(texto)
 
 
+# Subida compartida de un jpg a storage (usada por `_trabajo_subir_imagen`
+# y por `_trabajo_crear_actividad` con `metadata.attachments`).
+
+def _subir_imagen_storage(project_id, jpg_temporal, nombre_origen, size, sesion, token):
+    """Sube un jpg a storage y devuelve el adjunto {url, name, size, mimeType}.
+
+    URL firmada `?alt=media&token=<downloadToken>`; si el storage no da token
+    de descarga usa el `mediaLink`. Corre SOLO en worker (red). NO borra el
+    temp (lo borra el caller al éxito). Levanta VfxFlowAuthError/OSError.
+    """
+    cfg = vfxflow_config.obtener_config_efectiva()
+    bucket = (cfg or {}).get("storage_bucket") or "vfxpm-be912.firebasestorage.app"
+    local_id = (sesion or {}).get("local_id") or "anon"
+    ruta_storage = "projects/{0}/image_comments/{1}_{2}.jpg".format(
+        project_id, local_id, int(time.time())
+    )
+    encoded = urllib.parse.quote(ruta_storage, safe="")
+    if not os.path.exists(jpg_temporal):
+        raise OSError("No se encontró el archivo temporal de la imagen.")
+    with open(jpg_temporal, "rb") as fh:
+        datos = fh.read()
+    url_subida = (
+        "https://firebasestorage.googleapis.com/upload/storage/v1/b/"
+        "{b}/o?uploadType=media&name={n}"
+    ).format(b=bucket, n=encoded)
+    vfxflow_auth._upload_media_bearer(url_subida, datos, token, "image/jpeg")
+    meta_url = (
+        "https://firebasestorage.googleapis.com/v0/b/{b}/o/{n}"
+    ).format(b=bucket, n=encoded)
+    meta = vfxflow_auth._get_con_bearer(meta_url, token) or {}
+    tokens = (
+        meta.get("downloadTokens")
+        or meta.get("downloadToken")
+        or meta.get("downloadURL")
+        or ""
+    )
+    if tokens:
+        firma = str(tokens).split(",")[0].strip()
+        url_adjunto = (
+            "https://firebasestorage.googleapis.com/v0/b/{b}/o/{n}"
+            "?alt=media&token={t}"
+        ).format(b=bucket, n=encoded, t=firma)
+    else:
+        media = meta.get("mediaLink") or ""
+        if not media:
+            raise vfxflow_auth.VfxFlowAuthError(
+                "El storage no devolvió token de descarga.", codigo="http"
+            )
+        url_adjunto = media
+    return {
+        "url": url_adjunto,
+        "name": str(nombre_origen),
+        "size": size,
+        "mimeType": "image/jpeg",
+        "type": "image",
+    }
+
+
 # Instancia del panel mientras este abierto en esta sesion de Nuke
-# (evita registrar duplicados y re-crear el widget al reutilizar).
 _PANEL = None
 
 # String EVALUABLE de la clase (API nukescripts.panels: registerWidgetAsPanel
