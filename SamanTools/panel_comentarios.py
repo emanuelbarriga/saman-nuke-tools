@@ -3318,7 +3318,7 @@ class PanelComentarios(QtWidgets.QWidget):
         )
 
     def _actualizar_estado_shot(self, resuelto, nuevo_id, nuevo_nombre, token):
-        """PATCH del doc del shot con el payload MÍNIMO real (v1.7.3 fix).
+        """PATCH del doc del shot con el payload MÍNIMO real + updateMask EN LA URL.
 
         Solo escribe lo que existe en el doc del shot en producción:
           - `stateId` (stringValue, nuevo_id)
@@ -3326,13 +3326,17 @@ class PanelComentarios(QtWidgets.QWidget):
           - `progress` (integerValue = defaultPercentage del estado NUEVO) SOLO
             si ese estado tiene `defaultPercentage` (de `self._estados_combo`).
         NUNCA escribe `status` (el doc real no lo tiene).
-        NO envía `updateMask` EN EL BODY: la API REST lo espera como query
-        parameter (`?updateMask.fieldPaths=...`); mandarlo en el JSON rompe con
-        `Invalid JSON payload ... Unknown name "updateMask"` (error real de
-        producción). Sin updateMask, Firestore solo actualiza los campos
-        presentes en `fields` y deja el resto intacto — exactamente lo que
-        necesita el PATCH. `nuevo_nombre` se conserva por compat pero no se
-        escribe.
+
+        CRÍTICO (lección de la v1.7.8): el `updateMask` de la API REST de
+        Firestore va como QUERY PARAMETER de la URL (`?updateMask.fieldPaths=...`).
+        - Mandarlo EN EL BODY falla: `Invalid JSON payload ... Unknown name
+          "updateMask"` (bug de la v1.7.6/7.7).
+        - NO mandarlo hace que Firestore REEMPLAZE el documento con los campos
+          enviados: borra `code`/`projectId`/`chapterId`/`referenceImages` y
+          deja el shot sin identidad (bug GRAVE de la v1.7.8; documentado en
+          el archivo de lecciones).
+        Con updateMask en la URL, los campos NO referenciados quedan intactos.
+        `nuevo_nombre` se conserva por compat pero no se escribe.
         """
         cfg = vfxflow_config.obtener_config_efectiva()
         fb = (cfg or {}).get("project_id") or resuelto["project_id"]
@@ -3349,11 +3353,21 @@ class PanelComentarios(QtWidgets.QWidget):
             "stateId": {"stringValue": str(nuevo_id)},
             "updatedAt": {"timestampValue": _iso_ahora()},
         }
+        # updateMask SIEMPRE en la URL como query parameter (nunca en el body).
+        campos_mask = ["stateId", "updatedAt"]
         nuevo = (getattr(self, "_estados_combo", None) or {}).get(str(nuevo_id))
         if nuevo is not None and nuevo.get("defaultPercentage") is not None:
             fields["progress"] = {
                 "integerValue": str(int(nuevo["defaultPercentage"]))
             }
+            campos_mask.append("progress")
+        import urllib.parse as _parse
+
+        mascara = "&".join(
+            "updateMask.fieldPaths={0}".format(_parse.quote(c))
+            for c in campos_mask
+        )
+        url = "{0}?{1}".format(url, mascara)
         payload = {"fields": fields}
         return vfxflow_auth._patch_json_bearer(url, payload, token)
 

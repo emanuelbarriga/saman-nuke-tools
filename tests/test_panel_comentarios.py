@@ -3680,7 +3680,15 @@ def test_actualizar_estado_shot_payload_sin_status_con_progress(monkeypatch):
 
     assert capturas
     url, payload, token = capturas[0]
-    assert url.endswith("/projects/pid/chapters/cid/shots/sid")
+    assert url.startswith(
+        "https://firestore.googleapis.com/v1/projects/vfxpm-be912/databases/"
+        "(default)/documents/projects/pid/chapters/cid/shots/sid"
+    )
+    # updateMask va como QUERY PARAMETER de la URL (lección v1.7.8: sin mask la
+    # API REEMPLAZA el doc y borra code/projectId/referenceImages).
+    assert "updateMask.fieldPaths=stateId" in url
+    assert "updateMask.fieldPaths=updatedAt" in url
+    assert "updateMask.fieldPaths=progress" in url
     fields = payload["fields"]
     # NUNCA escribe `status` (estaba en el bug: Firestore lo rechazaba).
     assert "status" not in fields
