@@ -402,6 +402,7 @@ class _BotonSelectorFake:
         self.habilitado = False
         self.tooltip = ""
         self.menu = None
+        self.icono = None
 
     def setText(self, texto):
         self.texto = texto
@@ -411,6 +412,9 @@ class _BotonSelectorFake:
 
     def setToolTip(self, tooltip):
         self.tooltip = tooltip
+
+    def setIcon(self, icono):
+        self.icono = icono
 
     def setTextFormat(self, formato):
         pass
@@ -2169,7 +2173,9 @@ def test_poblar_estado_selector_selecciona_actual():
     assert panel._estado_actual_id == "e2"
     assert panel._estados_combo["e1"]["order"] == 1
     chip = panel._boton_estado_actual
-    assert "#22C55E" in chip.texto and "Aprobado" in chip.texto
+    # El color viaja como icono dot (QToolButton no soporta rich text);
+    # el texto del chip es el nombre del estado, no HTML.
+    assert chip.texto == "Aprobado"
     # Actual en el último índice: siguiente deshabilitado, anterior habilitado.
     assert panel._boton_estado_siguiente.habilitado is False
     assert panel._boton_estado_anterior.habilitado is True

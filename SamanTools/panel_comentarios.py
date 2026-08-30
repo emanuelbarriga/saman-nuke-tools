@@ -937,6 +937,21 @@ def _color_estado_chip(estado):
     return str(color) if color else _COLOR_ESTADO_NEUTRAL
 
 
+def _icono_dot_estado(color):
+    """QIcon 16×16 del color (el "●" del selector), o None si no hay paint.
+
+    QToolButton/QAction no renderizan rich text; el color del estado viaja
+    como icono cuadrado pequeño (igual que la app web usa un círculo). Sin
+    plataforma gráfica devuelve None (el texto queda sin color, no rompe).
+    """
+    try:
+        pixmap = QtWidgets.QPixmap(16, 16)
+        pixmap.fill(QtGui.QColor(str(color)))
+        return QtGui.QIcon(pixmap)
+    except Exception:
+        return None
+
+
 def _indices_estado_anterior_siguiente(ids_ordenados, estado_actual_id):
     """"(anterior_id, siguiente_id) por el orden del selector, o None cada uno.
 
@@ -1337,7 +1352,8 @@ class PanelComentarios(QtWidgets.QWidget):
         self._boton_estado_actual = QtWidgets.QToolButton(self._estado_selector)
         self._boton_estado_actual.setObjectName("botonEstadoActual")
         self._boton_estado_actual.setToolTip("Cambiar estado")
-        self._boton_estado_actual.setTextFormat(QtCore.Qt.RichText)
+        # NOTA: QToolButton NO soporta setTextFormat (eso es de QLabel); el
+        # color del estado se muestra con el icono dot (ver _icono_estado).
         self._boton_estado_actual.setText("Estado")
         self._menu_estados = QtWidgets.QMenu(self._boton_estado_actual)
         self._menu_estados.triggered.connect(self._on_estado_menu)
@@ -3036,12 +3052,9 @@ class PanelComentarios(QtWidgets.QWidget):
                 accion.setCheckable(True)
                 accion.setChecked(True)
             color = _color_estado_chip(self._estados_combo.get(estado_id))
-            try:
-                pixmap = QtWidgets.QPixmap(16, 16)
-                pixmap.fill(QtGui.QColor(color))
-                accion.setIcon(QtGui.QIcon(pixmap))
-            except Exception:
-                pass  # sin paint device no hay icono; el chip muestra el color
+            icono = _icono_dot_estado(color)
+            if icono is not None:
+                accion.setIcon(icono)
 
     def _refrescar_chip_estado(self):
         """Pinta el chip central con "● color + nombre estado actual"."""
@@ -3054,7 +3067,11 @@ class PanelComentarios(QtWidgets.QWidget):
             chip.setText("Estado")
             return
         color = _color_estado_chip(item)
-        chip.setText('<span style="color:{0};">●</span> {1}'.format(color, nombre))
+        # Sin rich text (QToolButton): el color va como icono dot + texto plano.
+        icono = _icono_dot_estado(color)
+        if icono is not None:
+            chip.setIcon(icono)
+        chip.setText(str(nombre))
 
     def _aplicar_estado_selector_enabled(self):
         """Habilita los 3 botones del selector según sesión/plano/estados.
