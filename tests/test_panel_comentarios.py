@@ -3684,12 +3684,13 @@ def test_actualizar_estado_shot_payload_sin_status_con_progress(monkeypatch):
     fields = payload["fields"]
     # NUNCA escribe `status` (estaba en el bug: Firestore lo rechazaba).
     assert "status" not in fields
-    assert "status" not in payload["updateMask"]["fieldPaths"]
+    # El updateMask NO va en el body (la API REST lo espera como query
+    # parameter; en el JSON rompe con "Unknown name updateMask").
+    assert "updateMask" not in payload
     assert fields["stateId"] == {"stringValue": "e2"}
     assert "timestampValue" in fields["updatedAt"]
     # progress = defaultPercentage del estado NUEVO.
     assert fields["progress"] == {"integerValue": "80"}
-    assert payload["updateMask"]["fieldPaths"] == ["stateId", "updatedAt", "progress"]
 
 
 def test_actualizar_estado_shot_sin_default_no_progress(monkeypatch):
@@ -3711,7 +3712,7 @@ def test_actualizar_estado_shot_sin_default_no_progress(monkeypatch):
 
     payload = capturas[0]
     assert "progress" not in payload["fields"]  # sin defaultPercentage: se omite
-    assert payload["updateMask"]["fieldPaths"] == ["stateId", "updatedAt"]
+    assert "updateMask" not in payload  # updateMask NO va en el body (query param)
 
 
 def test_trabajo_cambio_estado_orden_shot_primero():
@@ -4037,3 +4038,65 @@ def test_mensaje_error_escritura_incluye_detalle_servidor():
     mensaje = panel._mensaje_error_escritura(error)
     assert "permisos" in mensaje
     assert "Permission denied" in mensaje
+
+
+def test_event_filter_scrollea_con_rueda_sin_clic():
+    """La rueda sobre el feed scrollea (hover-scroll) sin hacer clic primero.
+
+    Regresión del reporte: "para activarlo toca hacer clic adentro". El
+    eventFilter captura QWheelEvent y lo convierte en scroll del QScrollArea
+    (consumiendo el evento para no propagarlo al panel).
+    """
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    valor = [50]
+
+    class _BarraFake:
+        def value(self):
+            return valor[0]
+
+        def setValue(self, nuevo):
+            valor[0] = nuevo
+
+    area = _WidgetFake()
+    area.verticalScrollBar = lambda: _BarraFake()
+    panel._scroll_actividad = area
+
+    clase_qevent = panel_comentarios.QtCore.QEvent
+    evento = _WidgetFake()
+    evento.type = lambda: clase_qevent.Wheel
+    evento.angleDelta = lambda: _PuntoFake(0, 240)
+
+    assert panel.eventFilter(None, evento) is True
+    assert valor[0] == 50 - 240  # scrolleó con el delta de la rueda
+
+
+def test_event_filter_no_rueda_no_consume():
+    """Evento no-Wheel: el filter no lo trata como scroll (devuelve False).
+
+    En instancias `__new__` sin QApplication el super().eventFilter no existe,
+    así que el contrato testeable es: no-Wheel -> se deja pasar (False).
+    """
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    evento = _WidgetFake()
+    evento.type = lambda: panel_comentarios.QtCore.QEvent.KeyPress
+    resultado = panel.eventFilter(None, evento)
+    assert resultado is False
+
+
+class _PuntoFake:
+    """Emula el QPoint de angleDelta(): solo interesa .y()."""
+
+    def __init__(self, x, y):
+        self._x = x
+        self._y = y
+
+    def y(self):
+        return self._y

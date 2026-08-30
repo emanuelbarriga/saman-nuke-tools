@@ -1688,6 +1688,13 @@ class PanelComentarios(QtWidgets.QWidget):
         # crezca con la altura disponible del panel (antes quedaba clavado en
         # 160 px y era incómodo explorar la actividad).
         self._scroll_actividad.setMinimumHeight(400)
+        # Hover-scroll: la rueda funcione con solo pasar el mouse sobre el feed
+        # (sin tener que hacer clic primero). El QScrollArea instala un filter
+        # que captura los Wheel de él y de TODOS sus descendientes (cards,
+        # labels, botones) y los convierte en scroll del área; no se propaga
+        # al panel. Fix del reporte: "para activarlo toca hacer clic adentro".
+        self._scroll_actividad.viewport().installEventFilter(self)
+        self._widget_contenido_actividad.installEventFilter(self)
         lay_comentarios.addWidget(self._scroll_actividad, 1)
 
         self._label_mensaje_actividad = QtWidgets.QLabel(self._widget_contenido_actividad)
@@ -2685,11 +2692,8 @@ class PanelComentarios(QtWidgets.QWidget):
             label_verbo = QtWidgets.QLabel(verbo, card)
             label_verbo.setObjectName("verboActividad")
             fila_autor.addWidget(label_verbo)
-        rol = actividad.get("userRole") or ""
-        if rol:
-            label_rol = QtWidgets.QLabel(rol, card)
-            label_rol.setObjectName("rolActividad")
-            fila_autor.addWidget(label_rol)
+        # El rol (administrator/coordinator) NO se muestra (pedido del usuario:
+        # entorpece la línea y no aporta); queda solo autor + verbo + tiempo.
         fila_autor.addStretch(1)
         sesion = getattr(self, "sesion", None)
         if _dentro_ventana_10min(actividad.get("createdAt")) and _es_autor(
@@ -3321,10 +3325,14 @@ class PanelComentarios(QtWidgets.QWidget):
           - `updatedAt` (timestampValue, ahora)
           - `progress` (integerValue = defaultPercentage del estado NUEVO) SOLO
             si ese estado tiene `defaultPercentage` (de `self._estados_combo`).
-        NUNCA escribe `status` (el doc real no lo tiene y Firestore rechaza el
-        write con updateMask). `updateMask` = solo los campos realmente
-        escritos. `nuevo_nombre` se conserva en la firma por compat pero ya no
-        se escribe (decisión documentada).
+        NUNCA escribe `status` (el doc real no lo tiene).
+        NO envía `updateMask` EN EL BODY: la API REST lo espera como query
+        parameter (`?updateMask.fieldPaths=...`); mandarlo en el JSON rompe con
+        `Invalid JSON payload ... Unknown name "updateMask"` (error real de
+        producción). Sin updateMask, Firestore solo actualiza los campos
+        presentes en `fields` y deja el resto intacto — exactamente lo que
+        necesita el PATCH. `nuevo_nombre` se conserva por compat pero no se
+        escribe.
         """
         cfg = vfxflow_config.obtener_config_efectiva()
         fb = (cfg or {}).get("project_id") or resuelto["project_id"]
@@ -3341,14 +3349,12 @@ class PanelComentarios(QtWidgets.QWidget):
             "stateId": {"stringValue": str(nuevo_id)},
             "updatedAt": {"timestampValue": _iso_ahora()},
         }
-        update_mask = ["stateId", "updatedAt"]
         nuevo = (getattr(self, "_estados_combo", None) or {}).get(str(nuevo_id))
         if nuevo is not None and nuevo.get("defaultPercentage") is not None:
             fields["progress"] = {
                 "integerValue": str(int(nuevo["defaultPercentage"]))
             }
-            update_mask.append("progress")
-        payload = {"fields": fields, "updateMask": {"fieldPaths": update_mask}}
+        payload = {"fields": fields}
         return vfxflow_auth._patch_json_bearer(url, payload, token)
 
     # ------------------------------------------- selector de estado (v1.7.1)
@@ -4050,6 +4056,32 @@ class PanelComentarios(QtWidgets.QWidget):
         self._estado(resumen)
 
     # ------------------------------------------------------------ utilidad
+
+    def eventFilter(self, watched, evento):
+        """Rueda del mouse sobre el feed scrollea sin hacer clic primero.
+
+        El QScrollArea (viewport + contenedor) instala este filter. Cuando un
+        QWheelEvent llega de cualquier hijo (cards, labels, botones) del feed,
+        se convierte en scroll del QScrollArea y se consume (True) para que NO
+        se propague al resto del panel. Así el usuario solo pasa el mouse sobre
+        la sección "Actividad Reciente" y la rueda funciona (reporte: "para
+        activarlo toca hacer clic adentro"). Nunca lanza.
+        """
+        if evento.type() == QtCore.QEvent.Wheel:
+            try:
+                barras = self._scroll_actividad.verticalScrollBar()
+                delta = evento.angleDelta().y()
+                if delta:
+                    barras.setValue(barras.value() - delta)
+                return True
+            except Exception:
+                return False
+        # No-Wheel: dejar pasar. Sin parent construido (instancias __new__ en
+        # tests) no hay super que llamar; en producción devolvemos False.
+        try:
+            return super(PanelComentarios, self).eventFilter(watched, evento)
+        except Exception:
+            return False
 
     def _estado(self, texto, error=False):
         self._etiqueta_estado.setStyleSheet(
