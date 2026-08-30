@@ -18,3 +18,6 @@ menu.py.bak.*
 
 # Marcador de ultima actualizacion (rate-limit del auto-update)
 .last_update
+
+# Registro de skills (local, regenerable)
+.atl/

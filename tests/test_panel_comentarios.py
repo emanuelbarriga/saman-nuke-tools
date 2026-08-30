@@ -3474,6 +3474,12 @@ def test_subir_imagen_storage_token_y_media_link(monkeypatch, tmp_path):
         "pid", jpg, "a.jpg", 3, {"email": "a@b.com", "local_id": "uid"}, "T"
     )
     assert urls_subida
+    # El upload usa el endpoint v0 de Firebase Storage (NO /upload/storage/v1).
+    assert urls_subida[0].startswith(
+        "https://firebasestorage.googleapis.com/v0/b/"
+    )
+    assert "upload/storage/v1/" not in urls_subida[0]
+    assert "uploadType=media" in urls_subida[0]
     assert res["url"].startswith("https://firebasestorage.googleapis.com/v0/b/")
     assert "alt=media&token=tok1" in res["url"]
     assert res["name"] == "a.jpg"
@@ -3778,3 +3784,256 @@ def test_trabajo_cambio_estado_actividad_falla_tras_shot_ok():
     # El estado del shot YA cambió: ok con aviso (el log no aborta el save).
     assert panel._escritura_trabajo["estado"] == "ok"
     assert "no se pudo registrar la actividad" in panel._escritura_trabajo["mensaje"]
+
+
+# ---------------------------------------------------------------------------
+# v1.7.3 fixes: flujo adjunto->enviar, nombres de estado reales, orden chips
+# ---------------------------------------------------------------------------
+
+
+def test_on_enviar_comentario_pasa_adjunto_copia_al_worker(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._input_comentario = _LineEditFake("mirá")
+    panel.sesion = {"email": "a@b.com", "local_id": "u", "id_token": "IT"}
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR", "capitulo": 107, "plano": "008_00100",
+    }
+    panel._id_token_actual = lambda: "TOKEN"
+    panel._escritura_trabajo_en_curso = False
+    panel._adjunto_pendiente = {
+        "ruta": "/tmp/cap.jpg", "nombre": "cap.jpg", "size": 3,
+    }
+    panel._reply_padre_id = None
+    panel._reply_padre_autor = ""
+    lanzados = []
+    panel._lanzar_escritura = (
+        lambda callable_, args, mensaje: lanzados.append((callable_, args, mensaje))
+    )
+
+    panel._on_enviar_comentario()
+
+    assert lanzados and lanzados[0][0] == panel._trabajo_crear_actividad
+    args = lanzados[0][1]
+    # El worker recibe el adjunto POR ARGUMENTO (no lee self._adjunto_pendiente).
+    assert args[3] == {"ruta": "/tmp/cap.jpg", "nombre": "cap.jpg", "size": 3}
+
+
+def test_on_enviar_comentario_con_adjunto_worker_publica_metadata(monkeypatch, tmp_path):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel._adjunto_pendiente = None
+    panel.sesion = {"email": "a@b.com", "local_id": "u", "id_token": "IT"}
+    panel._input_comentario = _LineEditFake("mirá esta imagen")
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR", "capitulo": 107, "plano": "008_00100",
+        "canonico": "HTLR_107_008_00100_V01.nk",
+    }
+    panel._id_token_actual = lambda: "TOKEN"
+    panel._escritura_trabajo_en_curso = False
+    panel._reply_padre_id = None
+    panel._reply_padre_autor = ""
+    panel._etiqueta_estado = _LabelFake()
+    jpg = str(tmp_path / "cap.jpg")
+    with open(jpg, "wb") as fh:
+        fh.write(b"JPG")
+    panel._adjunto_pendiente = {"ruta": jpg, "nombre": "cap.jpg", "size": 3}
+
+    monkeypatch.setattr(panel_comentarios.threading, "Thread", _ThreadFake)
+    monkeypatch.setattr(
+        panel_comentarios.QtCore.QTimer, "singleShot", lambda ms, cb: None
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_datos,
+        "resolver_plano",
+        lambda d, t, config=None: {
+            "project_id": "pid", "chapter_id": "cid", "shot_id": "sid", "shot": {},
+        },
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_upload_media_bearer",
+        lambda url, datos, token, content_type: {"name": "x"},
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth,
+        "_get_con_bearer",
+        lambda url, token: {"downloadTokens": "dt1"},
+    )
+    capturado = {}
+    panel._crear_documento_actividad = (
+        lambda pid, campos, token: capturado.update(campos) or {}
+    )
+
+    panel._on_enviar_comentario()
+
+    # El worker (sincrónico por _ThreadFake) publicó el comentario con adjunto.
+    assert panel._escritura_trabajo["estado"] == "ok"
+    assert capturado.get("type") == "comment"
+    atts = capturado["metadata"]["attachments"]
+    assert atts and atts[0]["name"] == "cap.jpg"
+    assert atts[0]["type"] == "image"
+    assert not os.path.exists(jpg)  # temp borrado al éxito
+    assert panel._adjunto_pendiente is not None  # lo limpia _poll_escritura
+
+
+def test_encode_valor_firestore_metadata_attachments():
+    from SamanTools import panel_comentarios
+
+    adj = {
+        "id": "att1", "type": "image", "url": "https://x/a.jpg",
+        "name": "a.jpg", "size": 3, "mimeType": "image/jpeg",
+    }
+    enc = panel_comentarios._encode_valor_firestore([adj])
+    mapa = enc["arrayValue"]["values"][0]["mapValue"]["fields"]
+    assert mapa["type"] == {"stringValue": "image"}
+    assert mapa["size"] == {"integerValue": "3"}
+    assert mapa["url"] == {"stringValue": "https://x/a.jpg"}
+    meta = panel_comentarios._encode_valor_firestore({"attachments": [adj]})
+    assert meta["mapValue"]["fields"]["attachments"]["arrayValue"]["values"]
+
+
+def test_aplicar_cambio_estado_previo_nombre_real():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "local_id": "uid", "id_token": "IT"}
+    panel._estados_combo = {
+        "e0": {"id": "e0", "name": "Recibido"},
+        "e1": {"id": "e1", "name": "Aprobado"},
+    }
+    panel._estados_ordenados = ["e0", "e1"]
+    panel._estado_actual_id = "e0"
+    panel._plano_resuelto = {
+        "project_id": "pid", "chapter_id": "cid", "shot_id": "sid",
+        "shot": {"stateId": "e0", "status": "received"},  # nombre inglés en el doc
+    }
+    panel._plano_activo = lambda: {
+        "proyecto": "HTLR", "capitulo": 107, "plano": "008_00100",
+    }
+    panel._id_token_actual = lambda: "TOKEN"
+    panel._escritura_trabajo_en_curso = False
+    lanzados = []
+    panel._lanzar_escritura = lambda *a, **k: lanzados.append(a)
+
+    assert panel._aplicar_cambio_estado("e1") is True
+    campos = lanzados[0][1][3]
+    # El nombre REAL sale del mapa del selector (no del `status` del shot).
+    assert campos["previousStateName"] == "Recibido"
+    assert campos["newStateName"] == "Aprobado"
+
+
+def test_aplicar_cambio_estado_previo_fallback_status_y_desconocido():
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = {"email": "a@b.com", "local_id": "uid", "id_token": "IT"}
+    panel._estados_combo = {"e1": {"id": "e1", "name": "Aprobado"}}
+    panel._estados_ordenados = ["e0", "e1"]
+    panel._estado_actual_id = "e0"
+    # Sin item en el mapa -> fallback al `status` del shot.
+    panel._plano_resuelto = {
+        "project_id": "pid", "chapter_id": "cid", "shot_id": "sid",
+        "shot": {"stateId": "e0", "status": "received"},
+    }
+    panel._plano_activo = lambda: {"proyecto": "HTLR", "capitulo": 107, "plano": "008_00100"}
+    panel._id_token_actual = lambda: "TOKEN"
+    panel._escritura_trabajo_en_curso = False
+    lanzados = []
+    panel._lanzar_escritura = lambda *a, **k: lanzados.append(a)
+
+    panel._aplicar_cambio_estado("e1")
+    assert lanzados[0][1][3]["previousStateName"] == "received"  # fallback status
+
+    # Sin status tampoco -> "desconocido".
+    panel._plano_resuelto["shot"] = {"stateId": "e0"}
+    lanzados.clear()
+    panel._aplicar_cambio_estado("e1")
+    assert lanzados[0][1][3]["previousStateName"] == "desconocido"
+
+
+class _LayoutHBoxFake:
+    """QHBoxLayout fake: registra los widgets agregados en orden."""
+
+    def __init__(self, *a, **k):
+        self.widgets = []
+
+    def addWidget(self, widget, *args, **kwargs):
+        self.widgets.append(widget)
+
+    def addStretch(self, n=0):
+        pass
+
+
+class _FlechaLabelFake:
+    def __init__(self, texto="", parent=None):
+        self.texto = texto
+        self.style = ""
+
+
+class _LayoutCardFake:
+    def addLayout(self, layout):
+        pass
+
+
+def test_agregar_fila_estados_orden_previo_nuevo(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    caja = _LayoutHBoxFake()
+    monkeypatch.setattr(
+        panel_comentarios.QtWidgets, "QHBoxLayout", lambda *a, **k: caja
+    )
+    monkeypatch.setattr(
+        panel_comentarios.QtWidgets,
+        "QLabel",
+        lambda *a, **k: _FlechaLabelFake(texto="→"),
+    )
+    panel._chip_estado = lambda texto, parent, color="": ("chip", texto, color)
+
+    panel._agregar_fila_estados(
+        {"chips": ("QC INTERNO", "QC CLIENTE"), "chip_ids": ("u1", "u2")},
+        {},
+        object(),
+        _LayoutCardFake(),
+    )
+
+    chips = [w for w in caja.widgets if isinstance(w, tuple)]
+    # Orden NATURAL: [previo] → [nuevo] (consistente con "de X a Y").
+    assert chips == [("chip", "QC INTERNO", ""), ("chip", "QC CLIENTE", "")]
+    flechas = [w for w in caja.widgets if not isinstance(w, tuple)]
+    assert len(flechas) == 1 and flechas[0].texto == "→"
+    assert caja.widgets.index(chips[0]) < caja.widgets.index(flechas[0]) < caja.widgets.index(chips[1])
+
+
+def test_mensaje_error_escritura_incluye_detalle_servidor():
+    """El error http ahora muestra el detalle del servidor (p.ej. PERMISSION_DENIED).
+
+    Regresión: _levantar_error_http agrega " · <mensaje>" al error; el panel lo
+    incluye para diagnosticar rules vs payload sin abrir la consola.
+    """
+    from SamanTools import panel_comentarios
+    from SamanTools.vfxflow_auth import VfxFlowAuthError
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    error = VfxFlowAuthError(
+        "La API de VFXFlow respondió con un error HTTP (403) · Permission denied.",
+        codigo="http",
+    )
+    mensaje = panel._mensaje_error_escritura(error)
+    assert "permisos" in mensaje
+    assert "Permission denied" in mensaje

@@ -2771,11 +2771,12 @@ class PanelComentarios(QtWidgets.QWidget):
         return card
 
     def _agregar_fila_estados(self, cuerpo, colores, card, lay_card):
-        """Chips de status [NUEVO] → [PREVIO] con el color real del estado.
+        """Chips de status [PREVIO] → [NUEVO] con el color real del estado.
 
         El color sale del mapa {stateId: color} (id en `cuerpo["chip_ids"]`);
-        sin color cae al chip neutral `QLabel#chipEstado`. Orden invertido
-        segun la spec (el estado nuevo a la izquierda).
+        sin color cae al chip neutral `QLabel#chipEstado`. Orden NATURAL
+        (previo a la izquierda), consistente con el texto del content
+        "Estado cambiado de X a Y" (v1.7.3).
         """
         previo, nuevo = cuerpo["chips"]
         ids = cuerpo.get("chip_ids")
@@ -2786,10 +2787,10 @@ class PanelComentarios(QtWidgets.QWidget):
             color_previo = _color_estado(colores, id_previo)
             color_nuevo = _color_estado(colores, id_nuevo)
         fila = QtWidgets.QHBoxLayout()
-        fila.addWidget(self._chip_estado(nuevo, card, color_nuevo))
+        fila.addWidget(self._chip_estado(previo, card, color_previo))
         flecha = QtWidgets.QLabel("→", card)
         fila.addWidget(flecha, 0, QtAlignment.AlignCenter)
-        fila.addWidget(self._chip_estado(previo, card, color_previo))
+        fila.addWidget(self._chip_estado(nuevo, card, color_nuevo))
         fila.addStretch(1)
         lay_card.addLayout(fila)
 
@@ -3157,9 +3158,13 @@ class PanelComentarios(QtWidgets.QWidget):
         campos = _base_campos_actividad("", "", sesion, tipo, texto)
         if self._reply_padre_id:
             campos["parentId"] = self._reply_padre_id
+        # Copia del adjunto pendiente: el worker lo recibe POR ARGUMENTO (no
+        # lee self._adjunto_pendiente), para que un quitar/limpiar posterior no
+        # afecte el envío en vuelo (fix v1.7.3).
+        adjunto_trabajo = dict(adjunto) if isinstance(adjunto, dict) and adjunto else None
         self._lanzar_escritura(
             self._trabajo_crear_actividad,
-            (plano, campos, token, adjunto or None),
+            (plano, campos, token, adjunto_trabajo),
             "Publicando {0}…".format("respuesta" if tipo == "reply" else "comentario"),
         )
 
@@ -3280,10 +3285,18 @@ class PanelComentarios(QtWidgets.QWidget):
         if codigo == "red":
             return _MENSAJE_FIREWALL_GOOGLE
         if codigo == "http":
-            return (
+            # El mensaje del servidor suele venir incluido (vfxflow_auth
+            # _levantar_error_http agrega " · <mensaje>"): se muestra para
+            # diagnosticar PERMISSION_DENIED (rules) vs payload malformado
+            # sin abrir la consola de Nuke.
+            texto = str(error)
+            base = (
                 "No se pudo escribir en VFXFlow (parece un problema de "
                 "permisos: consultá al admin si no tenés acceso de escritura)."
             )
+            if " · " in texto:
+                base += "  Detalle: {0}".format(texto.split(" · ", 1)[1].rstrip("."))
+            return base
         if codigo == "token":
             return "Sesión vencida: iniciá sesión de nuevo."
         return str(error)
@@ -3547,9 +3560,15 @@ class PanelComentarios(QtWidgets.QWidget):
             return False
         shot = resuelto.get("shot") or {}
         previo_id = shot.get("stateId") or ""
-        previo_nombre = shot.get("status") or ""
-        if not previo_nombre:
-            previo_nombre = "desconocido"
+        # Nombre REAL del estado previo: del mapa del selector por stateId
+        # (no del campo `shot.status`, que puede venir en inglés "received" o
+        # ni existir). Fix v1.7.3.
+        previo_item = (getattr(self, "_estados_combo", None) or {}).get(str(previo_id)) or {}
+        previo_nombre = (
+            previo_item.get("name")
+            or shot.get("status")
+            or "desconocido"
+        )
         campos = _campos_status_change(
             resuelto["project_id"],
             resuelto["shot_id"],
@@ -4061,7 +4080,7 @@ def _subir_imagen_storage(project_id, jpg_temporal, nombre_origen, size, sesion,
     with open(jpg_temporal, "rb") as fh:
         datos = fh.read()
     url_subida = (
-        "https://firebasestorage.googleapis.com/upload/storage/v1/b/"
+        "https://firebasestorage.googleapis.com/v0/b/"
         "{b}/o?uploadType=media&name={n}"
     ).format(b=bucket, n=encoded)
     vfxflow_auth._upload_media_bearer(url_subida, datos, token, "image/jpeg")

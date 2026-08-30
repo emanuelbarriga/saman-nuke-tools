@@ -568,15 +568,19 @@ def _patch_json_bearer(url, payload, id_token):
 
 
 def _upload_media_bearer(url, datos, id_token, content_type="application/octet-stream"):
-    """POST media (bytes crudos) con Bearer, para el upload de storage.
+    """POST media (bytes crudos) al upload REST de Firebase Storage.
 
-    Body = los bytes tal cual (p.ej. jpg); `content_type` va en el header.
-    Devuelve el JSON parseado de la respuesta (el upload responde con el
-    metadata del objeto). Errores igual que el resto: 401 -> "token",
+    Endpoint: `https://firebasestorage.googleapis.com/v0/b/{bucket}/o`
+    `?uploadType=media&name={encoded}` (NO `/upload/storage/v1/`, que es la
+    Cloud Storage API con service account y devuelve 404 HTML de Google). La
+    autenticación del SDK de Firebase Storage usa `Authorization: Firebase
+    <id_token>` (NO Bearer). Body = los bytes tal cual (p.ej. jpg) y
+    `content_type` en el header. Devuelve el JSON parseado de la respuesta
+    (metadata del objeto). Errores igual que el resto: 401 -> "token",
     404 -> None, otros HTTPError -> "http", URLError/timeout -> "red".
     """
     req = urllib.request.Request(url, data=datos, method="POST")
-    req.add_header("Authorization", "Bearer {0}".format(id_token))
+    req.add_header("Authorization", "Firebase {0}".format(id_token))
     req.add_header("Content-Type", content_type)
 
     try:
@@ -620,8 +624,13 @@ def _levantar_error_http(e, es_firestore=False):
     if es_firestore and e.code == 404:
         # Documento inexistente en users/{uid}: se trata como rol por defecto.
         return None
+    # Incluye el mensaje REAL del servidor (p.ej. PERMISSION_DENIED de rules)
+    # para que el usuario pueda pegarlo y el diagnóstico no sea ciego.
+    detalle = " · {0}".format(mensaje_servidor) if mensaje_servidor else ""
     raise VfxFlowAuthError(
-        "La API de VFXFlow respondió con un error HTTP ({0}).".format(e.code),
+        "La API de VFXFlow respondió con un error HTTP ({0}){1}.".format(
+            e.code, detalle
+        ),
         codigo="http",
     )
 

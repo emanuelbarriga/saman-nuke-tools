@@ -837,6 +837,8 @@ def test_upload_media_bearer_ok(monkeypatch):
     def _fake(req, *args, **kwargs):
         assert req.method == "POST"
         assert req.data == b"DATA"
+        # Firebase Storage usa `Authorization: Firebase <id_token>` (NO Bearer).
+        assert req.headers.get("Authorization") == "Firebase TOKEN_ID"
         return RespuestaFalsa(cuerpo)
 
     _parchar_abrir(monkeypatch, _fake)
