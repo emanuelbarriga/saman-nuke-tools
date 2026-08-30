@@ -338,22 +338,40 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 
 # --------------------------------------------------------- helpers puros
 
-def _escapar_y_linkificar(texto):
-    """Escapa `texto` e hipervincula las URLs `https?://\\S+` (HTML seguro).
+_REGEX_MARKDOWN_BOLD = re.compile(r"\*\*(.+?)\*\*")
 
-    Escapa TODO el texto primero (nunca HTML arbitrario) y envuelve las URLs
-    resultantes en `<a href="...">`. Devuelve HTML seguro para las labels de
-    las cards del feed (que abren los links con QLabel.setOpenExternalLinks).
+
+def _markdown_bold(texto_escapado):
+    """Convierte **texto** en `<b>texto</b>` sobre HTML YA escapado.
+
+    Se aplica DESPUÉS de `html.escape`: el contenido ya es seguro y los `<b>`
+    que se insertan no se vuelven a escapar. El regex es no-greedy y exige al
+    menos un carácter; los `**` desbalanceados quedan literales. Puro.
+    """
+    if not texto_escapado:
+        return texto_escapado
+    return _REGEX_MARKDOWN_BOLD.sub(r"<b>\1</b>", texto_escapado)
+
+
+def _escapar_y_linkificar(texto):
+    """Escapa `texto`, aplica bold de markdown e hipervincula URLs (HTML).
+
+    Orden: html.escape -> _markdown_bold -> linkificar. El escape primero hace
+    imposible la inyección; el bold inserta `<b>` sobre texto ya seguro; la
+    linkificación envuelve las URLs en `<a href="...">` sin re-escapar. Es el
+    cuerpo de las cards del feed (QLabel con openExternalLinks).
     """
     if not texto:
         return ""
     escapado = html.escape(str(texto))
+    escapado = _markdown_bold(escapado)
 
     def _enlace(m):
         url = m.group(0)
         return '<a href="{0}">{1}</a>'.format(url, url)
 
-    return re.sub(r"https?://\S+", _enlace, escapado)
+    # `[^\s<>"']+` evita que la URL capture los tags `<b>`/`<a>` ya insertados.
+    return re.sub(r"https?://[^\s<>\"']+", _enlace, escapado)
 
 
 def _tiempo_relativo(creado_en):
@@ -495,11 +513,12 @@ def _texto_asignacion(actividad):
 # ----------------------------------------------------- helpers v1.6.5 (puros)
 
 def _tiempo_relativo_largo(creado_en):
-    """Tiempo relativo en espanol COMPLETO (spec app web).
+    """Tiempo relativo en espanol, MISMO cierre visual que la app web.
 
-    "ahora", "hace X minutos/horas/días", "hace 1 mes/X meses",
-    "hace 1 año/X años" (singular/plural). Misma base de parseo que
-    `_tiempo_relativo`; fallback: recorta a 19 caracteres. Puro.
+    <1 min -> "hace menos de un minuto"; <1 h -> "hace X minutos"; <24 h ->
+    "hace alrededor de X horas"; <30 d -> "hace X días"; meses/años como hoy
+    (singular/plural). Misma base de parseo que `_tiempo_relativo`; fallback:
+    recorta a 19 caracteres. Puro.
     """
     if not creado_en:
         return ""
@@ -514,13 +533,15 @@ def _tiempo_relativo_largo(creado_en):
     except (TypeError, ValueError):
         return str(creado_en)[:19]
     if segundos < 60:
-        return "ahora"
+        return "hace menos de un minuto"
     if segundos < 60 * 60:
         minutos = int(segundos // 60)
         return "hace 1 minuto" if minutos == 1 else "hace {0} minutos".format(minutos)
     if segundos < _DIA_SEGUNDOS:
         horas = int(segundos // 3600)
-        return "hace 1 hora" if horas == 1 else "hace {0} horas".format(horas)
+        if horas == 1:
+            return "hace alrededor de 1 hora"
+        return "hace alrededor de {0} horas".format(horas)
     if segundos < _MES_SEGUNDOS:
         dias = int(segundos // _DIA_SEGUNDOS)
         return "hace 1 día" if dias == 1 else "hace {0} días".format(dias)
@@ -582,12 +603,12 @@ _GLIFOS_TIPO = {
 _VERBOS_TIPO = {
     "comment": "comentó",
     "reply": "respondió",
-    "file_upload": "subió imagen",
-    "status_change": "cambió estado",
-    "version_update": "actualizó versión",
-    "task_update": "actualizó tarea",
-    "batch_update": "actualizó estados",
-    "assignment_change": "cambió asignación",
+    "file_upload": "subió una imagen",
+    "status_change": "cambió el estado",
+    "version_update": "actualizó la versión",
+    "task_update": "actualizó la tarea",
+    "batch_update": "actualizó el plano",
+    "assignment_change": "realizó una acción",
 }
 
 
@@ -722,6 +743,42 @@ def _agrupar_actividad(actividad):
         else:
             padres.append(item)
     return padres, hijas
+
+
+def _intentar_card(callback, *args, **kwargs):
+    """Ejecuta el render de una card; devuelve (resultado, None) o (None, error).
+
+    Lo usa `_publicar_actividad` para que una card que explota (campo raro,
+    markdown, adjunto...) NO corte el feed: se captura la excepción y se
+    continúa con la siguiente. Puro y testeable.
+    """
+    try:
+        return callback(*args, **kwargs), None
+    except Exception as e:
+        return None, e
+
+
+def _reportar_card_fallida(actividad, error):
+    """Log del render fallido de una card (diagnóstico; nunca a la UI).
+
+    Solo imprime el tipo/id de la card y el error para depurar; no rompe y no
+    inunda el estado del panel.
+    """
+    tipo = ""
+    identidad = ""
+    if isinstance(actividad, dict):
+        tipo = actividad.get("type") or ""
+        identidad = actividad.get("id") or actividad.get("content") or ""
+    mensaje = "Card fallida (type=%s id=%s): %s" % (tipo, identidad, error)
+    try:
+        nuke.tprint(mensaje)
+        return
+    except Exception:
+        pass
+    try:
+        print(mensaje)
+    except Exception:
+        pass
 
 
 def _color_estado(colores, state_id):
@@ -2364,25 +2421,42 @@ class PanelComentarios(QtWidgets.QWidget):
         colores_estados = colores_estados or {}
         imagenes = imagenes or {}
         padres, hijas = _agrupar_actividad(actividad)
+        fallidas = 0
         for padre in padres:
-            self._layout_actividad.addWidget(
-                self._crear_card_actividad(
-                    padre,
+            card, error = _intentar_card(
+                self._crear_card_actividad,
+                padre,
+                colores_estados=colores_estados,
+                imagenes=imagenes,
+            )
+            if error is not None:
+                # Una card que explota NO corta el feed (bug reportado).
+                fallidas += 1
+                _reportar_card_fallida(padre, error)
+                continue
+            self._layout_actividad.addWidget(card)
+            hijas_padre = hijas.get(padre.get("id")) or []
+            if hijas_padre:
+                bloque, error_bloque = _intentar_card(
+                    self._crear_bloque_respuestas,
+                    hijas_padre,
                     colores_estados=colores_estados,
                     imagenes=imagenes,
                 )
-            )
-            hijas_padre = hijas.get(padre.get("id")) or []
-            if hijas_padre:
-                self._layout_actividad.addWidget(
-                    self._crear_bloque_respuestas(
-                        hijas_padre,
-                        colores_estados=colores_estados,
-                        imagenes=imagenes,
-                    )
-                )
+                if error_bloque is not None:
+                    fallidas += len(hijas_padre)
+                    _reportar_card_fallida(padre, error_bloque)
+                    continue
+                self._layout_actividad.addWidget(bloque)
         self._layout_actividad.addStretch(1)
         cantidad = len(actividad)
+        if fallidas:
+            mostradas = cantidad - fallidas
+            self._estado(
+                "%d de %d actividades mostradas (%d con error)"
+                % (mostradas, cantidad, fallidas)
+            )
+            return
         self._estado(
             "%d actividad%s."
             % (cantidad, "es" if cantidad != 1 else "")

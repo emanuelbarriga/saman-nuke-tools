@@ -1708,11 +1708,18 @@ def test_tiempo_relativo_largo():
     def iso(seg):
         return (ahora - timedelta(seconds=seg)).isoformat().replace("+00:00", "Z")
 
-    assert panel_comentarios._tiempo_relativo_largo(iso(0)) == "ahora"
+    assert panel_comentarios._tiempo_relativo_largo(iso(0)) == "hace menos de un minuto"
+    assert panel_comentarios._tiempo_relativo_largo(iso(59)) == "hace menos de un minuto"
     assert panel_comentarios._tiempo_relativo_largo(iso(61)) == "hace 1 minuto"
     assert panel_comentarios._tiempo_relativo_largo(iso(125)) == "hace 2 minutos"
-    assert panel_comentarios._tiempo_relativo_largo(iso(3600)) == "hace 1 hora"
-    assert panel_comentarios._tiempo_relativo_largo(iso(7200)) == "hace 2 horas"
+    assert (
+        panel_comentarios._tiempo_relativo_largo(iso(3600))
+        == "hace alrededor de 1 hora"
+    )
+    assert (
+        panel_comentarios._tiempo_relativo_largo(iso(7200))
+        == "hace alrededor de 2 horas"
+    )
     assert panel_comentarios._tiempo_relativo_largo(iso(86400)) == "hace 1 día"
     assert panel_comentarios._tiempo_relativo_largo(iso(3 * 86400)) == "hace 3 días"
     assert panel_comentarios._tiempo_relativo_largo(iso(30 * 86400)) == "hace 1 mes"
@@ -2904,3 +2911,99 @@ def test_doble_clic_zoom_adjunto():
     panel._doble_clic_zoom_adjunto("/tmp/x.jpg")
 
     assert llamado == ["/tmp/x.jpg"]
+
+
+# ---------------------------------------------------------------------------
+# Feed resiliente (una card que falla no corta el feed) + markdown + verbos
+# ---------------------------------------------------------------------------
+
+
+def test_intentar_card_captura_error():
+    from SamanTools import panel_comentarios
+
+    ok, err = panel_comentarios._intentar_card(lambda x: x * 2, 21)
+    assert ok == 42 and err is None
+
+    def _boom():
+        raise ValueError("boom")
+
+    ok2, err2 = panel_comentarios._intentar_card(_boom)
+    assert ok2 is None and isinstance(err2, ValueError)
+
+
+def test_publicar_actividad_continua_con_card_que_falla(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = _panel_con_feed_falsa()
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append(texto)
+    fallos = []
+
+    def _crear(actividad, colores_estados=None, imagenes=None, es_respuesta=False):
+        if actividad.get("content") == "rota":
+            raise ValueError("boom render")
+        return actividad
+
+    panel._crear_card_actividad = _crear
+    monkeypatch.setattr(
+        panel_comentarios,
+        "_reportar_card_fallida",
+        lambda actividad, error: fallos.append((actividad, error)),
+    )
+
+    rota = {"id": "r1", "type": "comment", "content": "rota"}
+    bien = {"id": "b1", "type": "comment", "content": "bien"}
+    panel._publicar_actividad([rota, bien])
+
+    # La card buena se pinta y el feed termina con el stretch: no corta.
+    assert panel._layout_actividad.items == [bien, "stretch"]
+    assert len(fallos) == 1 and isinstance(fallos[0][1], ValueError)
+    assert any("1 de 2 actividades mostradas (1 con error)" in e for e in estados)
+
+
+def test_verbo_tipo_alineado_a_plataforma():
+    from SamanTools import panel_comentarios
+
+    expected = {
+        "comment": "comentó",
+        "reply": "respondió",
+        "file_upload": "subió una imagen",
+        "status_change": "cambió el estado",
+        "version_update": "actualizó la versión",
+        "task_update": "actualizó la tarea",
+        "batch_update": "actualizó el plano",
+        "assignment_change": "realizó una acción",
+    }
+    for tipo, verbo in expected.items():
+        assert panel_comentarios._verbo_tipo(tipo) == verbo, tipo
+    assert panel_comentarios._verbo_tipo("desconocido") == ""
+
+
+def test_markdown_bold():
+    from SamanTools import panel_comentarios
+
+    assert panel_comentarios._markdown_bold("**Entregado en V1**") == (
+        "<b>Entregado en V1</b>"
+    )
+    assert panel_comentarios._markdown_bold("sin negrita") == "sin negrita"
+    # `**` desbalanceado (sin cierre) queda literal y no rompe.
+    assert panel_comentarios._markdown_bold("a ** b") == "a ** b"
+    assert panel_comentarios._markdown_bold("**solo") == "**solo"
+    assert panel_comentarios._markdown_bold("**") == "**"
+    assert panel_comentarios._markdown_bold("") == ""
+
+
+def test_escapar_y_linkificar_markdown_bold_y_urls():
+    from SamanTools import panel_comentarios
+
+    salida = panel_comentarios._escapar_y_linkificar(
+        "Plano marcado como **Entregado en V1** https://x.example/v1.mov"
+    )
+    assert "<b>Entregado en V1</b>" in salida
+    assert (
+        '<a href="https://x.example/v1.mov">https://x.example/v1.mov</a>' in salida
+    )
+    # El XSS sigue escapado ANTES del bold.
+    salida2 = panel_comentarios._escapar_y_linkificar("**<script>alert(1)</script>**")
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in salida2
+    assert "<b>&lt;script&gt;alert(1)&lt;/script&gt;</b>" in salida2
