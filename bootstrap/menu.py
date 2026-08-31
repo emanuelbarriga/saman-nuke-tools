@@ -331,11 +331,13 @@ def _clonar_si_falta():
 def _checkout_completo():
     """El checkout está usable solo si existe el paquete real.
 
-    Un clone o pull a medias deja `menu.py` pero sin `SamanTools/SamanTools/`,
-    lo que produce ModuleNotFoundError al cargar. Verificamos el archivo
-    clave del paquete antes de intentar nada.
+    TOOLS_DIR ya ES el checkout del repo (~/.nuke/SamanTools); dentro vive
+    la carpeta `SamanTools/` con `registro.py`. Un clone o pull a medias
+    deja `menu.py` pero sin `SamanTools/registro.py`, lo que produce
+    ModuleNotFoundError al cargar. Verificamos el archivo clave del paquete
+    antes de intentar nada.
     """
-    return os.path.isfile(os.path.join(TOOLS_DIR, "SamanTools", "SamanTools", "registro.py"))
+    return os.path.isfile(os.path.join(TOOLS_DIR, "SamanTools", "registro.py"))
 
 
 def _reparar_checkout():
