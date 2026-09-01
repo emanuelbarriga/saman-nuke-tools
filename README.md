@@ -33,6 +33,15 @@ saman-nuke-tools/
 
 ## Instalación — desde cero (REINSTALAR / PRIMERA VEZ)
 
+Requisito en todas las vías: **Git instalado** (https://git-scm.com/downloads)
+y acceso a GitHub. El instalador usa `git clone` — es la vía más fiable.
+
+> **En Linux** el instalador crea `~/.nuke/SamanTools` (el checkout) y
+> `~/.nuke/menu.py` (el bootstrap); `~/.nuke` es `/home/<usuario>/.nuke`.
+> Elegí la vía según la red: con GitHub libre → Opción 1 o 2; si la red
+> bloquea `raw.githubusercontent.com` → Opción 3; si no llega a GitHub →
+> copia manual al final.
+
 ### Opción 1 — Script Editor de Nuke (RECOMENDADA, sin terminal)
 
 En **cualquier equipo** (macOS/Windows/Linux), desde cero o después de una
@@ -44,9 +53,6 @@ desinstalación:
 3. Según el estado: clona desde cero, actualiza el checkout existente, o
    migra una instalación vieja por-copia. Luego copia el bootstrap a `~/.nuke/menu.py`.
 4. Reinicia Nuke → aparece el menú **SamanTools**.
-
-Requisito: **Git instalado** (https://git-scm.com/downloads) — el instalador
-usa `git clone`, la vía más fiable.
 
 ### Opción 2 — Terminal (curl | bash)
 
@@ -61,13 +67,42 @@ Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/emanuelbarr
 bash setup_artista.sh
 ```
 
-### Opción 3 — Clonar el repo donde quieras
+### Opción 3 — Desde un checkout local (red corporativa que bloquea raw.githubusercontent.com)
+
+Útil cuando el firewall del estudio bloquea `raw.githubusercontent.com` pero
+permite `github.com`, o si llevás el repo en una USB / red interna:
 
 ```bash
 git clone https://github.com/emanuelbarriga/saman-nuke-tools.git
 cd saman-nuke-tools && ./setup_artista.sh    # macOS/Linux
 cd saman-nuke-tools && setup_artista.bat     # Windows
 ```
+
+El instalador detecta el bootstrap local y no descarga nada por curl.
+
+### Sin NINGÚN acceso a GitHub (copia del checkout completo)
+
+Si la máquina tampoco llega a `github.com`, cloná el repo en otra máquina con
+internet, copiá la carpeta **completa (con `.git`)** por USB / red interna y
+armá la instalación:
+
+```bash
+# 1) En la máquina con internet:
+git clone https://github.com/emanuelbarriga/saman-nuke-tools.git
+
+# 2) Copiá TODO el checkout (incluida la carpeta .git) a la máquina Linux:
+#    USB / red interna / scp
+#    IMPORTANTE: sin .git el bootstrap cree que NO hay instalación y no carga el menú.
+
+# 3) En la máquina Linux:
+mkdir -p ~/.nuke
+cp -r saman-nuke-tools ~/.nuke/SamanTools
+cp ~/.nuke/SamanTools/bootstrap/menu.py ~/.nuke/menu.py
+```
+
+> La copia manual funciona (menú + nodos + nodo Rutas), pero como el `git fetch`
+> no puede salir a GitHub, **no habrá aviso de actualizaciones**: para actualizar
+> repetí la copia con la versión nueva (o corré `git pull` cuando haya red).
 
 ## Actualizaciones (modelo actual)
 
