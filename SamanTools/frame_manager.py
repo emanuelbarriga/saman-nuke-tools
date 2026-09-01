@@ -121,7 +121,16 @@ class FrameManagerTable(QtWidgets.QTableWidget):
         with nuke.Undo():
             with self.node:
                 keep = ["Input1", "Dot1", "ContactSheetAuto", "Crop1", "Reformat2", "Output1"]
+                # SOLO nodos internos del grupo Breakdown. La limpieza se acota
+                # por parent (`self.node` es el grupo del panel): además de
+                # ganar rendimiento, corrige el borrado accidental de nodos del
+                # comp del artista que no estén en `keep` (p.ej. un "Merge1").
                 for n in nuke.allNodes():
+                    try:
+                        if n.pparent() is not self.node:
+                            continue
+                    except Exception:
+                        continue
                     if n.name() not in keep:
                         nuke.delete(n)
 

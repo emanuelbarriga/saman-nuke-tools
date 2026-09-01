@@ -4108,3 +4108,199 @@ class _PuntoFake:
 
     def y(self):
         return self._y
+
+
+# ---------------------------------------------------------------------------
+# v1.8 — login (email+contraseña) asíncrono: worker daemon + QTimer
+# ---------------------------------------------------------------------------
+
+
+def _panel_login_falsa():
+    """PanelComentarios mínimo para probar el login asíncrono (sin UI)."""
+    from SamanTools import panel_comentarios
+
+    panel = panel_comentarios.PanelComentarios.__new__(
+        panel_comentarios.PanelComentarios
+    )
+    panel.sesion = None
+    panel._login_trabajo_en_curso = False
+    panel._login_trabajo = None
+    panel._boton_login = _BotonAccionFake()
+    panel._boton_login.habilitado = True
+    panel._campo_email = _LineEditFake()
+    panel._campo_password = _LineEditFake()
+    panel._boton_google = _BotonAccionFake()
+    panel._boton_google.habilitado = True
+    panel._seccion_login = _WidgetFake()
+    panel._seccion_sesion = _WidgetFake()
+    panel._label_conectado = _WidgetFake()
+    panel._actualizar_habilitacion_escritura = lambda: None
+    return panel
+
+
+def test_login_arranca_deshabilita_boton_y_lanza_worker(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = _panel_login_falsa()
+    panel._campo_email._texto = "artista@samanestudio.com"
+    panel._campo_password._texto = "secreto"
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append((texto, error))
+
+    lanzados = []
+    disparos = []
+
+    class _ThreadLoginFake:
+        def __init__(self, target, args=(), daemon=None):
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self):
+            lanzados.append((self.target, self.args, self.daemon))
+
+    monkeypatch.setattr(panel_comentarios.threading, "Thread", _ThreadLoginFake)
+    monkeypatch.setattr(
+        panel_comentarios.QtCore.QTimer, "singleShot",
+        lambda ms, cb: disparos.append((ms, cb)),
+    )
+
+    panel._on_login()
+
+    # El botón queda deshabilitado y se programa el worker daemon + QTimer.
+    assert panel._boton_login.habilitado is False
+    assert panel._login_trabajo_en_curso is True
+    assert panel._login_trabajo == {"estado": "pendiente"}
+    assert lanzados and lanzados[0][0].__func__ is panel._trabajo_login.__func__
+    assert lanzados[0][0].__self__ is panel
+    assert lanzados[0][1] == ("artista@samanestudio.com", "secreto")
+    assert lanzados[0][2] is True  # daemon
+    assert disparos and disparos[0][0] == panel_comentarios._COMENTARIOS_POLL_MS
+    assert disparos[0][1].__func__ is panel._poll_login.__func__
+    assert any("Iniciando sesión" in texto for texto, error in estados)
+
+
+def test_login_arranque_campos_vacios_no_deshabilita():
+    from SamanTools import panel_comentarios
+
+    panel = _panel_login_falsa()
+    panel._campo_email._texto = ""
+    panel._campo_password._texto = ""
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append((texto, error))
+
+    panel._on_login()
+
+    assert panel._boton_login.habilitado is True  # no se tocó la red
+    assert panel._login_trabajo_en_curso is False
+    assert any("Ingresá email" in texto for texto, error in estados)
+
+
+def test_login_worker_publica_ok_sin_tocar_ui(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = _panel_login_falsa()
+    respuesta = {
+        "id_token": "ID",
+        "refresh_token": "RT",
+        "local_id": "uid1",
+        "email": "artista@samanestudio.com",
+    }
+    usuario = {"role": "administrator", "name": "Ana"}
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth, "loguear",
+        lambda email, contrasena: respuesta,
+    )
+    monkeypatch.setattr(
+        panel_comentarios.vfxflow_auth, "obtener_usuario",
+        lambda uid, tok: usuario,
+    )
+
+    panel._trabajo_login("artista@samanestudio.com", "secreto")
+
+    # El worker solo publica el resultado; no toca la UI ni la sesión.
+    assert panel._login_trabajo["estado"] == "ok"
+    assert panel._login_trabajo["respuesta"] is respuesta
+    assert panel._login_trabajo["usuario"] is usuario
+    assert panel.sesion is None
+
+
+def test_login_poll_ok_aplica_sesion_y_rehabilita(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = _panel_login_falsa()
+    panel._login_trabajo_en_curso = True
+    panel._login_trabajo = {
+        "estado": "ok",
+        "respuesta": {"id_token": "ID", "refresh_token": "RT", "local_id": "uid1"},
+        "usuario": {"role": "administrator"},
+        "email": "artista@samanestudio.com",
+    }
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append((texto, error))
+
+    panel._poll_login()
+
+    assert panel._login_trabajo_en_curso is False
+    assert panel._boton_login.habilitado is True
+    assert panel.sesion["email"] == "artista@samanestudio.com"
+    assert panel.sesion["role"] == "administrator"
+    assert any("Conectado como artista@samanestudio.com (administrator)" in t
+               for t, e in estados)
+    assert panel._seccion_sesion.visible is True  # se aplicó la UI de sesión
+
+
+def test_login_poll_error_adm_rehabilita_y_muestra_error(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = _panel_login_falsa()
+    panel._login_trabajo_en_curso = True
+    panel._login_trabajo = {"estado": "error", "mensaje": "Credenciales inválidas."}
+    estados = []
+    panel._estado = lambda texto, error=False: estados.append((texto, error))
+
+    panel._poll_login()
+
+    assert panel._login_trabajo_en_curso is False
+    assert panel._boton_login.habilitado is True
+    assert panel.sesion is None
+    assert any("Credenciales inválidas." in t and e for t, e in estados)
+
+
+def test_login_worker_error_vfxauth_no_lanza(monkeypatch):
+    from SamanTools import panel_comentarios
+    from SamanTools.vfxflow_auth import VfxFlowAuthError
+
+    panel = _panel_login_falsa()
+
+    def _boom(email, contrasena):
+        raise VfxFlowAuthError("Credenciales inválidas.", codigo="auth")
+
+    monkeypatch.setattr(panel_comentarios.vfxflow_auth, "loguear", _boom)
+
+    panel._trabajo_login("a@b.com", "x")  # no debe propagar nada
+
+    assert panel._login_trabajo["estado"] == "error"
+    assert panel._login_trabajo["mensaje"] == "Credenciales inválidas."
+
+
+def test_login_poll_pendiente_reprograma(monkeypatch):
+    from SamanTools import panel_comentarios
+
+    panel = _panel_login_falsa()
+    panel._boton_login.habilitado = False  # login en vuelo: botón deshabilitado
+    panel._login_trabajo_en_curso = True
+    panel._login_trabajo = {"estado": "pendiente"}
+    disparos = []
+    monkeypatch.setattr(
+        panel_comentarios.QtCore.QTimer, "singleShot",
+        lambda ms, cb: disparos.append((ms, cb)),
+    )
+
+    panel._poll_login()
+
+    assert panel._login_trabajo_en_curso is True  # se espera el próximo tick
+    assert disparos == [
+        (panel_comentarios._COMENTARIOS_POLL_MS, panel._poll_login)
+    ]
+    assert panel._boton_login.habilitado is False

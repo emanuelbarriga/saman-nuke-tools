@@ -1467,6 +1467,13 @@ class PanelComentarios(QtWidgets.QWidget):
         self._escritura_trabajo = None
         self._escritura_trabajo_en_curso = False
 
+        # Login (email+contraseña) en worker (misma regla que el resto): la RED
+        # (`loguear` + `obtener_usuario`) corre en un thread daemon y
+        # `_login_trabajo` publica "pendiente"/"ok"/"error"; el QTimer
+        # (`_poll_login`) aplica el resultado a la UI en el hilo principal.
+        self._login_trabajo = None
+        self._login_trabajo_en_curso = False
+
         # Modo respuesta: si `_reply_padre_id` es truthy, el input envía reply.
         self._reply_padre_id = None
         self._reply_padre_autor = ""
@@ -1828,30 +1835,95 @@ class PanelComentarios(QtWidgets.QWidget):
     # --------------------------------------------------------------- login
 
     def _on_login(self):
+        """Arranca el login (email+contraseña) en un worker daemon.
+
+        La validación inicial (campos vacíos) queda tal cual: no toca la red.
+        Con credenciales válidas deshabilita `_boton_login` (anti doble-click),
+        publica `pendiente` en `_login_trabajo`, corre el worker `_trabajo_login`
+        en un thread daemon y programa el QTimer (`_poll_login`) que aplica el
+        resultado a la UI en el hilo principal. Igual que el resto de workers del
+        archivo, la UI se toca SOLO desde el hilo principal; el botón se
+        re-habilita SIEMPRE al terminar (éxito o error).
+        """
         email = self._campo_email.text().strip()
         contraseña = self._campo_password.text()
         if not email or not contraseña:
             self._estado("Ingresá email y contraseña.", error=True)
             return
 
+        if getattr(self, "_login_trabajo_en_curso", False):
+            return  # ya hay un login en vuelo
+
         self._boton_login.setEnabled(False)  # evita el doble click
+        self._login_trabajo_en_curso = True
+        self._login_trabajo = {"estado": "pendiente"}
         self._estado("Iniciando sesión con VFXFlow…")
+        threading.Thread(
+            target=self._trabajo_login,
+            args=(email, contraseña),
+            daemon=True,
+        ).start()
+        QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_login)
+
+    def _trabajo_login(self, email, contraseña):
+        """Worker daemon del login: hace la RED, nunca toca widgets.
+
+        Llama `loguear` y `obtener_usuario` (cada una con su timeout interno) y
+        publica el resultado en `_login_trabajo` ("ok" con la respuesta y el
+        usuario, o "error" con el mensaje). Los errores VfxFlowAuthError y las
+        excepciones genéricas se atrapan acá y se llevan como resultado, NUNCA
+        se propagan desde el thread. El QTimer (`_poll_login`) aplica a la UI.
+        """
+        self._login_trabajo = {"estado": "pendiente"}
         try:
             respuesta = vfxflow_auth.loguear(email, contraseña)
-            self._registrar_sesion(respuesta, email=email)
             usuario = vfxflow_auth.obtener_usuario(
                 respuesta["local_id"], respuesta["id_token"]
             )
+            self._login_trabajo = {
+                "estado": "ok",
+                "respuesta": respuesta,
+                "usuario": usuario or {},
+                "email": email,
+            }
+        except vfxflow_auth.VfxFlowAuthError as e:
+            self._login_trabajo = {"estado": "error", "mensaje": str(e)}
+        except Exception as e:
+            self._login_trabajo = {
+                "estado": "error",
+                "mensaje": "Error inesperado: %s" % e,
+            }
+
+    def _poll_login(self):
+        """Tick del QTimer (hilo principal): aplica el resultado del login.
+
+        Solo observa `_login_trabajo` (nunca toca widgets desde el worker).
+        Mientras es "pendiente" reprograma el tick; con "ok"/"error" publica en
+        la UI y libera `_login_trabajo_en_curso`. El botón se re-habilita SIEMPRE
+        al terminar.
+        """
+        if not getattr(self, "_login_trabajo_en_curso", False):
+            return
+        trabajo = self._login_trabajo or {}
+        estado = trabajo.get("estado")
+
+        if estado == "pendiente":
+            QtCore.QTimer.singleShot(_COMENTARIOS_POLL_MS, self._poll_login)
+            return
+
+        self._login_trabajo_en_curso = False
+        self._boton_login.setEnabled(True)
+        if estado == "ok":
+            respuesta = trabajo.get("respuesta") or {}
+            usuario = trabajo.get("usuario") or {}
+            email = trabajo.get("email") or ""
+            self._registrar_sesion(respuesta, email=email)
             self._fusionar_identidad_en_sesion(usuario)
             rol = usuario.get("role") or "artist"
             self._estado("Conectado como %s (%s)" % (email, rol))
             self._aplicar_estado_sesion_ui()
-        except vfxflow_auth.VfxFlowAuthError as e:
-            self._estado(str(e), error=True)
-        except Exception as e:
-            self._estado("Error inesperado: %s" % e, error=True)
-        finally:
-            self._boton_login.setEnabled(True)
+        else:
+            self._estado(trabajo.get("mensaje") or "Error de login.", error=True)
 
     def _on_login_google(self):
         """"Continuar con Google": elige loopback o Device Flow según config.
@@ -2960,6 +3032,9 @@ class PanelComentarios(QtWidgets.QWidget):
                 return
             dialogo = QtWidgets.QDialog(parent or self)
             dialogo.setWindowTitle("Imagen adjunta")
+            # Dialogo modal temporal: se libera al cerrar (el panel principal,
+            # registrado con registerWidgetAsPanel, lo gestiona Nuke y NO lo lleva).
+            dialogo.setAttribute(QtCore.Qt.WA_DeleteOnClose)
             lay = QtWidgets.QVBoxLayout(dialogo)
             label = QtWidgets.QLabel(dialogo)
             label.setPixmap(
