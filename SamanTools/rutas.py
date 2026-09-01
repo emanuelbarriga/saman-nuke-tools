@@ -8,10 +8,12 @@ El knobChanged del nodo Rutas solo hace:
 Ventajas sobre el codigo embebido en el knob:
   - Legible y testeable fuera del string escapado del .gizmo/.nk
   - Reload de Reads solo cuando la ruta resuelta CAMBIO realmente
-  - Se reutiliza desde el boton ActualizarProyecto
+  - Se reutiliza desde los botones ActualizarProyecto (Cambiar Proyecto) y
+    RefrescarFuentes (Refrescar Fuentes)
 """
 
 import os
+import re
 
 import nuke
 import __main__
@@ -176,30 +178,49 @@ def _aplicar_visibilidad(n, sufijo):
                 pass
 
 
-def actualizar(n=None):
+def _capturar_reads_dinamicos():
+    """Reads con ruta dinamica [python ...]: [(node, script, valor_actual)]."""
+    reads = []
+    for node in nuke.allNodes("Read"):
+        if "file" not in node.knobs():
+            continue
+        script = node["file"].toScript()
+        if "[python" in script.lower():
+            reads.append((node, script, node["file"].value()))
+    return reads
+
+
+def _re_evaluar_y_recargar(reads, forzar=False):
+    """Re-evalua cada Read con su script y recarga si forzar o si el valor cambio.
+    Devuelve cuantos reload ejecuto."""
+    recargados = 0
+    for node, script, anterior in reads:
+        try:
+            node["file"].fromScript(script)
+            if forzar or node["file"].value() != anterior:
+                node["reload"].execute()
+                recargados += 1
+        except Exception:
+            continue
+    return recargados
+
+
+def _aplicar_proyecto_inner(n):
     """
-    Actualiza TO_VFX/COMP/FROM_VFX del proyecto activo.
+    Aplica el proyecto activo del nodo: sincroniza entorno/plano/visibilidad,
+    escribe PYTHON_TO_VFX / PYTHON_COMP / PYTHON_FROM_VFX en __main__,
+    actualiza la etiqueta RutaActual (si aun la tiene) y re-escanea los
+    scripts del proyecto (SamanTools/proyecto).
 
-    Pasos:
-      1. Captura los Reads dinamicos ([python ...]) con su ruta ANTIGUA.
-      2. Actualiza PYTHON_TO_VFX / PYTHON_COMP / PYTHON_FROM_VFX en __main__.
-      3. Re-evalua cada Read y ejecuta reload SOLO si su ruta resuelta cambio.
-      4. Actualiza la etiqueta RutaActual del nodo (si aun la tiene).
-      5. Re-escanea los scripts del proyecto (SamanTools/proyecto).
-
-    Devuelve True si cargo scripts del proyecto, False si no.
+    Devuelve True si cargo scripts del proyecto, False si no, o None
+    (CENTINELA) si el usuario activo no es valido (no aplico nada).
     """
-    if n is None:
-        n = nuke.thisNode()
-    if n is None:
-        return False
-
     _recomendar_usuario(n)
 
     usuario = n["UsuarioActivo"].value()
     sufijo = SUFIJOS.get(usuario)
     if not sufijo:
-        return False
+        return None
 
     # Sincronizar knobs de entorno SOLO si el nodo los tiene (tolerante).
     _sincronizar_entorno(n)
@@ -210,28 +231,12 @@ def actualizar(n=None):
     comp = n["comp_SERVER_" + sufijo].value()
     from_vfx = n["FROM_VFX_SERVER_" + sufijo].value()
 
-    # 1) Capturar reads dinamicos ANTES de cambiar el contexto de rutas.
-    reads = []
-    for node in nuke.allNodes("Read"):
-        if "file" not in node.knobs():
-            continue
-        script = node["file"].toScript()
-        if "[python" in script.lower():
-            reads.append((node, script, node["file"].value()))
-
-    # 2) Actualizar variables globales usadas por las rutas relativas.
+    # Actualizar variables globales usadas por las rutas relativas.
     __main__.PYTHON_TO_VFX = to_vfx
     __main__.PYTHON_COMP = comp
     __main__.PYTHON_FROM_VFX = from_vfx
 
-    # 3) Re-evaluar y recargar SOLO si la ruta resuelta cambio realmente.
-    #    Evita el reload masivo de todos los Reads del script.
-    for node, script, anterior in reads:
-        node["file"].fromScript(script)
-        if node["file"].value() != anterior:
-            node["reload"].execute()
-
-    # 4) Etiqueta de ruta actual (mismo formato que el nodo original).
+    # Etiqueta de ruta actual (mismo formato que el nodo original).
     #    El knob RutaActual se elimino de la version actual: solo se
     #    actualiza si el nodo aun lo tiene (nodos viejos).
     texto_ruta = (
@@ -245,11 +250,158 @@ def actualizar(n=None):
         except Exception:
             pass
 
-    # 5) Re-escanear herramientas del proyecto.
+    # Re-escanear herramientas del proyecto.
     try:
         return proyecto.cargar_scripts_proyecto()
     except Exception:
         return False
+
+
+def aplicar_proyecto(n=None):
+    """Botón/programa: aplica el proyecto activo (variables PYTHON_* + entorno +
+    visibilidad + rescan de scripts) SIN recargar Reads. Devuelve True si cargo
+    scripts del proyecto, False si no (o si el usuario activo no es valido)."""
+    if n is None:
+        n = nuke.thisNode()
+    if n is None:
+        return False
+    resultado = _aplicar_proyecto_inner(n)
+    return bool(resultado)
+
+
+def refrescar_fuentes(n=None, forzar=False):
+    """Re-evalua los Reads dinamicos [python ...] y recarga.
+
+    - forzar=False: recarga SOLO los que cambiaron su ruta resuelta (uso interno
+      desde actualizar()).
+    - forzar=True: recarga TODOS (boton "Refrescar Fuentes"; sirve para re-leer
+      el archivo del disco aunque la ruta sea la misma, p.ej. el server
+      reemplazo el .mov).
+    Devuelve la cantidad recargada."""
+    if n is None:
+        n = nuke.thisNode()
+    if n is None:
+        return 0
+    reads = _capturar_reads_dinamicos()
+    return _re_evaluar_y_recargar(reads, forzar=forzar)
+
+
+def actualizar(n=None):
+    """
+    Actualiza TO_VFX/COMP/FROM_VFX del proyecto activo y refresca los Reads.
+
+    Conserva el orden critico de la version historica: captura los Reads
+    dinamicos ([python ...]) ANTES de escribir las variables PYTHON_* (asi
+    re-evalua con la ruta ANTIGUA y sabe si resolvio distinto), y solo
+    recarga los Reads cuya ruta resuelta realmente cambio.
+
+    Pasos:
+      1. Captura los Reads dinamicos con su ruta ANTIGUA.
+      2. Aplica el proyecto activo (variables PYTHON_* + entorno + visibilidad).
+      3. Re-evalua cada Read y ejecuta reload SOLO si su ruta resuelta cambio.
+      4. Devuelve True si cargo scripts del proyecto, False si no.
+
+    Se llama desde el knobChanged del nodo (comportamiento automatico).
+    NO fuerza recarga: para recargar TODOS los Reads a demanda hay que usar
+    refrescar_fuentes(..., forzar=True) via el boton "Refrescar Fuentes".
+    """
+    if n is None:
+        n = nuke.thisNode()
+    if n is None:
+        return False
+
+    # Preserva el orden critico: capturar ANTES de cambiar variables.
+    reads = _capturar_reads_dinamicos()
+    resultado = _aplicar_proyecto_inner(n)
+    if resultado is None:
+        return False
+    _re_evaluar_y_recargar(reads, forzar=False)
+    return bool(resultado)
+
+
+# ---------------------------------------------------------------------------
+# Botones del nodo Rutas: Cambiar Proyecto y Refrescar Fuentes
+# ---------------------------------------------------------------------------
+
+KNOBS_RUTAS_BASE = (
+    "TO_VFX_SERVER_MAC", "comp_SERVER_MAC", "FROM_VFX_SERVER_MAC",
+    "TO_VFX_SERVER_WINDOWS", "comp_SERVER_WINDOWS", "FROM_VFX_SERVER_WINDOWS",
+    "TO_VFX_SERVER_ARTIST", "comp_SERVER_ARTIST", "FROM_VFX_SERVER_ARTIST",
+)
+
+
+def _cambiar_proyecto_en_rutas(n, proy):
+    """Reemplaza el segmento de proyecto en las 9 rutas base.
+    La regex es la misma que vivía embebida en el gizmo: toma el segmento
+    inmediatamente anterior a TO_VFX|COMP|FROM_VFX y lo sustituye por `proy`.
+    Devuelve cuantas rutas cambiaron."""
+    cambios = 0
+    for k_name in KNOBS_RUTAS_BASE:
+        if k_name not in n.knobs():
+            continue
+        try:
+            val = n[k_name].value()
+        except Exception:
+            continue
+        if not val:
+            continue
+        nueva_ruta = re.sub(
+            r"/[^/]+/(TO_VFX|COMP|FROM_VFX)(/|$)",
+            "/" + proy + r"/\1\2",
+            val,
+            flags=re.IGNORECASE,
+        )
+        if nueva_ruta != val:
+            try:
+                n[k_name].setValue(nueva_ruta)
+                cambios += 1
+            except Exception:
+                continue
+    return cambios
+
+
+def cambiar_proyecto(n=None):
+    """Boton "Cambiar Proyecto": reescribe las 9 rutas base al codigo del campo
+    Proyecto (string) y aplica las variables del proyecto, SIN recargar fuentes.
+    Avisa con nuke.message cuantas rutas cambio. Nunca lanza."""
+    if n is None:
+        n = nuke.thisNode()
+    if n is None:
+        return
+    try:
+        proy = str(n["string"].value()).strip() if "string" in n.knobs() else ""
+    except Exception:
+        proy = ""
+    if not proy:
+        try:
+            nuke.message("Por favor, ingrese un código o nombre de proyecto válido.")
+        except Exception:
+            pass
+        return
+    cambios = _cambiar_proyecto_en_rutas(n, proy)
+    aplicar_proyecto(n)
+    try:
+        nuke.message(
+            "Se actualizaron %d rutas al proyecto: \"%s\".\n"
+            "Usá 'Refrescar Fuentes' para recargar los Reads." % (cambios, proy)
+        )
+    except Exception:
+        pass
+
+
+def refrescar_fuentes_boton(n=None):
+    """Boton "Refrescar Fuentes": recarga TODOS los Reads dinamicos (forzar=True)
+    y avisa cuantas recargo. Nunca lanza."""
+    recargados = refrescar_fuentes(n, forzar=True)
+    try:
+        if recargados:
+            nuke.message("Se recargaron %d fuente(s)." % recargados)
+        else:
+            nuke.message(
+                "No se encontraron Reads con rutas dinámicas [python ...] para recargar."
+            )
+    except Exception:
+        pass
 
 
 def refrescar_estado(n=None):

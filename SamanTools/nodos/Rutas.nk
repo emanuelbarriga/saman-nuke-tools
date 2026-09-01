@@ -28,7 +28,8 @@ NoOp {
  addUserKnob {4 UsuarioActivo l "Usuario Activo" M {MacServer Windows Artist ""}}
  addUserKnob {1 string l Proyecto}
  string HTLR
- addUserKnob {22 ActualizarProyecto l Actualizar -STARTLINE T "import nuke\nimport re\n\nn = nuke.thisNode()\nproy = n\['string'].value().strip()\n\nif not proy:\n    nuke.message('Por favor, ingrese un código o nombre de proyecto válido.')\nelse:\n    knobs_objetivo = \[\n        'TO_VFX_SERVER_MAC', 'comp_SERVER_MAC', 'FROM_VFX_SERVER_MAC',\n        'TO_VFX_SERVER_WINDOWS', 'comp_SERVER_WINDOWS', 'FROM_VFX_SERVER_WINDOWS',\n        'TO_VFX_SERVER_ARTIST', 'comp_SERVER_ARTIST', 'FROM_VFX_SERVER_ARTIST'\n    ]\n    \n    cambios = 0\n    for k_name in knobs_objetivo:\n        if k_name in n.knobs():\n            val = n\[k_name].value()\n            if val:\n                nueva_ruta = re.sub(r'/\[^/]+/(TO_VFX|COMP|FROM_VFX)(/|\$)', '/' + proy + r'/\\1\\2', val, flags=re.IGNORECASE)\n                if val != nueva_ruta:\n                    n\[k_name].setValue(nueva_ruta)\n                    cambios += 1\n    \n    n\['UsuarioActivo'].setValue(n\['UsuarioActivo'].value())\n    nuke.message('Se actualizaron ' + str(cambios) + ' rutas al proyecto: \"' + proy + '\".')\n    try:\n        from SamanTools import proyecto\n        proyecto.actualizar_desde_nodo_rutas(n)\n    except Exception:\n        pass"}
+ addUserKnob {22 ActualizarProyecto l "Cambiar Proyecto" -STARTLINE T "from SamanTools import rutas\nrutas.cambiar_proyecto()"}
+ addUserKnob {22 RefrescarFuentes l "Refrescar Fuentes" -STARTLINE T "from SamanTools import rutas\nrutas.refrescar_fuentes_boton()"}
  addUserKnob {26 text l " " T ""}
  addUserKnob {26 ""}
  addUserKnob {26 RutaMacServer l "Ruta MacServer" T " "}
