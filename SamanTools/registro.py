@@ -158,7 +158,7 @@ def instalar():
     sub_nodos_nodos = menu_saman.addMenu("Insertar Nodo")
     sub_nodos_nodos.addCommand(
         "Rutas (Rutas VFX)",
-        "from SamanTools import rutas\nrutas.crear_o_reutilizar()",
+        _insertar_rutas,
     )
     sub_nodos_nodos.addCommand(
         "Review (Comparación)",
