@@ -13,7 +13,7 @@ primero.
 Toolkit global de Nuke para el estudio **Samán Estudio**:
 
 - **Nodos globales**: Breakdown (widget de frames), Review (comparación), Rutas (rutas VFX dinámicas).
-- **Menú SamanTools** en la barra superior: Utilidades / Insertar Nodo / Acerca de / Actualizar / Desinstalar.
+- **Menú SamanTools** en la barra superior: Composición / VFXFlow / Sistema y Configuración (incluye Actualizar/Desinstalar).
 - Multiplataforma: macOS, Windows, Linux.
 - Fuente de todo: repo público `emanuelbarriga/saman-nuke-tools` en GitHub.
 
@@ -38,7 +38,7 @@ Toolkit global de Nuke para el estudio **Samán Estudio**:
 |---|---|
 | `bootstrap/menu.py` | El `menu.py` del artista (copiado a `~/.nuke`). Mantenimiento: alerta de update, botones Actualizar/Desinstalar, auto-sincronización del bootstrap mismo. **Nunca depende del código del repo** (funciona aunque el repo esté roto). |
 | `menu.py` (raíz) | Carga real: `sys.path`, `pluginAddPath`, `registro.instalar()`. Se ejecuta vía `exec` desde el bootstrap. |
-| `SamanTools/registro.py` | Construye el menú SamanTools + buscador TAB. |
+| `SamanTools/registro.py` | Construye el menú SamanTools (Composición / VFXFlow / Sistema y Configuración) + buscador TAB (solo Insertar Nodo: Rutas/Review/Breakdown). |
 | `SamanTools/proyecto.py` | Carga dinámica de galerías/gizmos del proyecto (`{PYTHON_COMP}/Scripts`). |
 | `SamanTools/rutas.py` | Lógica del nodo ÚNICO Rutas (`crear_o_reutilizar` — menú y TAB usan la misma vía, máximo 1 por proyecto, `_enfocar_nodo` navega al nodo existente + abre propiedades), recomendación de usuario según SO, visibilidad por usuario activo, y ahora dividido en `aplicar_proyecto` (cambiar proyecto / variables) + `refrescar_fuentes` (recarga de Reads a demanda, `forzar=True`) — el botón del nodo ofrece "Cambiar Proyecto" y "Refrescar Fuentes". |
 | `SamanTools/entorno.py` | Detección de SO, ruta base por SO (`/Volumes/wupm/2026`, `L:/2026`, `/mnt/wupm/2026`) y estado de la unidad `wupm` con timeout (mount muerto no cuelga Nuke). Puro stdlib, NO importa nuke. |

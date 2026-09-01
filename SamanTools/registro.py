@@ -6,6 +6,7 @@ Cada herramienta se añade aquí con una única llamada toolbar.addCommand().
 
 import nuke
 import os
+import subprocess
 import sys
 
 from . import cambiar_colorspace
@@ -105,6 +106,66 @@ def _acerca_de():
     )
 
 
+def _verificar_salud():
+    """Muestra la salud de la instalación de SamanTools en un nuke.message.
+
+    Es puramente local: NO hace red ni corre pytest. Reporta la versión
+    instalada, el tipo de instalación (checkout git o copia) y, si es git,
+    el commit y el estado del árbol de trabajo. Nunca lanza: cada parte se
+    resuelve en su propio try/except.
+    """
+    try:
+        from . import __version__
+        version = __version__
+    except Exception:
+        version = "desconocida"
+
+    raiz_checkout = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    es_checkout_git = os.path.isdir(os.path.join(raiz_checkout, ".git"))
+
+    if es_checkout_git:
+        try:
+            r = subprocess.run(
+                ["git", "-C", raiz_checkout, "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            commit = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "desconocido"
+        except Exception:
+            commit = "desconocido"
+        instalacion = "checkout git (commit %s)" % commit
+
+        try:
+            r = subprocess.run(
+                ["git", "-C", raiz_checkout, "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if r.returncode != 0:
+                estado_checkout = "desconocido"
+            elif r.stdout.strip():
+                estado_checkout = "árbol local con cambios"
+            else:
+                estado_checkout = "al día"
+        except Exception:
+            estado_checkout = "desconocido"
+    else:
+        instalacion = "instalación por copia (sin git)"
+        estado_checkout = "no aplica"
+
+    try:
+        nuke.message(
+            "Salud de SamanTools\n\n"
+            "Versión instalada: %s\n"
+            "Instalación: %s\n"
+            "Estado del checkout: %s" % (version, instalacion, estado_checkout)
+        )
+    except Exception:
+        pass
+
+
 def _inyectar_frame_manager():
     """
     Asegura que `frame_manager` (widget global de Breakdown) sea importable.
@@ -128,45 +189,53 @@ def instalar():
     """Crea el menú SamanTools en la barra superior de Nuke y registra las herramientas."""
     menu = nuke.menu("Nuke").addMenu("SamanTools")
 
-    # --- Categoría: Utilidades ---
-    sub_util = menu.addMenu("Utilidades")
-    sub_util.addCommand(
-        "Cambiar Espacios de Color",
+    # --- Categoría: Composición ---
+    sub_composicion = menu.addMenu("Composición")
+    sub_composicion.addCommand(
+        "Cambiar ColorSpace...",
         cambiar_colorspace.ejecutar_cambio_colorespace_reads,
         icon=_ruta_icono("ChangeColorSpace.svg"),
     )
-    sub_util.addCommand(
-        "Escanear Scripts del Proyecto",
-        _escanear_scripts_proyecto,
-    )
-    sub_util.addCommand(
-        "Limpiar knobs volátiles",
-        _limpiar_knobs_volatiles,
-    )
-    # Comando lazy (string): el módulo panel_comentarios solo se importa al
-    # hacer clic, para no romper la carga del menú si PySide no está o no hay GUI.
-    sub_util.addCommand(
-        "Comentarios por Plano...",
-        "from SamanTools import panel_comentarios\npanel_comentarios.abrir_panel()",
-    )
-
-    # --- Categoría: Insertar Nodo ---
-    sub_nodos = menu.addMenu("Insertar Nodo")
-    sub_nodos.addCommand(
-        "Rutas VFX (nodo Rutas)",
-        _insertar_rutas,
-    )
-    sub_nodos.addCommand(
-        "Review (Comparación)",
-        _insertar_review,
-    )
-    sub_nodos.addCommand(
-        "Breakdown (frames por tabla)",
+    sub_composicion.addCommand(
+        "Breakdown",
         _insertar_breakdown,
     )
 
-    # --- Información ---
-    menu.addCommand(
+    # --- Categoría: VFXFlow ---
+    sub_vfxflow = menu.addMenu("VFXFlow")
+    # Comando lazy (string): el módulo panel_comentarios solo se importa al
+    # hacer clic, para no romper la carga del menú si PySide no está o no hay GUI.
+    sub_vfxflow.addCommand(
+        "Panel de Comentarios",
+        "from SamanTools import panel_comentarios\npanel_comentarios.abrir_panel()",
+    )
+    # Comando lazy (string): diagnostico_red no se importa al tope para no
+    # cargar urllib al arrancar; se importa solo al hacer clic.
+    sub_vfxflow.addCommand(
+        "Diagnóstico de Red",
+        "from SamanTools import diagnostico_red\ndiagnostico_red.ejecutar()",
+    )
+
+    # Separador visual entre categorías (Nuke lo dibuja como línea).
+    menu.addMenu("-")
+
+    # --- Categoría: Sistema / Configuración ---
+    # Los comandos de mantenimiento del bootstrap (Actualizar/Desinstalar) se
+    # agregan DESPUÉS, sobre este mismo submenú, desde bootstrap/menu.py.
+    sub_sistema = menu.addMenu("Sistema / Configuración")
+    sub_sistema.addCommand(
+        "Verificar Salud del Plugin...",
+        _verificar_salud,
+    )
+    sub_sistema.addCommand(
+        "Escanear Scripts del Proyecto",
+        _escanear_scripts_proyecto,
+    )
+    sub_sistema.addCommand(
+        "Limpiar knobs volátiles",
+        _limpiar_knobs_volatiles,
+    )
+    sub_sistema.addCommand(
         "Acerca de SamanTools...",
         _acerca_de,
     )
@@ -184,14 +253,6 @@ def instalar():
     # "HTLR · Saman · Samán" es para las herramientas FIJAS y no debe borrarse.
     menu_nodos = nuke.menu("Nodes")
     menu_saman = menu_nodos.addMenu("HTLR · Saman · Samán")
-
-    # Subcategoría dentro del buscador: Utilidades
-    sub_util_nodos = menu_saman.addMenu("Utilidades")
-    sub_util_nodos.addCommand(
-        "ChangeColorspace (Cambiar Espacios de Color)",
-        cambiar_colorspace.ejecutar_cambio_colorespace_reads,
-        icon=_ruta_icono("ChangeColorSpace.svg"),
-    )
 
     # Subcategoría dentro del buscador: Insertar Nodo
     sub_nodos_nodos = menu_saman.addMenu("Insertar Nodo")

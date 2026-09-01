@@ -289,8 +289,11 @@ def _agregar_boton_menu():
         menu = nuke.menu("Nuke").findItem("SamanTools")
         if menu is None:
             menu = nuke.menu("Nuke").addMenu("SamanTools")
-        menu.addCommand("Actualizar SamanTools...", _actualizar_ahora)
-        menu.addCommand("Desinstalar SamanTools...", _desinstalar_ahora)
+        sub = menu.findItem("Sistema / Configuración")
+        if sub is None:
+            sub = menu.addMenu("Sistema / Configuración")
+        sub.addCommand("Actualizar SamanTools...", _actualizar_ahora)
+        sub.addCommand("Desinstalar SamanTools...", _desinstalar_ahora)
     except Exception:
         pass
 

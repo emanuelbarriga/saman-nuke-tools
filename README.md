@@ -127,7 +127,7 @@ Las skills de OpenCode/Claude usadas por el estudio viven versionadas en
 ## Cómo se verifica
 
 Tras reiniciar Nuke:
-- Aparece el menú **SamanTools** (Utilidades / Insertar Nodo).
+- Aparece el menú **SamanTools** (Composición / VFXFlow / Sistema y Configuración).
 - En el buscador (TAB), escribiendo **breakdown**, **review** o **rutas** se crean los nodos.
 
 ## Rutas de red (importante)
