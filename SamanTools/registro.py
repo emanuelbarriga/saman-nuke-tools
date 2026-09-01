@@ -40,6 +40,41 @@ def _insertar_review():
     """Inserta el nodo Review (comparación Side-by-Side) en el script actual."""
     ruta_archivo = os.path.join(os.path.dirname(os.path.realpath(__file__)), "nodos", "Review.gizmo")
     nuke.nodePaste(ruta_archivo)
+    try:
+        from SamanTools import limpiar
+        limpiar.sanitizar_archivo(ruta_archivo)
+    except Exception:
+        # Defensa idempotente y nunca lanza: el archivo puede ya estar limpio
+        # (devuelve 0) o no ser legible/escribible en esta instalacion.
+        pass
+
+
+def _limpiar_knobs_volatiles():
+    """Elimina knobs volatiles de maquina del archivo en disco del comp actual.
+
+    Suaviza el archivo serializado (.nk) con SamanTools.limpiar para que no
+    viajen knobs que solo existen en esta maquina (mov64_prraw_plugin,
+    render_settings_schema, monitorOutNDISenderName) y que ensucian comps
+    compartidos o versionados. Nunca lanza: cualquier error se muestra con
+    nuke.message.
+    """
+    ruta = nuke.root().name()
+    if not ruta:
+        nuke.message("Guardá el script primero (File > Save As) para poder limpiarlo.")
+        return
+    try:
+        from SamanTools import limpiar
+        resultado = limpiar.sanitizar_archivo(ruta)
+    except Exception as e:
+        nuke.message("No se pudo limpiar el archivo:\n%s\n\n%s" % (ruta, e))
+        return
+    if resultado == 1:
+        nuke.message(
+            "Se limpiaron knobs volátiles de:\n%s\n\n"
+            "Recargá el script (File > Revert) para verlo." % ruta
+        )
+    else:
+        nuke.message("El archivo no tiene knobs volátiles:\n%s" % ruta)
 
 
 def _insertar_breakdown():
@@ -103,6 +138,10 @@ def instalar():
     sub_util.addCommand(
         "Escanear Scripts del Proyecto",
         _escanear_scripts_proyecto,
+    )
+    sub_util.addCommand(
+        "Limpiar knobs volátiles",
+        _limpiar_knobs_volatiles,
     )
     # Comando lazy (string): el módulo panel_comentarios solo se importa al
     # hacer clic, para no romper la carga del menú si PySide no está o no hay GUI.

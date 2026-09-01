@@ -124,10 +124,6 @@ push $N54f34e00
  }
 push $N54ffca00
  Viewer {
-  frame_range 1-214
-  fps 23.97602463
-  render_settings_schema false
-  monitorOutNDISenderName "NukeX - DPCP_EP_101_0042_comp_DGTV_V001 - Viewer1"
   name Viewer1
   xpos 1015
   ypos 384

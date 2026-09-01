@@ -40,8 +40,9 @@ Toolkit global de Nuke para el estudio **Samán Estudio**:
 | `menu.py` (raíz) | Carga real: `sys.path`, `pluginAddPath`, `registro.instalar()`. Se ejecuta vía `exec` desde el bootstrap. |
 | `SamanTools/registro.py` | Construye el menú SamanTools + buscador TAB. |
 | `SamanTools/proyecto.py` | Carga dinámica de galerías/gizmos del proyecto (`{PYTHON_COMP}/Scripts`). |
-| `SamanTools/rutas.py` | Lógica del nodo Rutas: actualiza `PYTHON_COMP/FROM/TO`, reload selectivo, gestión del nodo ÚNICO (`crear_o_reutilizar` — menú y TAB usan la misma vía, máximo 1 por proyecto), recomendación de usuario según SO, visibilidad por usuario activo y `_enfocar_nodo` (navega al nodo existente + abre propiedades). |
+| `SamanTools/rutas.py` | Lógica del nodo ÚNICO Rutas (`crear_o_reutilizar` — menú y TAB usan la misma vía, máximo 1 por proyecto, `_enfocar_nodo` navega al nodo existente + abre propiedades), recomendación de usuario según SO, visibilidad por usuario activo, y ahora dividido en `aplicar_proyecto` (cambiar proyecto / variables) + `refrescar_fuentes` (recarga de Reads a demanda, `forzar=True`) — el botón del nodo ofrece "Cambiar Proyecto" y "Refrescar Fuentes". |
 | `SamanTools/entorno.py` | Detección de SO, ruta base por SO (`/Volumes/wupm/2026`, `L:/2026`, `/mnt/wupm/2026`) y estado de la unidad `wupm` con timeout (mount muerto no cuelga Nuke). Puro stdlib, NO importa nuke. |
+| `SamanTools/limpiar.py` | Sanitizador de texto .nk/.gizmo: elimina knobs volatiles de maquina (mov64_prraw_plugin, render_settings_schema, monitorOutNDISenderName). Puro stdlib, NO importa nuke. Se usa al insertar nodos, al generar galerias y desde el menu (Limpiar knobs volatiles). |
 | `instalar_script_editor.py` | Instalador desde cero (Script Editor). Idempotente: detecta 3 estados. |
 | `setup_artista.sh/.bat` | Instalador por terminal, autocontenido vía `curl\|bash` o desde checkout. |
 
@@ -141,3 +142,4 @@ versión/tag, sync git, checks estructurales (35), pytest PASS/FAIL, cobertura %
 3. `install.sh`/`install.bat` son **legacy** — no tocarlos; el flujo actual es `instalar_script_editor.py` + `bootstrap/menu.py`.
 4. **Skills del estudio** viven versionadas en `skills/`; el proyecto HTLR las enlaza por symlink (`.opencode/skills/<name> → repo/skills/<name>`). Editar siempre en el repo, nunca en el copia local.
 5. Para regenerar el skill registry: `gentle-ai skill-registry refresh` (el registro apunta a `.opencode/skills`, que resuelve al repo vía symlinks).
+6. **Knobs volátiles de máquina no viajan** — `mov64_prraw_plugin`, `render_settings_schema` y `monitorOutNDISenderName` no se versionan ni se comparten en comps; al generar o re-savear archivos Nuke, sanitizar con `SamanTools.limpiar`.

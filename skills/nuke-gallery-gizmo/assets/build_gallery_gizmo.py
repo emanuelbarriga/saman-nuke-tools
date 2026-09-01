@@ -492,9 +492,15 @@ def main():
     else:
         out_path = os.path.join(os.path.dirname(global_assets), "Scripts",
                                 f"{slugify(group_name)}.gizmo")
+    texto = "\n".join(result)
+    try:
+        from SamanTools.limpiar import sanitizar_texto_nk
+        texto = sanitizar_texto_nk(texto)
+    except ImportError:
+        pass  # SamanTools no accesible: el generador en si no produce knobs volatiles
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(result))
+        f.write(texto)
 
     total = sum(len(v) for v in cats.values())
     print(f"OK  {out_path}")

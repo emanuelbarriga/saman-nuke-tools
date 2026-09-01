@@ -44,10 +44,13 @@ If the source plate has audio (WAV next to the mov), re-add the AudioRead with a
 4. Generate the reference JPG (frame 1, 720p q2, name without `_V{nn}`):
    `ffmpeg -y -v error -i <clip>.mov -frames:v 1 -q:v 2 -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2" "TO_VFX/EP_{EP}/{fecha}/PNG/<name>.jpg"`
 5. In Nuke, Save As to fix `Root.name`, then set Root format, `fps 23.976`, `lock_range true`, `last_frame` = clip frames.
-6. On the Read: set `file` to `[python {PYTHON_TO_VFX}]/EP_{EP}/{fecha}/<clip>.mov`, format = clip resolution, `first 1`, `last`/`origlast` = clip frames, colorspace `DaVinci Intermediate WideGamut`, `mov64_prraw_plugin Standard`.
+6. On the Read: set `file` to `[python {PYTHON_TO_VFX}]/EP_{EP}/{fecha}/<clip>.mov`, format = clip resolution, `first 1`, `last`/`origlast` = clip frames, colorspace `DaVinci Intermediate WideGamut`.
 7. Fix every Write: `first 1`, `last` = clip frames, verify Tcl name derivation matches the new filename.
 8. Clean leftover viewer names (e.g., `DPCP_EP_101_0042_comp_DGTV_V001`).
 9. Save, reopen isolated, render one proof frame.
+10. Sanitize the saved .nk: machine-specific volatile knobs (`mov64_prraw_plugin`, `render_settings_schema`, `monitorOutNDISenderName`) must NOT travel in shared/versioned comps. Run the sanitizer over the final saved `.nk`:
+    `python3 -c "import sys; sys.path.insert(0, '<ruta-del-checkout-de saman-nuke-tools>'); from SamanTools.limpiar import sanitizar_archivo; sanitizar_archivo('<ruta>.nk')"`
+    Note: if SamanTools is in NUKE_PATH, you can also run it from inside Nuke with `import SamanTools.limpiar as l; l.sanitizar_archivo(nuke.root().name())`. This removes `mov64_prraw_plugin`/`render_settings_schema`/`monitorOutNDISenderName` so the comp opens clean on machines without the plugin or with an older Nuke.
 
 ## Output Contract
 

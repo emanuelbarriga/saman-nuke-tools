@@ -55,6 +55,9 @@ Load when asked to build a Nuke shot-selection gallery or contact sheet from a f
 4. Spot-check one `file "..."` line: must start `\[python \{PYTHON_COMP\}]/GLOBAL_ASSETS/` and point to an existing relative path (strip the literal `\[python \{PYTHON_COMP\}]/` prefix and test with `ls`).
 5. For video assets, verify every Read has `first 1` (count == `Read {` count) and `file_type mov`, no `last 1001` (timecode leak), and spot-check `last`/`origlast` against real ffprobe frame counts.
 6. If the user wants to browse while deciding which assets to buy, copy a sample/representative frame to PNG alongside (only when the source is video and a still thumbnail is desired).
+7. Sanitize the generated `.gizmo`: machine-specific volatile knobs (`mov64_prraw_plugin`, `render_settings_schema`, `monitorOutNDISenderName`) must NOT travel in shared/versioned files. If the `.gizmo` was re-saved in Nuke (which can drag in such knobs), run the sanitizer over the final file:
+   `python3 -c "import sys; sys.path.insert(0, '<ruta-del-checkout-de saman-nuke-tools>'); from SamanTools.limpiar import sanitizar_archivo; sanitizar_archivo('<ruta>.gizmo')"`
+   And with SamanTools in NUKE_PATH, from inside Nuke: `import SamanTools.limpiar as l; l.sanitizar_archivo(nuke.root().name())`.
 
 ## Output Contract
 
@@ -62,7 +65,7 @@ Return: the `.gizmo` path, the categories detected with per-category asset count
 
 ## Re-serialization note
 
-Re-saving the group with `nuke.thisNode().writeToFile()` is normal and safe: Nuke reorders nodes by `xpos`, re-escapes braces, bumps Read `version` to 2, adds `mov64_prraw_plugin Standard` on video Reads, and drops `first 1` (kept by the generator as a timecode defense). None of this breaks the gizmo or the generator contract.
+Re-saving the group with `nuke.thisNode().writeToFile()` is normal and safe: Nuke reorders nodes by `xpos`, re-escapes braces, bumps Read `version` to 2, and drops `first 1` (kept by the generator as a timecode defense). None of this breaks the gizmo or the generator contract. After a Nuke re-save, run the final sanitization on the file with the limpiador (`sanitizar_archivo` over the `.gizmo`) — the generator already applies the same cleaning when writing (see step 7).
 
 ## References
 
