@@ -162,3 +162,111 @@ def test_review_gizmo_sigue_siendo_gizmo_valido():
     assert "Group {" in contenido
     assert "end_group" in contenido
     assert "name Viewer1" in contenido
+
+
+# ---------------------------------------------------------------------------
+# Seguridad a prueba de corrupcion: CRLF, BOM, no-UTF-8 y escritura atomica.
+# ---------------------------------------------------------------------------
+
+
+def test_preserva_crlf(tmp_path):
+    ruta = tmp_path / "comp.nk"
+    original = (
+        "Read {\r\n"
+        "  mov64_prraw_plugin Standard\r\n"
+        "  name Read1\r\n"
+        "}\r\n"
+    )
+    ruta.write_bytes(original.encode("utf-8"))
+    assert limpiar.sanitizar_archivo(str(ruta)) == 1
+    contenido = ruta.read_bytes()
+    assert b"mov64_prraw_plugin" not in contenido
+    # Todas las lineas restantes conservan \r\n.
+    for linea in contenido.split(b"\r\n"):
+        assert b"\n" not in linea, "Salto suelto convertido: %r" % linea
+    assert b"name Read1\r\n" in contenido
+    assert contenido.endswith(b"}\r\n")
+
+
+def test_preserva_bom(tmp_path):
+    ruta = tmp_path / "comp.nk"
+    original = (
+        "Read {\n"
+        "  mov64_prraw_plugin Standard\n"
+        "  name Read1\n"
+        "}\n"
+    )
+    ruta.write_bytes(b"\xef\xbb\xbf" + original.encode("utf-8"))
+    assert limpiar.sanitizar_archivo(str(ruta)) == 1
+    contenido = ruta.read_bytes()
+    assert contenido.startswith(b"\xef\xbb\xbf"), "Se perdio el BOM"
+    texto = contenido[len(b"\xef\xbb\xbf"):].decode("utf-8")
+    assert "mov64_prraw_plugin" not in texto
+    assert "name Read1" in texto
+
+
+def test_preserva_no_utf8(tmp_path):
+    ruta = tmp_path / "comp.nk"
+    original = (
+        "Read {\n"
+        '  file "cliente-\xe9.mov"\n'
+        "  mov64_prraw_plugin Standard\n"
+        "  name Read1\n"
+        "}\n"
+    )
+    ruta.write_bytes(original.encode("latin-1"))
+    assert limpiar.sanitizar_archivo(str(ruta)) == 1
+    contenido = ruta.read_bytes()
+    # El byte \xe9 (acento latin-1) debe conservarse intacto.
+    assert b"\xe9" in contenido
+    assert b"mov64_prraw_plugin" not in contenido
+    assert b"name Read1" in contenido
+
+
+def test_no_utf8_sin_basura_no_reescribe(tmp_path):
+    ruta = tmp_path / "comp.nk"
+    original = (
+        "Read {\n"
+        '  file "cliente-\xe9.mov"\n'
+        "  name Read1\n"
+        "}\n"
+    )
+    ruta.write_bytes(original.encode("latin-1"))
+    assert limpiar.sanitizar_archivo(str(ruta)) == 0
+    assert ruta.read_bytes() == original.encode("latin-1")
+
+
+def test_sanitizar_carpeta_recursiva(tmp_path):
+    comp = tmp_path / "comp.nk"
+    comp.write_text(
+        "Read {\n  mov64_prraw_plugin Standard\n  name Read1\n}\n",
+        encoding="utf-8",
+    )
+    limpio = tmp_path / "limpio.gizmo"
+    limpio.write_text("Group {\n  name G1\n}\n", encoding="utf-8")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    viejo = sub / "viejo.nk"
+    viejo.write_text(
+        "Viewer {\n  render_settings_schema false\n  name Viewer1\n}\n",
+        encoding="utf-8",
+    )
+
+    resultado = limpiar.sanitizar_carpeta(str(tmp_path))
+    assert resultado["limpiados"] == 2
+    assert resultado["sin_cambios"] == 1
+    assert resultado["errores"] == []
+
+    assert "mov64_prraw_plugin" not in comp.read_text(encoding="utf-8")
+    assert "render_settings_schema" not in viejo.read_text(encoding="utf-8")
+    assert "viewer" not in limpio.read_text(encoding="utf-8").lower() or "name G1" in limpio.read_text(encoding="utf-8")
+
+
+def test_sanitizar_carpeta_solo_extensiones(tmp_path):
+    # Contrato: solo se cuentan y procesan .nk/.gizmo (case-insensitive). Un
+    # .py con basura no se toca y tampoco se cuenta como sin_cambios.
+    py = tmp_path / "basura.py"
+    py.write_text("mov64_prraw_plugin Standard\n", encoding="utf-8")
+    resultado = limpiar.sanitizar_carpeta(str(tmp_path))
+    assert resultado == {"limpiados": 0, "sin_cambios": 0, "errores": []}
+    assert py.read_text(encoding="utf-8") == "mov64_prraw_plugin Standard\n"

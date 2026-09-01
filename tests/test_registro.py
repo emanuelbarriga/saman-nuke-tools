@@ -36,6 +36,17 @@ def _escena_limpia():
 
 def _instalar(monkeypatch):
     """Ejecuta registro.instalar() neutralizando las dependencias de proyecto."""
+    monkeypatch.setattr(registro.proyecto_tools, "cargar_scripts_proyecto", lambda: False)
+    monkeypatch.setattr(registro, "_inyectar_frame_manager", lambda: None)
+    menu = nuke.menu("Nodes")
+    menu._items[:] = []
+    menu.commands[:] = []
+    registro.instalar()
+    return menu
+
+
+def _instalar(monkeypatch):
+    """Ejecuta registro.instalar() neutralizando las dependencias de proyecto."""
     # Neutraliza el re-escaneo de scripts del proyecto y la inyeccion de
     # frame_manager (no queremos red/imports extra en el test).
     monkeypatch.setattr(registro.proyecto_tools, "cargar_scripts_proyecto", lambda: False)
@@ -153,10 +164,11 @@ def test_insertar_breakdown_no_lanza():
 def test_acerca_de_contiene_version(monkeypatch):
     mensajes = []
     monkeypatch.setattr(nuke, "message", mensajes.append)
+    from SamanTools import __version__
     registro._acerca_de()
     assert len(mensajes) == 1
     assert "SamanTools" in mensajes[0]
-    assert "1.8.0" in mensajes[0]
+    assert __version__ in mensajes[0]
 
 
 def test_inyectar_frame_manager_no_lanza(monkeypatch):
@@ -213,3 +225,60 @@ def test_verificar_salud_git_arbol_sucio(monkeypatch):
     mensaje = mensajes[0]
     assert "checkout git" in mensaje
     assert "árbol local con cambios" in mensaje
+
+
+# ---------------------------------------------------------------------------
+# Botón masivo: limpiar knobs volátiles en carpeta.
+# ---------------------------------------------------------------------------
+# Las funciones reciben `_select_carpeta` (hook inyectable) para testear SIN
+# depender de que PySide/PySide6 esté instalado en CI.
+
+
+def test_limpiar_carpeta_cancela(monkeypatch):
+    from SamanTools import limpiar
+
+    llamadas = []
+    monkeypatch.setattr(limpiar, "sanitizar_carpeta", lambda ruta: llamadas.append(ruta) or {})
+    # Cancelar devuelve carpeta vacia -> return silencioso, no ejecuta.
+    registro._limpiar_knobs_volatiles_carpeta(_select_carpeta=lambda: "")
+    assert llamadas == []
+
+
+def test_limpiar_carpeta_confirmado(monkeypatch, tmp_path):
+    from SamanTools import limpiar
+
+    mensajes = []
+    monkeypatch.setattr(nuke, "message", mensajes.append)
+    monkeypatch.setattr(limpiar, "sanitizar_carpeta", lambda ruta: {"limpiados": 2, "sin_cambios": 1, "errores": []})
+    # Los 3 .nk del tmp_path activan la confirmacion (nuke.ask -> True).
+    (tmp_path / "a.nk").write_text("mov64_prraw_plugin Standard\n", encoding="utf-8")
+    (tmp_path / "b.nk").write_text("mov64_prraw_plugin Standard\n", encoding="utf-8")
+    (tmp_path / "c.gizmo").write_text("Mov64_prraw_plugin Standard\n", encoding="utf-8")
+    registro._limpiar_knobs_volatiles_carpeta(_select_carpeta=lambda: str(tmp_path))
+    assert len(mensajes) == 1
+    assert "Limpiados: 2" in mensajes[0]
+    assert "Ya estaban limpios: 1" in mensajes[0]
+
+
+def test_limpiar_carpeta_sin_archivos(monkeypatch, tmp_path):
+    mensajes = []
+    monkeypatch.setattr(nuke, "message", mensajes.append)
+    registro._limpiar_knobs_volatiles_carpeta(_select_carpeta=lambda: str(tmp_path))
+    assert len(mensajes) == 1
+    assert "No se encontraron" in mensajes[0]
+
+
+def test_instalar_agrega_boton_carpeta(monkeypatch):
+    menu = _instalar(monkeypatch)
+    saman = next(
+        (sub for sub in menu._items if getattr(sub, "_nombre", None) == "SamanTools"),
+        None,
+    )
+    assert saman is not None
+    sistema = next(
+        (sub for sub in saman.items() if getattr(sub, "_nombre", None) == "Sistema / Configuración"),
+        None,
+    )
+    assert sistema is not None
+    nombres = [name for (name, _) in sistema.commands]
+    assert "Limpiar knobs volátiles en carpeta..." in nombres

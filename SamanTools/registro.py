@@ -78,6 +78,94 @@ def _limpiar_knobs_volatiles():
         nuke.message("El archivo no tiene knobs volátiles:\n%s" % ruta)
 
 
+def _limpiar_knobs_volatiles_carpeta(_select_carpeta=None):
+    """Limpia masivamente knobs volatiles de todos los .nk/.gizmo de una carpeta.
+
+    Pide la carpeta con un QFileDialog (PySide), confirma con nuke.ask y ejecuta
+    `limpiar.sanitizar_carpeta` (seguro, nunca corrompe archivos). Nunca lanza:
+    cualquier error se muestra con nuke.message.
+
+    `_select_carpeta` es un hook opcional (inyectable en tests) que devuelve la
+    carpeta elegida; si no se pasa, se usa QFileDialog.getExistingDirectory.
+    """
+    ruta_base = ""
+    try:
+        if nuke.root().name():
+            ruta_base = os.path.dirname(nuke.root().name())
+    except Exception:
+        pass
+    if not ruta_base:
+        try:
+            import __main__
+            ruta_base = getattr(__main__, "PYTHON_COMP", "") or ""
+        except Exception:
+            ruta_base = os.environ.get("PYTHON_COMP", "")
+
+    if _select_carpeta is not None:
+        carpeta = _select_carpeta()
+    else:
+        try:
+            from PySide2 import QtWidgets
+        except ImportError:
+            try:
+                from PySide6 import QtWidgets
+            except ImportError:
+                nuke.message("No se pudo abrir el selector de carpeta (falta PySide).")
+                return
+        carpeta = QtWidgets.QFileDialog.getExistingDirectory(
+            None, "Seleccioná la carpeta con los .nk/.gizmo a limpiar", ruta_base
+        )
+
+    if not carpeta:
+        return
+    if not os.path.isdir(carpeta):
+        nuke.message("La carpeta no existe:\n%s" % carpeta)
+        return
+
+    # Conteo previo (solo lectura) para el mensaje de confirmacion.
+    extensiones = (".nk", ".gizmo")
+    total = 0
+    for raiz, directorios, archivos in os.walk(carpeta):
+        directorios[:] = [d for d in directorios if not os.path.islink(os.path.join(raiz, d))]
+        total += sum(
+            1 for nombre in archivos if nombre.lower().endswith(extensiones)
+        )
+    if total == 0:
+        nuke.message(
+            "No se encontraron archivos .nk/.gizmo en:\n%s" % carpeta
+        )
+        return
+
+    if not nuke.ask(
+        "Se encontraron %d archivos .nk/.gizmo en:\n%s\n\n"
+        "¿Limpiarlos? (Se eliminan líneas de knobs volátiles; se conserva todo lo demás.)"
+        % (total, carpeta)
+    ):
+        return
+
+    try:
+        from SamanTools import limpiar
+        resultado = limpiar.sanitizar_carpeta(carpeta)
+    except Exception as e:
+        nuke.message("No se pudo limpiar la carpeta:\n%s\n\n%s" % (carpeta, e))
+        return
+
+    limpiados = resultado.get("limpiados", 0)
+    sin_cambios = resultado.get("sin_cambios", 0)
+    errores = resultado.get("errores", [])
+
+    cabecera = "Listo.\n\nLimpiados: %d\nYa estaban limpios: %d" % (limpiados, sin_cambios)
+    if errores:
+        lineas = [ruta for (ruta, _msg) in errores[:10]]
+        extras = len(errores) - len(lineas)
+        texto = cabecera + "\n\nERRORES (no se tocaron):\n" + "\n".join(lineas)
+        if extras > 0:
+            texto += "\n... y %d más." % extras
+        nuke.message(texto)
+    else:
+        nuke.message(cabecera)
+
+
 def _insertar_breakdown():
     """Inserta el nodo Breakdown (VFX breakdown con tabla de frames) en el script actual."""
     ruta_archivo = os.path.join(os.path.dirname(os.path.realpath(__file__)), "nodos", "Breakdown.gizmo")
@@ -234,6 +322,10 @@ def instalar():
     sub_sistema.addCommand(
         "Limpiar knobs volátiles",
         _limpiar_knobs_volatiles,
+    )
+    sub_sistema.addCommand(
+        "Limpiar knobs volátiles en carpeta...",
+        _limpiar_knobs_volatiles_carpeta,
     )
     sub_sistema.addCommand(
         "Acerca de SamanTools...",
