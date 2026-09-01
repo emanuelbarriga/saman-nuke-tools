@@ -1,0 +1,17 @@
+# Forzar fin de linea coherente en scripts por plataforma.
+#  - *.sh  -> LF siempre (en Linux/macOS y tambien cuando se corre via
+#             `bash` en Windows/Git-Bash). Evita el error
+#             "\r: command not found" por salto CRLF.
+#  - *.bat -> CRLF siempre (Windows las espera con CRLF).
+#             La regla `-text` marca el binario del repo como tal,
+#             sin autoconversion.
+*.sh  text eol=lf
+*.bat text eol=crlf
+
+# Binarios: nunca autoconvertir.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.exr  binary
+*.gizmo text
+*.nk   text
