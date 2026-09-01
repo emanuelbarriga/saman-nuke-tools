@@ -148,17 +148,21 @@ def _instalar_stub_nuke():
     # --- menú falso ---
     class MenuFake:
         def __init__(self):
-            self.items = []
+            # `items` es un METODO (lo llama proyecto.cargar_scripts_proyecto a
+            # traves de nuke.menu('Nodes').items()); el almacen real vive en
+            # `_items` para no chocar con el nombre del metodo. Los tests
+            # resetean/leen con `_items`.
+            self._items = []
             self.commands = []
             self.removed = []
 
         def items(self):
-            return self.items
+            return self._items
 
         def addMenu(self, name):
             sub = MenuFake()
             sub._nombre = name
-            self.items.append(sub)
+            self._items.append(sub)
             return sub
 
         def addCommand(self, name, cmd, **k):

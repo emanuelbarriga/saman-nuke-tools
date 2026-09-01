@@ -10,6 +10,7 @@ Enter. Review y Breakdown usan callables; Rutas debe ser consistente.
 """
 
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -44,7 +45,7 @@ def _instalar(monkeypatch):
     # El stub de nuke devuelve SIEMPRE el mismo MenuFake (_m) para cualquier
     # raiz de menu; instalar() anade menus/comandos ahi.
     menu = nuke.menu("Nodes")
-    menu.items[:] = []
+    menu._items[:] = []
     menu.commands[:] = []
     registro.instalar()
     return menu
@@ -64,13 +65,13 @@ def test_buscador_insertar_nodo_registra_callables_no_strings(monkeypatch):
     # En el stub, nuke.menu() devuelve SIEMPRE el mismo MenuFake para cualquier
     # raiz; el submenu del buscador TAB es 'HTLR · Saman · Samán'.
     menu_saman = next(
-        (sub for sub in menu.items if getattr(sub, "_nombre", None) == "HTLR · Saman · Samán"),
+        (sub for sub in menu._items if getattr(sub, "_nombre", None) == "HTLR · Saman · Samán"),
         None,
     )
     assert menu_saman is not None, "Falta el submenu 'HTLR · Saman · Samán' del buscador Tab"
 
     insertar = next(
-        (sub for sub in menu_saman.items if getattr(sub, "_nombre", None) == "Insertar Nodo"),
+        (sub for sub in menu_saman.items() if getattr(sub, "_nombre", None) == "Insertar Nodo"),
         None,
     )
     assert insertar is not None, "Falta el submenu 'Insertar Nodo' en el buscador Tab"
@@ -91,3 +92,124 @@ def test_buscador_insertar_nodo_registra_callables_no_strings(monkeypatch):
             "Usa la funcion directa (callable) para que Tab/Enter la ejecute." % nombre
         )
         assert callable(cmd)
+
+
+# ---------------------------------------------------------------------------
+# Funciones privadas de registro (cobertura adicional)
+# ---------------------------------------------------------------------------
+
+
+def test_ruta_icono_absoluta():
+    ruta = registro._ruta_icono("MiIcono.svg")
+    assert os.path.isabs(ruta)
+    assert ruta.endswith("MiIcono.svg")
+
+
+def test_escanear_scripts_ok(monkeypatch):
+    monkeypatch.setattr(
+        registro.proyecto_tools, "cargar_scripts_proyecto", lambda: True
+    )
+    registro._escanear_scripts_proyecto()
+    mensaje = nuke._estado["mensajes"][-1]
+    assert "Scripts del proyecto cargados" in mensaje
+
+
+def test_escanear_scripts_vacio(monkeypatch):
+    monkeypatch.setattr(
+        registro.proyecto_tools, "cargar_scripts_proyecto", lambda: False
+    )
+    registro._escanear_scripts_proyecto()
+    mensaje = nuke._estado["mensajes"][-1]
+    assert "No se encontraron scripts" in mensaje
+
+
+def test_insertar_rutas_llama_crear_o_reutilizar(monkeypatch):
+    from SamanTools import rutas
+
+    llamadas = []
+
+    def _espia():
+        llamadas.append(True)
+
+    monkeypatch.setattr(rutas, "crear_o_reutilizar", _espia)
+    registro._insertar_rutas()
+    assert llamadas == [True]
+
+
+def test_insertar_review_no_lanza(monkeypatch):
+    from SamanTools import limpiar
+
+    monkeypatch.setattr(limpiar, "sanitizar_archivo", lambda ruta: 0)
+    # nodePaste del stub devuelve NodoFake; no debe lanzar.
+    registro._insertar_review()
+    assert True
+
+
+def test_insertar_breakdown_no_lanza():
+    registro._insertar_breakdown()
+    assert True
+
+
+def test_acerca_de_contiene_version(monkeypatch):
+    mensajes = []
+    monkeypatch.setattr(nuke, "message", mensajes.append)
+    registro._acerca_de()
+    assert len(mensajes) == 1
+    assert "SamanTools" in mensajes[0]
+    assert "1.8.0" in mensajes[0]
+
+
+def test_inyectar_frame_manager_no_lanza(monkeypatch):
+    # frame_manager puede importarse o fallar con ImportError fuera de Nuke;
+    # el handler lo atrapa. Solo aseguramos que no lanza.
+    registro._inyectar_frame_manager()
+    assert True
+
+
+def test_verificar_salud_copia_sin_git(monkeypatch):
+    mensajes = []
+    monkeypatch.setattr(nuke, "message", mensajes.append)
+
+    original_isdir = os.path.isdir
+
+    def _isdir_sin_git(p):
+        if p.endswith(".git"):
+            return False
+        return original_isdir(p)
+
+    monkeypatch.setattr(os.path, "isdir", _isdir_sin_git)
+
+    registro._verificar_salud()
+    assert len(mensajes) == 1
+    mensaje = mensajes[0]
+    assert "instalación por copia" in mensaje
+    assert "no aplica" in mensaje
+
+
+def test_verificar_salud_git_arbol_sucio(monkeypatch):
+    mensajes = []
+    monkeypatch.setattr(nuke, "message", mensajes.append)
+
+    original_isdir = os.path.isdir
+
+    def _isdir_git(p):
+        if p.endswith(".git"):
+            return True
+        return original_isdir(p)
+
+    monkeypatch.setattr(os.path, "isdir", _isdir_git)
+
+    def _git_fake(args, **kwargs):
+        if "rev-parse" in args:
+            return types.SimpleNamespace(returncode=0, stdout="abc1234\n", stderr="")
+        if "status" in args:
+            return types.SimpleNamespace(returncode=0, stdout=" M archivo\n", stderr="")
+        return types.SimpleNamespace(returncode=-1, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _git_fake)
+
+    registro._verificar_salud()
+    assert len(mensajes) == 1
+    mensaje = mensajes[0]
+    assert "checkout git" in mensaje
+    assert "árbol local con cambios" in mensaje
