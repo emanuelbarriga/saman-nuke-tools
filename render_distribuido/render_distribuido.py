@@ -32,6 +32,7 @@ import json
 import os
 import platform
 import re
+import struct
 import subprocess
 import sys
 import time
@@ -52,14 +53,19 @@ def construir_workers(config_workers):
     ``ssh`` se compone como ``ssh_user + "@" + host`` SOLO cuando el worker es
     remoto (``ssh`` no nulo/vacio); local queda ``None``. ``bin`` pasa a ser
     ``nuke_exec`` de la config; ``base`` y ``lc_all`` se copian tal cual.
+
+    Defensa: si el host ya viene con el usuario incluido (configs escritas
+    a mano), no duplicamos el usuario: se usa el host tal cual.
     """
     workers = []
     for w in config_workers:
-        ssh = "%s@%s" % (w["ssh_user"], w["ssh"]) if w["ssh"] else None
+        host = w["ssh"]
+        if host and "@" not in host:
+            host = "%s@%s" % (w["ssh_user"], host)
         workers.append(
             {
                 "nombre": w["nombre"],
-                "ssh": ssh,
+                "ssh": host,
                 "bin": w["nuke_exec"],
                 "base": w["base"],
                 "lc_all": w["lc_all"],
@@ -279,15 +285,86 @@ def path_frame(template, n):
 
 
 def header_exr_valido(path):
-    """Check barato: header magico EXR ('v/1\\1') + tamano minimo."""
+    """Check barato pero ESTRUCTURAL del EXR (sin decodificar scanlines).
+
+    Valida: magic 'v/1\\1', cabecera parseable (dataWindow + compression),
+    tabla de offsets de chunks completa y coherente, y el chunk leader del
+    primer chunk. Detecta el patron real de corrupcion LucidLink/FUSE:
+    tamano normal pero tabla de offsets rota / chunk leader invalido.
+    """
     try:
         if not os.path.isfile(path):
             return False
-        if os.path.getsize(path) < 1024:
+        size = os.path.getsize(path)
+        if size < 1024:
             return False
         with open(path, "rb") as f:
-            return f.read(4) == b"v/1\x01"
-    except OSError:
+            if f.read(4) != b"v/1\x01":
+                return False
+            ver = f.read(4)
+            tiled = bool(struct.unpack("<I", ver)[0] & 0x00000200)
+            # cabecera: atributos null-terminated (nombre, tipo), size, valor
+            compression = None
+            dw = None
+            while True:
+                nombre = b""
+                while True:
+                    c = f.read(1)
+                    if not c:
+                        return False
+                    if c == b"\x00":
+                        break
+                    nombre += c
+                if nombre == b"":
+                    break  # fin de cabecera (atributo vacio/terminador)
+                while True:
+                    c = f.read(1)
+                    if not c:
+                        return False
+                    if c == b"\x00":
+                        break
+                sz = struct.unpack("<I", f.read(4))[0]
+                val = f.read(sz)
+                if len(val) != sz:
+                    return False
+                if nombre == b"dataWindow":
+                    dw = struct.unpack("<iiii", val)
+                elif nombre == b"compression":
+                    compression = val[0]
+            if dw is None or compression is None:
+                return False
+            if tiled:
+                return True  # tiled: estructura distinta; no evaluamos aqui
+            mny, mxy = dw[1], dw[3]
+            height = mxy - mny + 1
+            lines_bloque = {0: 1, 1: 1, 2: 1, 3: 16, 4: 32, 5: 16,
+                            6: 32, 7: 32, 8: 32, 9: 256}.get(compression, 16)
+            nchunks = (height + lines_bloque - 1) // lines_bloque
+            off = f.tell()
+            if off + nchunks * 8 > size:
+                return False
+            f.seek(off)
+            tabla = struct.unpack("<%dQ" % nchunks, f.read(nchunks * 8))
+            first = tabla[0]
+            if first == 0 or first < off + nchunks * 8:
+                return False
+            prev = first
+            for i, v in enumerate(tabla[1:], 1):
+                if v == 0 or v < prev:
+                    return False
+                prev = v
+            if tabla[-1] + 8 > size:
+                return False
+            # chunk leader del primer chunk: y == dataWindow.min.y
+            f.seek(first)
+            leader = f.read(8)
+            if len(leader) < 8:
+                return False
+            y, dsz = struct.unpack("<ii", leader)
+            if y != mny or dsz <= 0 or first + 8 + dsz > size:
+                return False
+        return True
+    except (OSError, struct.error, EOFError):
         return False
 
 
