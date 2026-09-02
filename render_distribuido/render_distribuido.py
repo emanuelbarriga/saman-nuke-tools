@@ -47,6 +47,11 @@ try:
 except ImportError:  # script mode
     import layouts
 
+try:
+    from render_distribuido import plate_qc
+except ImportError:  # script mode
+    import plate_qc
+
 
 def ruta_repo(worker):
     return worker["base"] + "/saman-nuke-tools/render_distribuido"
@@ -191,6 +196,10 @@ def env_worker(worker, args, mode):
         base_env["PIGGYBACK"] = args.piggyback
     if getattr(args, "force_exr", False) and mode == "render":
         base_env["FORCE_EXR"] = "1"
+    if getattr(args, "qc_set", None) and mode == "render":
+        # (D3) Specs del plate para reescribir el Write en CADA sesion de
+        # worker (el comp se abre desde disco sin guardar).
+        base_env["QC_SET"] = args.qc_set
     return base_env
 
 
@@ -651,10 +660,18 @@ def es_flujo_asistido(args):
     """True si la corrida usa flags nuevos del flujo asistido.
 
     Legacy (solo ``--comp`` y flags viejos) => False: sin seleccion por
-    layout ni gate, para no regresionar (RC-QC-04).
+    layout ni gate, para no regresionar (RC-QC-04). Los flags QC del gate
+    tambien activan el flujo asistido (D3: cualquier flag nuevo presente).
     """
     return bool(
-        args.proyecto or args.comp_dir or args.resolve_latest or args.use_version
+        args.proyecto
+        or args.comp_dir
+        or args.resolve_latest
+        or args.use_version
+        or getattr(args, "force_qc", False)
+        or getattr(args, "plate_date", None)
+        or getattr(args, "validar_solo_duracion", False)
+        or getattr(args, "fps_forzar", None)
     )
 
 
@@ -744,6 +761,134 @@ def seleccionar_version(plan_dir, args, layout):
     return layouts.mejor_version_comp(plan_dir, layout)
 
 
+# ---------------------------------------------------------------------------
+# Gate QC pre-render (PR3, D3/D5/D6): plate -> ffprobe -> comparar -> reporte
+# ---------------------------------------------------------------------------
+
+
+def gate_habilitado(args, pr):
+    """True si el gate corre: flujo asistido (RC-QC-04) y PROBE con datos."""
+    return bool(es_flujo_asistido(args) and pr)
+
+
+def _fecha_de_plate(plate_rel):
+    """Carpeta YYYYMMDD[-N] de la ruta relativa del plate (para el reporte)."""
+    match = re.search(r"/(\d{8}(?:-\d+)?)/", plate_rel)
+    return match.group(1) if match else None
+
+
+def gate_qc(args, config, layout, plano, version, pr):
+    """Gate QC pre-render del flujo asistido (D3/D5/D6, RC-QC-01/02/03/04).
+
+    Localiza el plate (fecha mas reciente u override ``--plate-date``), lo
+    probea con ffprobe y compara contra el root de la PROBE y los nodos de
+    entrega/preview. Devuelve ``(payload, discrepancias, qc_set)``:
+
+    - Aborta (SystemExit) si el probe falla, nombrando la ruta (RC-QC-02).
+    - Con discrepancias emite el reporte D6 en TEST_RENDER (relativo a la
+      base) + resumen stdout; sin ``--force-qc``, los errores bloqueantes
+      disparan ``__DECISION__`` (D5): en TTY elige el artista, en auto el
+      CLI sale 3 ("necesita decision") para que el agente pregunte.
+    - ``qc_set`` lleva las specs del plate para reescribir DELIVERY_EXR
+      (fps/format/duracion) solo si hay errores; ``--fps-forzar`` domina.
+    """
+    plate_rel = layouts.localizar_plate(
+        layout, plano, config, fecha=getattr(args, "plate_date", None)
+    )
+    plate_abs = layouts.ruta_bajo_base(plate_rel, config)
+    if not plate_abs:
+        raise SystemExit("Sin base local para resolver el plate %r." % plate_rel)
+    try:
+        plate = plate_qc.probar_plate(plate_abs)
+    except plate_qc.ProbeError as e:
+        raise SystemExit("QC: %s" % e)
+
+    root = {
+        "fps": pr.get("root_fps"),
+        "first": pr.get("root_first"),
+        "last": pr.get("root_last"),
+        "width": pr.get("root_w"),
+        "height": pr.get("root_h"),
+    }
+    discrepancias = plate_qc.comparar(plate, root, pr.get("nodes") or {})
+
+    abs_dir = layouts.ruta_bajo_base(plano, config)
+    analisis = layouts.analizar_version(abs_dir, layout) if abs_dir else {}
+    planos = [{
+        "plano": plano,
+        "version_elegida": version,
+        "mtime": round(os.path.getmtime(os.path.join(abs_dir, version)), 1)
+        if abs_dir and os.path.isfile(os.path.join(abs_dir, version)) else None,
+        "sospechosa": analisis.get("sospechosa", False),
+        "candidatas": analisis.get("candidatas", []),
+    }]
+    plates = [{
+        "plano": plano,
+        "fecha": _fecha_de_plate(plate_rel),
+        "ruta_relativa": plate_rel,
+        "ffprobe": plate_qc.ffprobe_reporte(plate),
+    }]
+    payload = plate_qc.contenido_reporte(
+        args.proyecto, planos, plates, discrepancias
+    )
+
+    res = plate_qc.resolver_gate(
+        discrepancias,
+        force_qc=args.force_qc,
+        validar_solo_duracion=args.validar_solo_duracion,
+        fps_forzar=args.fps_forzar,
+    )
+    if discrepancias:
+        destino = layouts.ruta_bajo_base("TEST_RENDER/", config)
+        if not destino:
+            raise SystemExit("Sin base local para el reporte QC en TEST_RENDER.")
+        ruta_reporte = plate_qc.reportar(destino, payload)
+        print(plate_qc.resumen_reporte(payload))
+        print("  Reporte QC: %s" % ruta_reporte)
+    if res["aborta"]:
+        dec = res.get("decision")
+        if dec:
+            opciones = dec["opciones"]
+            eleccion = plate_qc.decision(
+                dec["id"], dec["problema"], opciones, dec["default"]
+            )
+        else:
+            eleccion = None
+        if eleccion in ("cancelar", "abortar"):
+            raise SystemExit(1)  # el artista cancela explicitamente
+        if eleccion is None:
+            # modo auto: el bloque __DECISION__ ya salio por stdout (D5)
+            raise SystemExit(res["exit"] or 3)
+        if eleccion == "forzar_fps" and not args.fps_forzar:
+            args.fps_forzar = str(round(float(plate["fps"]), 3))
+    qc_set = None
+    errores = [d for d in discrepancias if d.get("severidad") == "error"]
+    if errores:
+        qc_set = plate_qc.spec_qc_set(plate, pr, fps_diana=args.fps_forzar)
+    return payload, discrepancias, qc_set
+
+
+def aplicar_qc_set(worker, args, spec):
+    """Mode qc_set: reescribe el nodo delivery a las specs del plate (D3).
+
+    Se ejecuta ANTES de CALIB/EXISTENTES: si la reescritura falla, el
+    orquestador aborta (nunca exito fingido, threat 'Remote command/env
+    composition'). El render aplica QC_SET por sesion igualmente (env).
+    """
+    pu = ruta_repo(worker)
+    env = env_worker(worker, args, "qc_set")
+    env["QC_SET"] = json.dumps(spec)
+    dur, rc, sal = medir(
+        worker, [worker["bin"], "-t", pu + "/render_worker.py"], env
+    )
+    if rc != 0:
+        raise SystemExit(
+            "qc_set fallo en %s (rc=%s): %s"
+            % (worker["nombre"], rc, sal[-300:])
+        )
+    return parsear_worker_out(sal) or {}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--comp", default="TEST_RENDER/prueba_test.nk")
@@ -780,6 +925,18 @@ def main():
     ap.add_argument("--force-exr", action="store_true",
                     help="fuerza salida EXR-sequence del nodo de entrega "
                          "conservando duracion y resolucion (RC-MN-03)")
+    ap.add_argument("--force-qc", action="store_true",
+                    help="gate QC: procede pese a las discrepancias "
+                         "(RC-QC-04); el reporte se emite igual")
+    ap.add_argument("--plate-date", default=None, metavar="YYYYMMDD[-N]",
+                    help="fecha del plate a usar (default: la mas reciente, "
+                         "RC-QC-01)")
+    ap.add_argument("--validar-solo-duracion", action="store_true",
+                    help="naming roto plate<->Write: prosigue validando solo "
+                         "duracion (RC-QC-03)")
+    ap.add_argument("--fps-forzar", default=None, metavar="FPS",
+                    help="fps a forzar en el delivery cuando difiere del "
+                         "plate (24 vs 23.976), en vez de abortar (D5)")
     args = ap.parse_args()
 
     # Infraestructura desde la config central estricta: workers, bases por SO
@@ -788,6 +945,8 @@ def main():
 
     # ---- Flujo asistido (PR1): layout + seleccion por mtime ----
     # Legacy sin flags nuevos => este bloque no corre (RC-QC-04).
+    elegidos = {}
+    plano_unico = None
     if es_flujo_asistido(args):
         args.proyecto, _ = resolver_proyecto(args.proyecto)
         layout = layouts.obtener_layout(args.proyecto)
@@ -808,6 +967,8 @@ def main():
             except layouts.SinCompError as e:
                 raise SystemExit("ABORTA: %s" % e)
             elegidos[plano] = version
+            if len(planos) == 1:
+                plano_unico = plano
         print("\n== SELECCION POR MTIME ==")
         for plano, version in elegidos.items():
             print("  %s -> %s" % (plano, version))
@@ -907,6 +1068,24 @@ def main():
                 "Nodo de entrega DELIVERY_EXR sin template EXR: no hay frames "
                 "a distribuir (revisa el Write o --force-exr)."
             )
+
+    # ---- Gate QC pre-render (PR3, D3): tras PROBE, antes de EXISTENTES/CALIB ----
+    # Localiza el plate, lo probea con ffprobe y compara contra root/nodos;
+    # reporta TEST_RENDER/qc_*.json y aborta salvo --force-qc (RC-QC-03/04).
+    # Los caminos tristes salen como __DECISION__ JSON y exit code 3 (D5).
+    qc_set = None
+    if plano_unico and plano_unico in elegidos and gate_habilitado(args, pr):
+        payload, discrepancias, qc_set = gate_qc(
+            args, config, layout, plano_unico, elegidos[plano_unico], pr
+        )
+        args.qc_set = json.dumps(qc_set) if qc_set else None
+        if qc_set:
+            print("== QC SET (reescribir nodo delivery a specs del plate) ==", flush=True)
+            try:
+                res_qcset = aplicar_qc_set(workers[0], args, qc_set)
+                print("  Delivery reescrito: %s" % res_qcset.get("qc_set"), flush=True)
+            except SystemExit:
+                raise
 
     # ---- EXISTENTES + POLITICA ----
     existentes = []

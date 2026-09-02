@@ -12,11 +12,17 @@ Nuke ni de la unidad montada.
 """
 
 import argparse
+import json
+import os
 import platform
 import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from render_distribuido import layouts
+from render_distribuido import plate_qc
 from render_distribuido import render_distribuido as orquestador
 
 RUTA_ORQUESTADOR = (
@@ -405,6 +411,262 @@ def test_env_con_metacaracteres_queda_inerte_en_el_argv(monkeypatch):
     # single quotes: los metacaracteres son parte del VALOR, no del shell
     assert "WNODES='DELIVERY_EXR;touch /tmp/x'" in token_env
     assert "PIGGYBACK='REVIEW_REC709;id'" in token_env
+
+
+# ---------------------------------------------------------------------------
+# Gate QC pre-render (PR3, D3/D5/D6, RC-QC-04): wiring PROBE -> QC -> reporte
+# ---------------------------------------------------------------------------
+
+
+def _args_qc(**opciones):
+    """Namespace del flujo asistido con los flags QC (defaults apagados)."""
+    base = {
+        "proyecto": "HTLR",
+        "comp_dir": None,
+        "resolve_latest": True,
+        "use_version": None,
+        "force_qc": False,
+        "plate_date": None,
+        "validar_solo_duracion": False,
+        "fps_forzar": None,
+    }
+    base.update(opciones)
+    return argparse.Namespace(**base)
+
+
+def _config_qc(tmp_path):
+    """Config ficticia con base = tmp_path para la resolucion de rutas."""
+    return {
+        "bases_por_so": {"macOS": str(tmp_path)},
+        "proyectos": {"HTLR": True},
+    }
+
+
+def _plano_fixture(tmp_path):
+    """Crea el layout ficticio HTLR (plate + comp) bajo tmp_path y devuelve
+    (plano, version, pr) con la PROBE del EP_108 real (root 24fps, preview
+    REC709 con drift 1558 vs plate 1665)."""
+    if not os.path.isdir(tmp_path / "HTLR" / "TO_VFX" / "EP_07" / "20260628"):
+        (tmp_path / "HTLR" / "TO_VFX" / "EP_07" / "20260628").mkdir(parents=True)
+        (tmp_path / "HTLR" / "TO_VFX" / "EP_07" / "20260628"
+         / "plan_alpha_comp_SAMAN_V001.mov").write_text("x", encoding="utf-8")
+        plan_dir = (tmp_path / "HTLR" / "COMP" / "EP_07"
+                    / "plan_alpha_comp_SAMAN_V001")
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan_alpha_comp_SAMAN_v001.nk").write_text(
+            "x", encoding="utf-8"
+        )
+    plano = "HTLR/COMP/EP_07/plan_alpha_comp_SAMAN_V001"
+    pr = {
+        "root_fps": 24.0,
+        "root_first": 1,
+        "root_last": 1665,
+        "root_w": 1920,
+        "root_h": 1080,
+        "plate_first": 1001,
+        "plate_last": 2665,
+        "nodes": {
+            "DELIVERY_EXR": {
+                "first": 1001,
+                "last": 2665,
+                "file": "/b/HTLR/FROM_VFX/EP_07/20260628/DELIVERY_EXR/"
+                        "plan_alpha_comp_SAMAN_V001.####.exr",
+                "file_type": "exr",
+            },
+            "REVIEW_REC709": {
+                "first": 1001,
+                "last": 2558,  # 1558 frames: drift vs plate 1665
+                "file": "/b/HTLR/FROM_VFX/EP_07/20260628/REVIEW_REC709/"
+                        "plan_alpha_comp_SAMAN_V001.mov",
+                "file_type": "mov",
+            },
+        },
+    }
+    return plano, "plan_alpha_comp_SAMAN_v001.nk", pr
+
+
+def _plate_ffprobe_fixture():
+    """Plate 23.976 / 2048x1156 / 1665 (difiere del root 24fps 1920x1080)."""
+    return {
+        "ruta": "HTLR/TO_VFX/EP_07/20260628/plan_alpha_comp_SAMAN_V001.mov",
+        "codec": "prores",
+        "bit_depth": 12,
+        "colorspace": "bt709",
+        "width": 2048,
+        "height": 1156,
+        "fps": 23.976023976,
+        "frames": 1665,
+        "duration": 69.444375,
+        "r_frame_rate": "24000/1001",
+    }
+
+
+def test_es_flujo_asistido_con_cada_flag_qc():
+    """Cada flag nuevo del gate activa el flujo asistido (RC-QC-04)."""
+    assert orquestador.es_flujo_asistido(_args_qc(force_qc=True)) is True
+    assert orquestador.es_flujo_asistido(_args_qc(plate_date="20260628-2")) is True
+    assert orquestador.es_flujo_asistido(_args_qc(validar_solo_duracion=True)) is True
+    assert orquestador.es_flujo_asistido(_args_qc(fps_forzar="23.976")) is True
+
+
+def test_es_flujo_asistido_legacy_sin_flags_qc():
+    """Legacy --comp sin flags nuevos (ni QC) => False: sin gate (RC-QC-04)."""
+    args = argparse.Namespace(
+        proyecto=None, comp_dir=None, resolve_latest=False, use_version=None,
+        force_qc=False, plate_date=None, validar_solo_duracion=False,
+        fps_forzar=None,
+    )
+    assert orquestador.es_flujo_asistido(args) is False
+
+
+def test_gate_habilitado_solo_flujo_asistido_con_probe():
+    """Gate en secuencia PROBE->QC: asistido + probe con nodes, y legacy no."""
+    pr = {"nodes": {"DELIVERY_EXR": {}}, "root_fps": 24.0}
+    legacy = argparse.Namespace(
+        proyecto=None, comp_dir=None, resolve_latest=False, use_version=None,
+        force_qc=False, plate_date=None, validar_solo_duracion=False,
+        fps_forzar=None,
+    )
+
+    assert orquestador.gate_habilitado(legacy, pr) is False
+    assert orquestador.gate_habilitado(_args_qc(), pr) is True
+    assert orquestador.gate_habilitado(_args_qc(), None) is False
+
+
+def test_gate_qc_con_force_escribe_reporte_y_devuelve_qc_set(
+    tmp_path, monkeypatch, capsys
+):
+    """--force-qc: reporte JSON en TEST_RENDER + discrepancias + QC_SET (D3/D6)."""
+    monkeypatch.setattr(layouts.platform, "system", lambda: "Darwin")
+    plano, version, pr = _plano_fixture(tmp_path)
+    monkeypatch.setattr(
+        orquestador.plate_qc, "probar_plate", lambda ruta: _plate_ffprobe_fixture()
+    )
+
+    payload, discrepancias, qc_set = orquestador.gate_qc(
+        _args_qc(force_qc=True), _config_qc(tmp_path),
+        layouts.LAYOUTS["HTLR"], plano, version, pr,
+    )
+
+    assert payload["proyecto"] == "HTLR"
+    tipos = {d["tipo"] for d in discrepancias}
+    assert "fps" in tipos and "resolucion" in tipos
+    assert any(d["severidad"] == "warning" and d["nodo"] == "REVIEW_REC709"
+               for d in discrepancias)
+    assert qc_set["DELIVERY_EXR"]["format"] == "2048x1156"
+    assert qc_set["DELIVERY_EXR"]["fps"] == 23.976
+    # reporte en TEST_RENDER (relativo a la base) + resumen stdout
+    reportes = list((tmp_path / "TEST_RENDER").glob("qc_HTLR_*.json"))
+    assert len(reportes) == 1
+    assert "REPORTE QC" in capsys.readouterr().out
+
+
+def test_gate_qc_sin_force_aborta_exit_3_en_auto(tmp_path, monkeypatch, capsys):
+    """Discrepancia bloqueante sin --force-qc => exit 3 (decisión al agente)."""
+    monkeypatch.setattr(layouts.platform, "system", lambda: "Darwin")
+    plano, version, pr = _plano_fixture(tmp_path)
+    monkeypatch.setattr(
+        orquestador.plate_qc, "probar_plate", lambda ruta: _plate_ffprobe_fixture()
+    )
+
+    def decision_auto(dec_id, problema, opciones, default):
+        # modo auto (D5): el bloque __DECISION__ sale por stdout, sin TTY
+        print("__DECISION__" + json.dumps({"id": dec_id, "problema": problema,
+                                           "opciones": opciones,
+                                           "default": default}))
+        return None
+
+    monkeypatch.setattr(orquestador.plate_qc, "decision", decision_auto)
+
+    with pytest.raises(SystemExit) as exc:
+        orquestador.gate_qc(
+            _args_qc(), _config_qc(tmp_path),
+            layouts.LAYOUTS["HTLR"], plano, version, pr,
+        )
+
+    assert exc.value.code == 3
+    assert "__DECISION__" in capsys.readouterr().out
+
+
+def test_gate_qc_fps_forzar_resuelve_y_qc_set_con_fps_forzado(
+    tmp_path, monkeypatch, capsys
+):
+    """--fps-forzar 24.0: procede y QC_SET lleva el fps forzado (override D5)."""
+    monkeypatch.setattr(layouts.platform, "system", lambda: "Darwin")
+    plano, version, pr = _plano_fixture(tmp_path)
+    plate = _plate_ffprobe_fixture()
+    plate["width"], plate["height"] = 1920, 1080  # solo difiere el fps
+    monkeypatch.setattr(orquestador.plate_qc, "probar_plate", lambda ruta: plate)
+
+    payload, discrepancias, qc_set = orquestador.gate_qc(
+        _args_qc(fps_forzar="24.0"), _config_qc(tmp_path),
+        layouts.LAYOUTS["HTLR"], plano, version, pr,
+    )
+
+    assert qc_set["DELIVERY_EXR"]["fps"] == 24.0
+    assert payload["proyecto"] == "HTLR"  # el reporte existe igual
+    assert any(d["tipo"] == "fps" for d in discrepancias)
+
+
+def test_gate_qc_probe_fallo_aborta_nombrando_la_ruta(tmp_path, monkeypatch):
+    """Probe fallido => abort nombrando la ruta del plate (RC-QC-02)."""
+    monkeypatch.setattr(layouts.platform, "system", lambda: "Darwin")
+    plano, version, pr = _plano_fixture(tmp_path)
+
+    def falla(ruta):
+        raise plate_qc.ProbeError(ruta, "No such file")
+
+    monkeypatch.setattr(orquestador.plate_qc, "probar_plate", falla)
+
+    with pytest.raises(SystemExit) as exc:
+        orquestador.gate_qc(
+            _args_qc(), _config_qc(tmp_path),
+            layouts.LAYOUTS["HTLR"], plano, version, pr,
+        )
+
+    assert "plan_alpha_comp_SAMAN_V001.mov" in str(exc.value.code)
+
+
+def test_env_worker_lleva_qc_set_solo_en_render_con_quoting():
+    """QC_SET viaja en render (no en probe) con el JSON intacto (D6)."""
+    spec = {"DELIVERY_EXR": {"fps": 23.976, "format": "2048x1156"}}
+    args = argparse.Namespace(
+        comp="x.nk", wnode="DELIVERY_EXR", wnodes=None, piggyback=None,
+        force_exr=False, qc_set=json.dumps(spec),
+        to_suf=None, comp_suf=None, from_suf=None,
+    )
+    env_render = orquestador.env_worker({"base": "/b"}, args, "render")
+    env_probe = orquestador.env_worker({"base": "/b"}, args, "probe")
+
+    assert json.loads(env_render["QC_SET"]) == spec
+    assert "QC_SET" not in env_probe
+
+
+def test_ejecutar_remoto_quoting_qc_set_json_intacto(monkeypatch):
+    """env KEY='val' con QC_SET JSON integro en el argv remoto (threat env)."""
+    llamadas = []
+
+    def fake_run(cmd, **kw):
+        llamadas.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(orquestador.subprocess, "run", fake_run)
+    worker = {
+        "nombre": "vfxserver",
+        "ssh": "render_user" + "@" + "vfxserver.studio.local",
+        "bin": "/opt/Nuke18.0v1/Nuke18.0",
+        "base": "/media/wupm/2026",
+        "lc_all": True,
+    }
+    env = {"QC_SET": '{"DELIVERY_EXR":{"fps":23.976,"format":"2048x1156"}}'}
+
+    orquestador.ejecutar(
+        worker, ["/opt/Nuke18.0v1/Nuke18.0", "-t", "render_worker.py"], env, timeout=30
+    )
+
+    token_env = next(t for t in llamadas[0][0] if t.startswith("env "))
+    assert "QC_SET='{\"DELIVERY_EXR\":{\"fps\":23.976,\"format\":\"2048x1156\"}}'" in token_env
+    assert not llamadas[0][1].get("shell")
 
 
 # ---------------------------------------------------------------------------
