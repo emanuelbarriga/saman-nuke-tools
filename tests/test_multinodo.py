@@ -205,6 +205,117 @@ def test_nombres_reales_sin_labels_friendly():
 
 
 # ---------------------------------------------------------------------------
+# D3: worker mode qc_set — reescribe el nodo delivery a las specs del plate
+# (Regla de Oro: el Write de Nuke no se confia ciegamente). Knobs reales:
+# fps del root, format y first/last del Write (check manual en worker real).
+# ---------------------------------------------------------------------------
+
+
+class _KnobQc:
+    """Knob minimo con value/setValue para los fakes de qc_set."""
+
+    def __init__(self, valor):
+        self.valor = valor
+
+    def value(self):
+        return self.valor
+
+    def setValue(self, v):
+        self.valor = v
+
+
+class _WriteQcFake:
+    """Write con knobs format/first/last (qc_set no toca file/file_type)."""
+
+    def __init__(self, format="1920x1080", first=1, last=1558):
+        self.knobs_d = {
+            "format": _KnobQc(format),
+            "first": _KnobQc(first),
+            "last": _KnobQc(last),
+        }
+
+    def knobs(self):
+        return set(self.knobs_d)
+
+    def __getitem__(self, k):
+        return self.knobs_d[k]
+
+
+class _RootQcFake:
+    """Root con knob fps (el fps en Nuke es global al root)."""
+
+    def __init__(self, fps=24.0):
+        self.knobs_d = {"fps": _KnobQc(fps)}
+
+    def __getitem__(self, k):
+        return self.knobs_d[k]
+
+
+def _root_fake(fps=24.0):
+    return lambda: _RootQcFake(fps)
+
+
+def test_aplicar_qc_spec_reescribe_format_fps_y_rango(worker):
+    """QC_SET aplica fps (root), format y first/last (Write) al delivery (D3)."""
+    nodo = _WriteQcFake("1920x1080", first=1, last=1558)
+    spec = {"DELIVERY_EXR": {"fps": 23.976, "format": "2048x1156",
+                             "first": 1001, "last": 2665}}
+
+    aplicado = worker.aplicar_qc_spec(spec, toNode=lambda n: nodo,
+                                      root=_root_fake(24.0))
+
+    assert nodo["format"].value() == "2048x1156"
+    assert nodo["first"].value() == 1001
+    assert nodo["last"].value() == 2665
+    assert aplicado["DELIVERY_EXR"]["format"] == "2048x1156"
+    assert aplicado["DELIVERY_EXR"]["fps"] == 23.976
+    # fps del plate se aplica al root, no al Write
+    assert "fps" in aplicado["DELIVERY_EXR"]
+
+
+def test_aplicar_qc_spec_reescribe_fps_en_el_root(worker):
+    """El fps viaja al knob fps del root (Nuke: frame rate global)."""
+    root = _RootQcFake(24.0)
+    nodo = _WriteQcFake()
+    spec = {"DELIVERY_EXR": {"fps": 23.976, "format": "2048x1156"}}
+
+    worker.aplicar_qc_spec(spec, toNode=lambda n: nodo, root=lambda: root)
+
+    assert root["fps"].value() == 23.976
+
+
+def test_aplicar_qc_spec_nodo_ausente_se_marca_sin_falla(worker):
+    """Write ausente del comp => se marca 'ausente', no explota (D3)."""
+
+    aplicado = worker.aplicar_qc_spec(
+        {"DELIVERY_EXR": {"fps": 23.976}}, toNode=lambda n: None, root=_root_fake()
+    )
+
+    assert aplicado["DELIVERY_EXR"] == "ausente"
+
+
+def test_aplicar_qc_spec_knob_roto_lista_error(worker):
+    """Knob format que falla => error listado por knob, el resto aplica (D3)."""
+
+    class _WriteRoto:
+        def knobs(self):
+            return {"format"}
+
+        def __getitem__(self, k):
+            raise RuntimeError("knob no disponible")
+
+    aplicado = worker.aplicar_qc_spec(
+        {"DELIVERY_EXR": {"fps": 23.976, "format": "2048x1156"}},
+        toNode=lambda n: _WriteRoto(),
+        root=_root_fake(),
+    )
+    assert "errores" in aplicado
+    assert any("format" in e for e in aplicado["errores"])
+    # el resto de los knobs aplica igual (fps al root) pese al knob roto
+    assert aplicado["DELIVERY_EXR"]["fps"] == 23.976
+
+
+# ---------------------------------------------------------------------------
 # RC-MN-02: politica de existencia por tipo (EXR por frame / MOV por archivo)
 # ---------------------------------------------------------------------------
 

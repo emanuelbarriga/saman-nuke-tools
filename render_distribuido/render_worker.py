@@ -236,6 +236,65 @@ def forzar_exr_en(nodo):
         return False
 
 
+def aplicar_qc_spec(spec, toNode=None, root=None):
+    """Aplica QC_SET al nodo delivery: fps (root), format y first/last (Write).
+
+    (D3, Regla de Oro: el nodo de Nuke no se confia ciegamente.) El fps del
+    plate viaja al knob ``fps`` del ROOT (Nuke: frame rate global); format y
+    first/last se aplican sobre el Write. Devuelve por nodo los cambios
+    aplicados; los knobs que fallan se listan en ``errores`` (jamas aborta la
+    corrida por un knob no disponible: el render usa el rango del orquestador
+    de todos modos). Los knobs reales no son testeables con el stub de tests:
+    el mapping (root fps / write format / first-last) requiere check manual
+    en worker real.
+    """
+    if toNode is None:
+        toNode = nuke.toNode
+    if root is None:
+        root = lambda: nuke.root()
+    aplicado = {}
+    for nombre, vals in sorted((spec or {}).items()):
+        nodo = toNode(nombre)
+        if nodo is None:
+            aplicado[nombre] = "ausente"
+            continue
+        cambios = {}
+        errores = aplicado.setdefault("errores", [])
+        if vals.get("fps") is not None:
+            try:
+                root()["fps"].setValue(float(vals["fps"]))
+                cambios["fps"] = vals["fps"]
+            except Exception as e:
+                errores.append("%s.fps: %s" % (nombre, e))
+        if vals.get("format"):
+            try:
+                nodo["format"].setValue(vals["format"])
+                cambios["format"] = vals["format"]
+            except Exception as e:
+                errores.append("%s.format: %s" % (nombre, e))
+        if vals.get("first") is not None and vals.get("last") is not None:
+            try:
+                nodo["first"].setValue(int(vals["first"]))
+                nodo["last"].setValue(int(vals["last"]))
+                cambios["first"] = vals["first"]
+                cambios["last"] = vals["last"]
+            except Exception as e:
+                errores.append("%s.range: %s" % (nombre, e))
+        if "errores" not in aplicado and not cambios:
+            continue
+        if cambios:
+            aplicado[nombre] = cambios
+    return aplicado
+
+
+def _qc_set_desde_env():
+    """QC_SET del env (JSON) parseado; invalido => {} (sin romper el render)."""
+    try:
+        return json.loads(os.environ.get("QC_SET", "{}"))
+    except ValueError:
+        return {}
+
+
 def _parsear_piggyback(valor):
     """'NAME:first:last,NAME2' -> [(nombre, first, last | None)].
 
@@ -362,6 +421,19 @@ elif MODE == "calib":
             "perf_read": perf_nodo("Read1"),
         }
     )
+elif MODE == "qc_set":
+    # (D3) Sobrescribe el nodo delivery a las specs del plate ANTES del
+    # render (Regla de Oro: el Write no se confia ciegamente). El env
+    # QC_SET '{<nodo>: {fps, format, first, last}}' lo compone el
+    # orquestador desde el plate; falla => el orquestador aborta.
+    spec = _qc_set_desde_env()
+    setear_variables(BASE)
+    nuke.scriptOpen(COMP)
+    setear_variables(BASE)
+    aplicado = aplicar_qc_spec(spec)
+    emitir({"qc_set": aplicado})
+    raise SystemExit
+
 elif MODE == "check":
     # Valida profundamente frames EXR existentes: Read + execute 1 frame.
     lista = [x for x in os.environ.get("CHECK_LIST", "").split(",") if x.strip()]
@@ -395,6 +467,11 @@ else:
     setear_variables(BASE)
     t0 = time.time()
     total = 0
+    # QC_SET (D3): el render aplica las specs del plate en CADA sesion de
+    # worker (el comp se abre desde disco sin guardar: la reescritura del
+    # mode qc_set no persiste entre sesiones).
+    if os.environ.get("QC_SET"):
+        aplicar_qc_spec(_qc_set_desde_env())
     for nodo in nodos:
         if os.environ.get("FORCE_EXR"):
             forzar_exr_en(nuke.toNode(nodo))
