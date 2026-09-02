@@ -67,6 +67,7 @@ def test_instalar_crea_estructura_nueva(monkeypatch):
     assert "Breakdown" in nombres_comandos
     assert "Panel de Comentarios" in nombres_comandos
     assert "Diagnóstico de Red" in nombres_comandos
+    assert "Panel de Rutas" in nombres_comandos
 
     # Los submenús viejos (Composición / VFXFlow / Sistema / Configuración)
     # ya no existen: solo queda "Configuración".

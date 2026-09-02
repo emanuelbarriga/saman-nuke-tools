@@ -306,6 +306,12 @@ def instalar():
         "Diagnóstico de Red",
         "from SamanTools import diagnostico_red\ndiagnostico_red.ejecutar()",
     )
+    # Panel global de rutas (reemplaza a futuro el nodo Rutas legacy).
+    # Lazy (string): PySide solo se importa al hacer clic en GUI.
+    menu.addCommand(
+        "Panel de Rutas",
+        "from SamanTools import panel_rutas\npanel_rutas.abrir_panel()",
+    )
 
     # Separador visual entre categorías (Nuke lo dibuja como línea).
     menu.addMenu("-")
@@ -337,6 +343,18 @@ def instalar():
 
     # Carga automatica si el proyecto ya esta disponible al arrancar.
     proyecto_tools.cargar_scripts_proyecto()
+
+    # --- Config global de rutas al arrancar (panel global) ---
+    # Aplica PYTHON_TO_VFX/COMP/FROM_VFX desde ~/.config/saman/rutas_global.json
+    # para que los Reads dinamicos funcionen sin nodo Rutas en el comp.
+    # Solo en GUI (en batch/render el comp viejo con nodo sigue mandando via
+    # knobChanged; el reemplazo total del nodo es el siguiente paso).
+    try:
+        if getattr(nuke, "GUI", False):
+            from SamanTools import rutas_global
+            rutas_global.aplicar_global()
+    except Exception:
+        pass
 
     # --- Registro en el buscador de Nodos (Tab) ---
     # Un .gizmo con raiz NoOp no se indexa solo en el buscador;

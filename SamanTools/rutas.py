@@ -205,12 +205,74 @@ def _re_evaluar_y_recargar(reads, forzar=False):
     return recargados
 
 
+def _aplicar_config(cfg):
+    """
+    CORE config-driven (fuente de verdad para el panel global y para el nodo).
+
+    Escribe PYTHON_TO_VFX / PYTHON_COMP / PYTHON_FROM_VFX en __main__ a
+    partir de un dict de config y re-escanea los scripts del proyecto.
+
+    cfg: {"usuario_activo": str, "rutas": {"TO_VFX_SERVER_<SUF>": str, ...}}
+    Devuelve True si cargo scripts del proyecto, False si no, o None
+    (CENTINELA) si el usuario activo no es valido (no aplico nada).
+
+    El nodo legacy solo es un ADAPTADOR que arma este dict desde sus knobs
+    (_aplicar_proyecto_inner). El día del reemplazo se borra el adaptador y
+    el knobChanged del gizmo; este core no cambia.
+    """
+    usuario = str(cfg.get("usuario_activo") or "").strip()
+    sufijo = SUFIJOS.get(usuario)
+    if not sufijo:
+        return None
+
+    rutas_cfg = cfg.get("rutas") or {}
+    to_vfx = str(rutas_cfg.get("TO_VFX_SERVER_" + sufijo) or "")
+    comp = str(rutas_cfg.get("comp_SERVER_" + sufijo) or "")
+    from_vfx = str(rutas_cfg.get("FROM_VFX_SERVER_" + sufijo) or "")
+
+    # Actualizar variables globales usadas por las rutas relativas.
+    __main__.PYTHON_TO_VFX = to_vfx
+    __main__.PYTHON_COMP = comp
+    __main__.PYTHON_FROM_VFX = from_vfx
+
+    # Re-escanear herramientas del proyecto.
+    try:
+        return proyecto.cargar_scripts_proyecto()
+    except Exception:
+        return False
+
+
+def _reescribir_proyecto_en_rutas(rutas_dict, proy):
+    """
+    Puro: reemplaza el segmento de proyecto en un dict de rutas base.
+
+    La regex es la misma que vivía embebida en el gizmo: toma el segmento
+    inmediatamente anterior a TO_VFX|COMP|FROM_VFX y lo sustituye por `proy`.
+    Devuelve (nuevo_dict, cambios). Lo usan el nodo legacy y el panel global.
+    """
+    nuevo = dict(rutas_dict or {})
+    cambios = 0
+    for k_name, val in nuevo.items():
+        if not val:
+            continue
+        nueva_ruta = re.sub(
+            r"/[^/]+/(TO_VFX|COMP|FROM_VFX)(/|$)",
+            "/" + proy + r"/\1\2",
+            str(val),
+            flags=re.IGNORECASE,
+        )
+        if nueva_ruta != val:
+            nuevo[k_name] = nueva_ruta
+            cambios += 1
+    return nuevo, cambios
+
+
 def _aplicar_proyecto_inner(n):
     """
-    Aplica el proyecto activo del nodo: sincroniza entorno/plano/visibilidad,
-    escribe PYTHON_TO_VFX / PYTHON_COMP / PYTHON_FROM_VFX en __main__,
-    actualiza la etiqueta RutaActual (si aun la tiene) y re-escanea los
-    scripts del proyecto (SamanTools/proyecto).
+    ADAPTADOR legacy: arma el config desde los knobs del nodo y delega en el
+    core _aplicar_config. Conserva los efectos de knob del nodo (entorno,
+    plano, visibilidad, RutaActual). El día del reemplazo por el panel global
+    se elimina este adaptador y el knobChanged del gizmo; el core no cambia.
 
     Devuelve True si cargo scripts del proyecto, False si no, o None
     (CENTINELA) si el usuario activo no es valido (no aplico nada).
@@ -227,18 +289,20 @@ def _aplicar_proyecto_inner(n):
     _sincronizar_plano(n)
     _aplicar_visibilidad(n, sufijo)
 
-    to_vfx = n["TO_VFX_SERVER_" + sufijo].value()
-    comp = n["comp_SERVER_" + sufijo].value()
-    from_vfx = n["FROM_VFX_SERVER_" + sufijo].value()
-
-    # Actualizar variables globales usadas por las rutas relativas.
-    __main__.PYTHON_TO_VFX = to_vfx
-    __main__.PYTHON_COMP = comp
-    __main__.PYTHON_FROM_VFX = from_vfx
+    cfg = {"usuario_activo": usuario, "rutas": {}}
+    for k_name in KNOBS_RUTAS_BASE:
+        try:
+            cfg["rutas"][k_name] = n[k_name].value()
+        except Exception:
+            cfg["rutas"][k_name] = ""
+    resultado = _aplicar_config(cfg)
 
     # Etiqueta de ruta actual (mismo formato que el nodo original).
     #    El knob RutaActual se elimino de la version actual: solo se
     #    actualiza si el nodo aun lo tiene (nodos viejos).
+    to_vfx = cfg["rutas"].get("TO_VFX_SERVER_" + sufijo, "")
+    comp = cfg["rutas"].get("comp_SERVER_" + sufijo, "")
+    from_vfx = cfg["rutas"].get("FROM_VFX_SERVER_" + sufijo, "")
     texto_ruta = (
         "TO_VFX: {0} [PYTHON_TO_VFX]\n"
         "COMP: {1} [PYTHON_COMP]\n"
@@ -249,12 +313,7 @@ def _aplicar_proyecto_inner(n):
             n["RutaActual"].setValue(texto_ruta)
         except Exception:
             pass
-
-    # Re-escanear herramientas del proyecto.
-    try:
-        return proyecto.cargar_scripts_proyecto()
-    except Exception:
-        return False
+    return resultado
 
 
 def aplicar_proyecto(n=None):
@@ -331,32 +390,24 @@ KNOBS_RUTAS_BASE = (
 
 
 def _cambiar_proyecto_en_rutas(n, proy):
-    """Reemplaza el segmento de proyecto en las 9 rutas base.
-    La regex es la misma que vivía embebida en el gizmo: toma el segmento
-    inmediatamente anterior a TO_VFX|COMP|FROM_VFX y lo sustituye por `proy`.
-    Devuelve cuantas rutas cambiaron."""
-    cambios = 0
+    """Reemplaza el segmento de proyecto en las 9 rutas base del nodo.
+    Delega en _reescribir_proyecto_en_rutas (puro, compartido con el panel
+    global). Devuelve cuantas rutas cambiaron."""
+    valores = {}
     for k_name in KNOBS_RUTAS_BASE:
         if k_name not in n.knobs():
             continue
         try:
-            val = n[k_name].value()
+            valores[k_name] = n[k_name].value()
         except Exception:
             continue
-        if not val:
+    nuevos, cambios = _reescribir_proyecto_en_rutas(valores, proy)
+    for k_name, nueva in nuevos.items():
+        try:
+            if nueva != valores[k_name]:
+                n[k_name].setValue(nueva)
+        except Exception:
             continue
-        nueva_ruta = re.sub(
-            r"/[^/]+/(TO_VFX|COMP|FROM_VFX)(/|$)",
-            "/" + proy + r"/\1\2",
-            val,
-            flags=re.IGNORECASE,
-        )
-        if nueva_ruta != val:
-            try:
-                n[k_name].setValue(nueva_ruta)
-                cambios += 1
-            except Exception:
-                continue
     return cambios
 
 

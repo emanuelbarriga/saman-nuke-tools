@@ -162,7 +162,8 @@ Las skills de OpenCode/Claude usadas por el estudio viven versionadas en
 ## Cómo se verifica
 
 Tras reiniciar Nuke:
-- Aparece el menú **SamanTools** plano: Cambiar ColorSpace, Breakdown, Panel de Comentarios (`Ctrl+Alt+C`), Diagnóstico de Red y el submenú **Configuración** (mantenimiento).
+- Aparece el menú **SamanTools** plano: Cambiar ColorSpace, Breakdown, Panel de Comentarios (`Ctrl+Alt+C`), Diagnóstico de Red, **Panel de Rutas** y el submenú **Configuración** (mantenimiento).
+- El **Panel de Rutas** es la config global de rutas (`~/.config/saman/rutas_global.json`); aplica `PYTHON_TO_VFX/COMP/FROM_VFX` al arrancar. El nodo Rutas legacy sigue funcionando por compatibilidad (coexistencia), y el panel permite **Importar desde nodo** para migrar. El día del reemplazo solo se elimina el adaptador del nodo (ver `rutas_global.py`).
 - En el buscador (TAB), escribiendo **breakdown**, **review** o **rutas** se crean los nodos.
 
 ## Rutas de red (importante)
