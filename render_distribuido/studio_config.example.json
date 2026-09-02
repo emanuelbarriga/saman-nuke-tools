@@ -1,0 +1,38 @@
+{
+  "bases_por_so": {
+    "macOS": "/Volumes/estudio/2026",
+    "Linux": "/media/estudio/2026",
+    "Windows": "W:\\estudio\\2026"
+  },
+  "workers": [
+    {
+      "nombre": "macpro",
+      "ssh": null,
+      "ssh_user": "render_admin",
+      "nuke_exec": "/Applications/Nuke18.0v1/Nuke18.0v1.app/Contents/MacOS/Nuke18.0",
+      "base": "/Volumes/estudio/2026",
+      "lc_all": false
+    },
+    {
+      "nombre": "vfxserver",
+      "ssh": "vfxserver.studio.local",
+      "ssh_user": "render_user",
+      "nuke_exec": "/opt/Nuke18.0v1/Nuke18.0",
+      "base": "/media/estudio/2026",
+      "lc_all": true
+    },
+    {
+      "nombre": "workstation",
+      "ssh": "workstation.studio.local",
+      "ssh_user": "render_user",
+      "nuke_exec": "C:\\Program Files\\Nuke18.0\\Nuke18.0.exe",
+      "base": "W:\\estudio\\2026",
+      "lc_all": false
+    }
+  ],
+  "sufijos": {
+    "TO_VFX": "/STUDIO/TO_VFX/",
+    "COMP": "/STUDIO/COMP/",
+    "FROM_VFX": "/STUDIO/FROM_VFX/"
+  }
+}

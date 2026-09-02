@@ -207,12 +207,12 @@ def _cargar_config_local():
 def _guia(llave):
     """Guia de arreglo corta por llave obligatoria."""
     guias = {
-        "bases_por_so": "dict {SO: ruta}, ej. {'macOS': '/Volumes/wupm/2026'}",
+        "bases_por_so": "dict {SO: ruta}, ej. {'macOS': '/Volumes/estudio/2026'}",
         "workers": "lista de dicts de worker",
         "sufijos": "dict {TO_VFX, COMP, FROM_VFX} con los sufijos del estudio",
-        "TO_VFX": "sufijo del subdirectorio TO_VFX, ej. '/HTLR/TO_VFX/'",
-        "COMP": "sufijo del subdirectorio COMP, ej. '/HTLR/COMP/'",
-        "FROM_VFX": "sufijo del subdirectorio FROM_VFX, ej. '/HTLR/FROM_VFX/'",
+        "TO_VFX": "sufijo del subdirectorio TO_VFX, ej. '/ESTUDIO/TO_VFX/'",
+        "COMP": "sufijo del subdirectorio COMP, ej. '/ESTUDIO/COMP/'",
+        "FROM_VFX": "sufijo del subdirectorio FROM_VFX, ej. '/ESTUDIO/FROM_VFX/'",
         "nombre": "nombre del worker",
         "ssh": "host SSH del worker, o None si es la maquina local",
         "ssh_user": "usuario SSH del worker",
@@ -367,7 +367,7 @@ def detectar_so_de_ruta(ruta, config):
     ``None`` si ningun prefijo declarado calza. La comparacion usa ``_canon``:
     las barras invertidas de una ruta Windows no impiden el match contra la
     base declarada (D1). La regla longest-prefix evita falsos con bases
-    solapadas (ej. ``/Volumes/wupm`` vs ``/Volumes/wupm/2026``).
+    solapadas (ej. ``/Volumes/estudio`` vs ``/Volumes/estudio/2026``).
     """
     canon = _canon(ruta)
     candidato = None

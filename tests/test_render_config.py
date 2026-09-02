@@ -12,10 +12,17 @@ import builtins
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from render_distribuido import render_config
+
+RUTA_EJEMPLO = (
+    Path(__file__).resolve().parent.parent
+    / "render_distribuido"
+    / "studio_config.example.json"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -50,9 +57,9 @@ def config_valida():
             },
         ],
         "sufijos": {
-            "TO_VFX": "/HTLR/TO_VFX/",
-            "COMP": "/HTLR/COMP/",
-            "FROM_VFX": "/HTLR/FROM_VFX/",
+            "TO_VFX": "/ESTUDIO/TO_VFX/",
+            "COMP": "/ESTUDIO/COMP/",
+            "FROM_VFX": "/ESTUDIO/FROM_VFX/",
         },
     }
 
@@ -671,3 +678,39 @@ def test_constantes_publicas():
     """Constantes de contrato del design (Interfaces/Contracts)."""
     assert render_config.ENV_BASE == "RENDER_CONFIG_BASE"
     assert render_config.ARCHIVO_DISCO == ".saman/studio_config.json"
+
+
+# ---------------------------------------------------------------------------
+# Plantilla publica: studio_config.example.json (spec: Example validates)
+# ---------------------------------------------------------------------------
+
+
+def test_ejemplo_del_repo_valida_con_el_cargador():
+    """Spec 'Example validates': la plantilla publica pasa validar_esquema.
+
+    La plantilla versionada es una config completa y bien tipada (hostnames,
+    rutas y sufijos ficticios: sin datos reales del estudio).
+    """
+    ejemplo = json.loads(RUTA_EJEMPLO.read_text(encoding="utf-8"))
+
+    assert render_config.validar_esquema(ejemplo) == []
+
+
+def test_ejemplo_del_repo_carga_como_config_efectiva(tmp_path, monkeypatch):
+    """La plantilla copiada a {base}/.saman/studio_config.json carga sin abort.
+
+    Camino real de carga (env base -> JSON del disco) sobre la plantilla
+    publica: los workers y sufijos resueltos son los del ejemplo.
+    """
+    ejemplo = json.loads(RUTA_EJEMPLO.read_text(encoding="utf-8"))
+    escribir_json(tmp_path, ejemplo)
+    monkeypatch.setenv(render_config.ENV_BASE, str(tmp_path))
+    monkeypatch.setattr(render_config, "_cargar_config_local", lambda: None)
+
+    efectiva = render_config.obtener_config_efectiva()
+
+    assert [w["nombre"] for w in efectiva["workers"]] == [
+        "macpro", "vfxserver", "workstation",
+    ]
+    assert efectiva["sufijos"]["TO_VFX"] == "/STUDIO/TO_VFX/"
+    assert efectiva["bases_por_so"]["Windows"] == r"W:\estudio\2026"

@@ -14,6 +14,7 @@ Nuke ni de la unidad montada.
 import argparse
 import platform
 import re
+import subprocess
 from pathlib import Path
 
 from render_distribuido import render_distribuido as orquestador
@@ -233,6 +234,73 @@ def test_so_local_mapa_platform_a_claves_del_esquema(monkeypatch):
     }.items():
         monkeypatch.setattr(platform, "system", lambda: sistema)
         assert orquestador.so_local() == esperado
+
+
+# ---------------------------------------------------------------------------
+# ejecutar: env EXPLICITO en el argv remoto (D6, threat matrix: Remote
+# command/env composition) — sin depender de AcceptEnv de sshd
+# ---------------------------------------------------------------------------
+
+
+def test_ejecutar_remoto_compone_env_explicito_en_argv(monkeypatch):
+    """El argv remoto lleva 'env KEY='val' ...' inline (D6), sin shell local."""
+    llamadas = []
+
+    def fake_run(cmd, **kw):
+        llamadas.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(orquestador.subprocess, "run", fake_run)
+    worker = {
+        "nombre": "vfxserver",
+        "ssh": "render_user" + "@" + "vfxserver.studio.local",
+        "bin": "/opt/Nuke18.0v1/Nuke18.0",
+        "base": "/media/wupm/2026",
+        "lc_all": True,
+    }
+    env = {"TO_SUF": "/TO/", "COMP_SUF": "/COMP/"}
+
+    orquestador.ejecutar(
+        worker,
+        ["/opt/Nuke18.0v1/Nuke18.0", "-t", "render_worker.py"],
+        env,
+        timeout=30,
+    )
+
+    cmd, kwargs = llamadas[0]
+    assert cmd[0] == "ssh"
+    assert "BatchMode=yes" in cmd
+    assert worker["ssh"] in cmd  # ssh_user + host ya compuesto en Python
+    token_env = next(t for t in cmd if t.startswith("env "))
+    assert "LC_ALL=C" in token_env  # prefijo Linux del worker (lc_all)
+    assert "TO_SUF='/TO/'" in token_env
+    assert "COMP_SUF='/COMP/'" in token_env
+    assert "-t" in token_env and "render_worker.py" in token_env  # argv remoto
+    assert not kwargs.get("shell")  # nunca un shell local (threat matrix)
+
+
+def test_ejecutar_local_pasa_argv_sin_env_ni_ssh(monkeypatch):
+    """Worker local (ssh None): argv directo a subprocess, sin ssh ni env."""
+    llamadas = []
+
+    def fake_run(cmd, **kw):
+        llamadas.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(orquestador.subprocess, "run", fake_run)
+    worker = {
+        "nombre": "macpro",
+        "ssh": None,
+        "bin": "/Programas/Nuke18.0v1/Nuke18.0",
+        "base": "/Volumes/wupm/2026",
+        "lc_all": False,
+    }
+    argv = ["/Programas/Nuke18.0v1/Nuke18.0", "-t", "render_worker.py"]
+
+    orquestador.ejecutar(worker, argv, {"TO_SUF": "/TO/"}, timeout=30)
+
+    assert llamadas[0] == argv
+    assert all("env " not in t for t in llamadas[0])
 
 
 # ---------------------------------------------------------------------------
