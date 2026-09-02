@@ -103,6 +103,9 @@ def test_happy_path_json_local_merge_por_llave(tmp_path, monkeypatch, sin_env_ba
     cfg_disco = config_valida()
     cfg_disco["sufijos"]["COMP"] = "/DISCO/COMP/"
     cfg_disco["sufijos"]["FROM_VFX"] = "/DISCO/FROM_VFX/"
+    # la base del worker queda bajo la base Linux que el local sobreescribira
+    # (integridad D2: worker.base debe caer bajo bases_por_so fusionada)
+    cfg_disco["workers"][1]["base"] = "/mnt/otra_base"
     escribir_json(tmp_path, cfg_disco)
     # local: solo sobreescribe TO_VFX y la base Linux
     local = {
@@ -467,6 +470,196 @@ def test_gate_mount_ambos_intentos_fallan_devuelve_falso(tmp_path, monkeypatch):
 
     assert render_config._gate_mount(str(tmp_path), timeout=3, intentos=2) is False
     assert intentos == [3, 3]
+
+
+# ---------------------------------------------------------------------------
+# Traduccion multi-SO (D1, spec: Multi-OS path translation)
+# ---------------------------------------------------------------------------
+
+
+def test_traducir_windows_a_linux_sin_backslashes():
+    """Windows -> Linux: prefijo reemplazado, POSIX solo '/', sin '\\'."""
+    cfg = config_valida()  # Linux: /mnt/wupm/2026
+    resultado = render_config.traducir_ruta(
+        r"W:\wupm\2026\PCF\TO_VFX\x.nk", "Windows", "Linux", cfg
+    )
+    assert resultado == "/mnt/wupm/2026/PCF/TO_VFX/x.nk"
+    assert "\\" not in resultado
+
+
+def test_traducir_windows_a_macos():
+    """Windows -> macOS: mismo mecanismo con base /Volumes."""
+    cfg = config_valida()
+    resultado = render_config.traducir_ruta(
+        r"W:\wupm\2026\PCF\TO_VFX\x.nk", "Windows", "macOS", cfg
+    )
+    assert resultado == "/Volumes/wupm/2026/PCF/TO_VFX/x.nk"
+
+
+def test_traducir_darwin_a_windows_con_backslashes():
+    """Spec Cross-OS: /Volumes/wupm -> W:\\wupm; resultado con '\\'."""
+    cfg = config_valida()
+    resultado = render_config.traducir_ruta(
+        "/Volumes/wupm/2026/PCF/TO_VFX/x.nk", "macOS", "Windows", cfg
+    )
+    assert resultado == r"W:\wupm\2026\PCF\TO_VFX\x.nk"
+
+
+def test_traducir_windows_a_posix_media_sin_backslashes():
+    """Spec Windows->POSIX: W:\\wupm -> /media/wupm, sin '\\' residuales."""
+    cfg = config_valida()
+    cfg["bases_por_so"] = {"Windows": r"W:\wupm", "Linux": "/media/wupm"}
+    resultado = render_config.traducir_ruta(
+        r"W:\wupm\2026\PCF\TO_VFX\x.nk", "Windows", "Linux", cfg
+    )
+    assert resultado == "/media/wupm/2026/PCF/TO_VFX/x.nk"
+    assert "\\" not in resultado
+
+
+def test_traducir_posix_a_windows_separadores_correctos():
+    """Spec POSIX->Windows: resultado usa '\\' en toda la ruta."""
+    cfg = config_valida()
+    cfg["bases_por_so"] = {"Linux": "/media/wupm", "Windows": r"W:\wupm"}
+    resultado = render_config.traducir_ruta(
+        "/media/wupm/2026/PCF/x.nk", "Linux", "Windows", cfg
+    )
+    assert resultado == r"W:\wupm\2026\PCF\x.nk"
+    assert "/" not in resultado
+
+
+def test_traducir_autodetecta_desde_so_cuando_es_none():
+    """desde_so=None -> detectar_so_de_ruta (W:\\... -> Windows)."""
+    cfg = config_valida()
+    resultado = render_config.traducir_ruta(
+        r"W:\wupm\2026\PCF\x.nk", None, "Linux", cfg
+    )
+    assert resultado == "/mnt/wupm/2026/PCF/x.nk"
+
+
+def test_traducir_desde_so_no_declarado_cae_a_deteccion():
+    """desde_so desconocido (no declarado) -> intenta autodeteccion."""
+    cfg = config_valida()
+    resultado = render_config.traducir_ruta(
+        "/mnt/wupm/2026/PCF/x.nk", "Solaris", "Windows", cfg
+    )
+    assert resultado == r"W:\wupm\2026\PCF\x.nk"
+
+
+def test_traducir_prefijo_desconocido_intacto():
+    """Spec Unknown prefix: ruta fuera de bases declaradas -> intacta."""
+    cfg = config_valida()
+    assert (
+        render_config.traducir_ruta("/otra/raiz/x.nk", None, "Windows", cfg)
+        == "/otra/raiz/x.nk"
+    )
+    assert (
+        render_config.traducir_ruta("/otra/raiz/x.nk", "macOS", "Windows", cfg)
+        == "/otra/raiz/x.nk"
+    )
+
+
+def test_traducir_par_destino_no_declarado_intacto():
+    """hacia_so no declarado en bases_por_so -> ruta intacta."""
+    cfg = config_valida()
+    assert (
+        render_config.traducir_ruta(
+            "/Volumes/wupm/2026/x.nk", "macOS", "BeOS", cfg
+        )
+        == "/Volumes/wupm/2026/x.nk"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Deteccion de SO por ruta (longest-prefix)
+# ---------------------------------------------------------------------------
+
+
+def test_detectar_so_de_ruta_por_prefijo():
+    """Cada base declarada detecta rutas bajo ella (canon, con backslashes)."""
+    cfg = config_valida()
+    assert render_config.detectar_so_de_ruta(r"W:\wupm\2026\PCF\x.nk", cfg) == "Windows"
+    assert render_config.detectar_so_de_ruta("/Volumes/wupm/2026/x.nk", cfg) == "macOS"
+    assert render_config.detectar_so_de_ruta("/mnt/wupm/2026/x.nk", cfg) == "Linux"
+
+
+def test_detectar_so_de_ruta_prefijo_desconocido_none():
+    """Ruta sin prefijo declarado -> None."""
+    cfg = config_valida()
+    assert render_config.detectar_so_de_ruta("/otra/raiz/x.nk", cfg) is None
+
+
+def test_detectar_so_de_ruta_longest_prefix_gana():
+    """Prefijo MAS LARGO gana sobre coincidencias mas cortas."""
+    cfg = config_valida()
+    cfg["bases_por_so"] = {"macOS": "/Volumes/wupm", "Linux": "/Volumes/wupm/2026"}
+    assert render_config.detectar_so_de_ruta("/Volumes/wupm/2026/x.nk", cfg) == "Linux"
+    assert render_config.detectar_so_de_ruta("/Volumes/wupm/otro/x.nk", cfg) == "macOS"
+
+
+# ---------------------------------------------------------------------------
+# mapa_bases y normalizacion (_canon / normalizar_separadores)
+# ---------------------------------------------------------------------------
+
+
+def test_mapa_bases_canon_sin_trailing():
+    """mapa_bases normaliza cada base a POSIX canonico (D2)."""
+    cfg = config_valida()
+    bases = render_config.mapa_bases(cfg)
+    assert bases == {
+        "macOS": "/Volumes/wupm/2026",
+        "Windows": "W:/wupm/2026",
+        "Linux": "/mnt/wupm/2026",
+    }
+
+
+def test_canon_slashes_mixtos_normalizado():
+    """_canon: barras mixtas -> forward slashes, sin trailing slash."""
+    assert (
+        render_config._canon(r"W:\wupm\2026\PCF/TO_VFX")
+        == "W:/wupm/2026/PCF/TO_VFX"
+    )
+    assert render_config._canon("/Volumes/wupm/2026/") == "/Volumes/wupm/2026"
+
+
+def test_normalizar_separadores_por_so():
+    """Windows -> backslashes; POSIX -> solo forward slashes."""
+    assert (
+        render_config.normalizar_separadores("W:/wupm/2026/PCF/x.nk", "Windows")
+        == r"W:\wupm\2026\PCF\x.nk"
+    )
+    assert (
+        render_config.normalizar_separadores(r"W:\wupm\2026\PCF\x.nk", "Linux")
+        == "W:/wupm/2026/PCF/x.nk"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Integridad D2: worker.base bajo una base declarada
+# ---------------------------------------------------------------------------
+
+
+def test_validar_esquema_worker_base_fuera_de_bases_reporta():
+    """worker.base fuera de bases_por_so -> error con key path (D2)."""
+    cfg = config_valida()
+    cfg["workers"][1]["base"] = "/opt/otra/cosa"
+    errores = render_config.validar_esquema(cfg)
+    alguno = "\n".join(errores)
+    assert "workers[1].base" in alguno
+    assert "bases_por_so" in alguno
+
+
+def test_validar_esquema_worker_base_subpath_de_base_ok():
+    """worker.base como SUBRUTA de una base declarada -> valido (D2)."""
+    cfg = config_valida()
+    cfg["workers"][1]["base"] = "/mnt/wupm/2026/PCF/TO_VFX"
+    assert render_config.validar_esquema(cfg) == []
+
+
+def test_validar_esquema_worker_base_windows_canonico_ok():
+    """worker.base Windows (backslashes) igual a base declarada -> valido."""
+    cfg = config_valida()
+    cfg["workers"][1]["base"] = r"W:\wupm\2026"
+    assert render_config.validar_esquema(cfg) == []
 
 
 # ---------------------------------------------------------------------------

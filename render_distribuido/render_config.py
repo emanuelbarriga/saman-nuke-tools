@@ -18,10 +18,14 @@ rescata la ausencia del disco (autonomia, D8). El validador acumula TODAS
 las llaves faltantes y tipos incorrectos en UN SystemExit con key path y
 guia de arreglo.
 
-TODO(T2/PR2): ``traducir_ruta``, ``detectar_so_de_ruta``, ``mapa_bases``,
-``_canon`` y ``normalizar_separadores`` (spec: Multi-OS path translation) +
-integridad D2 (worker.base debe caer bajo una base declarada de
-``bases_por_so``); se implementan en la tarea T2, no en T1.
+Traduccion multi-SO (spec: Multi-OS path translation, D1/D2):
+``traducir_ruta`` reemplaza el prefijo de la base de origen por el de la
+base destino y normaliza separadores hacia el SO destino (POSIX solo ``/``
+via ``PurePosixPath``; Windows ``\\`` via ``PureWindowsPath``). Los prefijos
+se derivan de ``bases_por_so`` (``mapa_bases``, canonico) y ``detectar_so_de_ruta``
+elige por longest-prefix; ruta fuera de prefijos o par no declarado => intacta.
+``validar_esquema`` exige (D2) que ``worker.base`` caiga bajo una base
+declarada de ``bases_por_so`` en comparacion canonica (``_canon``).
 """
 
 import importlib
@@ -29,6 +33,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import PurePosixPath, PureWindowsPath
 
 # Ruta del JSON central relativa a la base: {base}/.saman/studio_config.json.
 ARCHIVO_DISCO = ".saman/studio_config.json"
@@ -238,8 +243,9 @@ def validar_esquema(config):
     autonomia del local solo, y para validar un dict cualquiera (ej.
     studio_config.example.json).
 
-    TODO(T2/PR2): integridad D2 - worker.base debe caer bajo una base
-    declarada de bases_por_so (usa _canon de T2).
+    Integridad D2: cada ``worker.base`` debe caer bajo una base declarada de
+    ``bases_por_so`` (comparacion canonica con ``_canon``: igualdad o
+    subruta con ``/`` despues de la base).
     """
     if not isinstance(config, dict):
         return [
@@ -262,12 +268,15 @@ def validar_esquema(config):
 
     # --- bases_por_so: valores string ---
     bases = config.get("bases_por_so")
+    bases_canon = []
     if isinstance(bases, dict):
         for so, ruta in bases.items():
             if not isinstance(ruta, str):
                 errores.append(
                     _error_tipo("bases_por_so[%r]" % so, "str (ruta)", ruta)
                 )
+            else:
+                bases_canon.append(_canon(ruta))  # para la integridad D2
 
     # --- sufijos: TO_VFX/COMP/FROM_VFX presentes y string ---
     sufijos = config.get("sufijos")
@@ -304,8 +313,112 @@ def validar_esquema(config):
                 elif llave == "lc_all":
                     if not isinstance(valor, bool):
                         errores.append(_error_tipo(path, "bool", valor))
+            # --- integridad D2: worker.base bajo una base declarada ---
+            base_worker = worker.get("base")
+            if bases_canon and isinstance(base_worker, str):
+                canon_base = _canon(base_worker)
+                if not any(
+                    canon_base == bc or canon_base.startswith(bc + "/")
+                    for bc in bases_canon
+                ):
+                    errores.append(
+                        "%s.base: la base %r no cae bajo ninguna base "
+                        "declarada de bases_por_so (declaradas: %s). Declara "
+                        "la base del worker en bases_por_so o ajusta base."
+                        % (prefijo, base_worker, ", ".join(sorted(bases_canon)))
+                    )
 
     return errores
+
+
+# ---------------------------------------------------------------------------
+# Normalizacion y traduccion multi-SO (D1/D2, spec: Multi-OS path translation)
+# ---------------------------------------------------------------------------
+
+
+def _canon(ruta):
+    """Normaliza una ruta a POSIX canonico (forward slashes, sin trailing /).
+
+    Reemplaza backslashes antes de ``PurePosixPath`` para que los prefijos se
+    comparen de forma estable entre SO (D1): ``W:\\wupm\\2026`` -> ``W:/wupm/2026``.
+    No resuelve ``..`` (eso seria ``resolve``, no queremos tocar el resto).
+    """
+    return PurePosixPath(str(ruta).replace("\\", "/")).as_posix()
+
+
+def mapa_bases(config):
+    """Devuelve ``{so: base_canon}`` de ``bases_por_so`` (D2).
+
+    Cada base se normaliza con ``_canon`` para las comparaciones de prefijo.
+    ``{}`` si la config no trae ``bases_por_so`` valido (dict de strings).
+    """
+    bases = {}
+    bases_por_so = config.get("bases_por_so") if isinstance(config, dict) else None
+    if isinstance(bases_por_so, dict):
+        for so, ruta in bases_por_so.items():
+            if isinstance(ruta, str):
+                bases[so] = _canon(ruta)
+    return bases
+
+
+def detectar_so_de_ruta(ruta, config):
+    """Devuelve el SO cuya base declarada es el prefijo MAS LARGO de ruta.
+
+    ``None`` si ningun prefijo declarado calza. La comparacion usa ``_canon``:
+    las barras invertidas de una ruta Windows no impiden el match contra la
+    base declarada (D1). La regla longest-prefix evita falsos con bases
+    solapadas (ej. ``/Volumes/wupm`` vs ``/Volumes/wupm/2026``).
+    """
+    canon = _canon(ruta)
+    candidato = None
+    mejor = -1
+    for so, base in mapa_bases(config).items():
+        if canon == base or canon.startswith(base + "/"):
+            if len(base) > mejor:
+                candidato, mejor = so, len(base)
+    return candidato
+
+
+def normalizar_separadores(ruta, so):
+    """Renderiza ruta con los separadores del SO destino (D1).
+
+    Windows => backslashes (``str(PureWindowsPath(canon))``); cualquier otro
+    SO (macOS/Linux/POSIX) => solo forward slashes (canon). Es el paso 3 de
+    la correccion: no basta reemplazar el prefijo, hay que normalizar el resto.
+    """
+    canon = _canon(ruta)
+    if so == "Windows":
+        return str(PureWindowsPath(canon))
+    return canon
+
+
+def traducir_ruta(ruta, desde_so, hacia_so, config):
+    """Traduce ruta del prefijo de ``desde_so`` al de ``hacia_so`` (D1).
+
+    - Reemplaza el prefijo de la base de origen por el de la base destino y
+      normaliza separadores hacia el SO destino (spec: Windows/POSIX
+      separator scenarios).
+    - Si ``desde_so`` no se conoce (None o no declarado en ``bases_por_so``),
+      autodetecta con ``detectar_so_de_ruta``.
+    - Si la ruta no cae bajo la base del SO de origen, o el par no esta
+      declarado, devuelve la ruta INTACTA (spec: Unknown prefix).
+    """
+    bases = mapa_bases(config)
+    if hacia_so not in bases:
+        return ruta
+    if desde_so not in bases:
+        desde_so = detectar_so_de_ruta(ruta, config)
+    if desde_so is None or desde_so not in bases:
+        return ruta
+    base_origen = bases[desde_so]
+    canon = _canon(ruta)
+    if canon == base_origen:
+        resto = ""
+    elif canon.startswith(base_origen + "/"):
+        resto = canon[len(base_origen):]
+    else:
+        return ruta
+    return normalizar_separadores(bases[hacia_so] + resto, hacia_so)
 
 
 # ---------------------------------------------------------------------------
