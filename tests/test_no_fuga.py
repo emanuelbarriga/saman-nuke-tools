@@ -33,6 +33,7 @@ ARCHIVOS_BATCH = [
     "render_distribuido/render_distribuido.py",
     "render_distribuido/render_worker.py",
     "render_distribuido/layouts.py",
+    "render_distribuido/plate_qc.py",
     "render_distribuido/hello.py",
     "render_distribuido/studio_config.example.json",
     "render_distribuido/README.md",
@@ -42,6 +43,7 @@ ARCHIVOS_BATCH = [
     "tests/test_layouts.py",
     "tests/test_seleccion.py",
     "tests/test_multinodo.py",
+    "tests/test_qc_plate.py",
 ]
 
 # Raices reales del estudio: se verifican SOLO en archivos de produccion
