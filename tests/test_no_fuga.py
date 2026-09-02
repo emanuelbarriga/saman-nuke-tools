@@ -32,12 +32,14 @@ ARCHIVOS_BATCH = [
     "render_distribuido/render_config.py",
     "render_distribuido/render_distribuido.py",
     "render_distribuido/render_worker.py",
+    "render_distribuido/layouts.py",
     "render_distribuido/hello.py",
     "render_distribuido/studio_config.example.json",
     "render_distribuido/README.md",
     "tests/test_render_config.py",
     "tests/test_render_worker.py",
     "tests/test_render_distribuido.py",
+    "tests/test_seleccion.py",
 ]
 
 # Raices reales del estudio: se verifican SOLO en archivos de produccion
