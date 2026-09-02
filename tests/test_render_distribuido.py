@@ -304,6 +304,110 @@ def test_ejecutar_local_pasa_argv_sin_env_ni_ssh(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Multi-nodo (PR2): env WNODES/PIGGYBACK/FORCE_EXR (D4, threat Remote
+# command/env composition extendido)
+# ---------------------------------------------------------------------------
+
+
+def test_env_worker_multi_nodo_lleva_wnodes_y_piggyback_al_env():
+    """El env del worker expone WNODES/PIGGYBACK en modo render (D6/D4)."""
+    args = argparse.Namespace(
+        comp="HTLR/COMP/EP_07/plan_alpha_comp_SAMAN_V001/plan_comp_SAMAN_v001.nk",
+        wnode="DELIVERY_EXR",
+        wnodes="DELIVERY_EXR,REVIEW_REC709",
+        piggyback="REVIEW_REC709:1558:1665",
+        force_exr=False,
+        to_suf="/TO/",
+        comp_suf="/COMP/",
+        from_suf="/FROM_VFX/",
+    )
+    env = orquestador.env_worker({"base": "/Volumes/wupm/2026"}, args, "render")
+
+    assert env["WNODES"] == "DELIVERY_EXR,REVIEW_REC709"
+    assert env["PIGGYBACK"] == "REVIEW_REC709:1558:1665"
+    assert env["WNODE"] == "DELIVERY_EXR"
+    assert "FORCE_EXR" not in env  # flag inactivo
+
+
+def test_env_worker_force_exr_solo_en_render(monkeypatch):
+    """FORCE_EXR se emite en render; no en probe (calib sin forzar)."""
+    args = argparse.Namespace(
+        comp="x.nk", wnode="DELIVERY_EXR", wnodes=None, piggyback=None,
+        force_exr=True, to_suf=None, comp_suf=None, from_suf=None,
+    )
+    env_render = orquestador.env_worker({"base": "/b"}, args, "render")
+    env_probe = orquestador.env_worker({"base": "/b"}, args, "probe")
+
+    assert env_render["FORCE_EXR"] == "1"
+    assert "FORCE_EXR" not in env_probe
+    assert "PIGGYBACK" not in env_probe
+
+
+def test_ejecutar_remoto_quoting_wnodes_y_piggyback_intacto(monkeypatch):
+    """env KEY='val' con WNODES/PIGGYBACK integros en el argv remoto (D6)."""
+    llamadas = []
+
+    def fake_run(cmd, **kw):
+        llamadas.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(orquestador.subprocess, "run", fake_run)
+    worker = {
+        "nombre": "vfxserver",
+        "ssh": "render_user" + "@" + "vfxserver.studio.local",
+        "bin": "/opt/Nuke18.0v1/Nuke18.0",
+        "base": "/media/wupm/2026",
+        "lc_all": True,
+    }
+    env = {
+        "WNODES": "DELIVERY_EXR,REVIEW_REC709",
+        "PIGGYBACK": "REVIEW_REC709:1558:1665",
+    }
+
+    orquestador.ejecutar(
+        worker, ["/opt/Nuke18.0v1/Nuke18.0", "-t", "render_worker.py"], env, timeout=30
+    )
+
+    cmd, kwargs = llamadas[0]
+    token_env = next(t for t in cmd if t.startswith("env "))
+    assert "WNODES='DELIVERY_EXR,REVIEW_REC709'" in token_env
+    assert "PIGGYBACK='REVIEW_REC709:1558:1665'" in token_env
+    assert not kwargs.get("shell")
+
+
+def test_env_con_metacaracteres_queda_inerte_en_el_argv(monkeypatch):
+    """Valor de env con metacaracteres shell: quoted => inerte (threat env).
+
+    Ademas, un nombre de nodo con metacaracteres jamas cruza el filtro
+    --wnodes (filtrar_wnodes), asi que no llega a componerse como nombre.
+    """
+    llamadas = []
+
+    def fake_run(cmd, **kw):
+        llamadas.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(orquestador.subprocess, "run", fake_run)
+    worker = {
+        "nombre": "vfxserver",
+        "ssh": "render_user" + "@" + "vfxserver.studio.local",
+        "bin": "/opt/Nuke18.0v1/Nuke18.0",
+        "base": "/media/wupm/2026",
+        "lc_all": False,
+    }
+    malicioso = "DELIVERY_EXR;touch /tmp/x"
+    orquestador.ejecutar(
+        worker, ["/opt/Nuke18.0v1/Nuke18.0", "-t", "render_worker.py"],
+        {"WNODES": malicioso, "PIGGYBACK": "REVIEW_REC709;id"}, timeout=30,
+    )
+
+    token_env = next(t for t in llamadas[0] if t.startswith("env "))
+    # single quotes: los metacaracteres son parte del VALOR, no del shell
+    assert "WNODES='DELIVERY_EXR;touch /tmp/x'" in token_env
+    assert "PIGGYBACK='REVIEW_REC709;id'" in token_env
+
+
+# ---------------------------------------------------------------------------
 # Guard de fuente: sin datos del estudio en el codigo
 # ---------------------------------------------------------------------------
 

@@ -90,6 +90,32 @@ def filtrar_por_nombre(workers, nombres_csv):
     return [w for w in workers if w["nombre"] in nombres]
 
 
+# ---------------------------------------------------------------------------
+# Multi-nodo (PR2, D4): nombres REALES de Write del comp (RC-MN-01)
+# ---------------------------------------------------------------------------
+
+# Los roles semanticos fijos (entrega/preview) se mapean exclusivamente a los
+# nombres reales de los Write del comp. Los labels friendly ("delivery",
+# "preview", "side by side") NUNCA son nombres de nodo (RC-MN-01).
+NODOS_ENTREGA = ("DELIVERY_EXR", "DELIVERY_DWG")
+NODOS_PREVIEW = ("REVIEW_REC709", "SBS_REC709")
+NODOS_RENDER = NODOS_ENTREGA + NODOS_PREVIEW
+
+
+def filtrar_wnodes(descubiertos, wnodes_arg=None):
+    """Filtra los nodos descubiertos de la PROBE (RC-MN-01).
+
+    ``--wnodes`` explicito: solo los nombrados que fueron descubiertos (los
+    nombres se comparan en Python y jamas llegan a un shell). Sin ``--wnodes``:
+    todos los descubiertos con rol de entrega (DELIVERY_*); los previews
+    piggyback en el batch del delivery (D4).
+    """
+    if wnodes_arg:
+        pedidos = [n.strip() for n in wnodes_arg.split(",") if n.strip()]
+        return [n for n in descubiertos if n in pedidos]
+    return [n for n in descubiertos if n in NODOS_ENTREGA]
+
+
 def sufijos_efectivos(sufijos_config, to_suf=None, comp_suf=None, from_suf=None):
     """Sufijos efectivos de la corrida: lo que de el CLI (si viene), si no config.
 
@@ -158,8 +184,13 @@ def env_worker(worker, args, mode):
         "COMP_SUF": args.comp_suf,
         "FROM_SUF": args.from_suf,
     }
-    if mode in ("probe",):
-        pass
+    if getattr(args, "wnodes", None):
+        # Nombres YA filtrados en Python contra el discovery (RC-MN-01).
+        base_env["WNODES"] = args.wnodes
+    if getattr(args, "piggyback", None) and mode == "render":
+        base_env["PIGGYBACK"] = args.piggyback
+    if getattr(args, "force_exr", False) and mode == "render":
+        base_env["FORCE_EXR"] = "1"
     return base_env
 
 
@@ -248,6 +279,34 @@ def rendir(worker, args, lista_frames):
     }
 
 
+def rendir_archivo(worker, args, nodo, primero, ultimo):
+    """Render de un archivo UNICO (MOV): nuke.execute(nodo, primero, ultimo).
+
+    Sin reparto: el archivo se escribe entero en una invocacion (RC-MN-02).
+    Los previews NO piggyback aca (ya viajaron con el batch EXR del delivery).
+    """
+    pu = ruta_repo(worker)
+    env = env_worker(worker, args, "render")
+    env["WNODE"] = nodo
+    env["FIRST"] = str(primero)
+    env["LAST"] = str(ultimo)
+    env.pop("RENDER_LIST", None)
+    env.pop("PIGGYBACK", None)
+    dur, rc, sal = medir(
+        worker,
+        [worker["bin"], "-t", pu + "/render_worker.py"],
+        env,
+    )
+    dat = parsear_worker_out(sal)
+    return {
+        "worker": worker["nombre"],
+        "archivo": nodo,
+        "real_s": round(dur, 3),
+        "render_s": (dat or {}).get("render_s"),
+        "rc": rc,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Frames existentes / validacion / politica de reemplazo
 # ---------------------------------------------------------------------------
@@ -256,11 +315,36 @@ PAD_EXPR = re.compile(r"#+|\%0\d+d")
 TEMPLATE_EXPR = re.compile(r"(\d{4})(?=\.exr$)")
 
 
+def tipo_salida(template):
+    """'sequence' (EXR por frame) | 'archivo' (MOV single-file) (RC-MN-02).
+
+    Un placeholder de frame (``####``/``%0Nd``) o digitos justo antes de
+    ``.exr`` => sequence. Un ``.mov`` — aunque tenga digitos en el nombre —
+    es archivo unico (threat 'Output existence classification': jamas
+    clasificar un .mov con digitos como secuencia EXR).
+    """
+    if not template:
+        return None
+    if PAD_EXPR.search(template) or TEMPLATE_EXPR.search(template):
+        return "sequence"
+    return "archivo"
+
+
 def derivar_template(sample):
-    """Convierte ...V05.0747.exr (sample evaluado) en ...V05.####.exr."""
+    """Convertir un file evaluado en plantilla de frames (multi-nodo, D4).
+
+    - placeholder ya presente (``####``/``%0Nd``) => intacto;
+    - EXR con digitos antes de ``.exr`` => ``####.exr`` (secuencia);
+    - single-file (``.mov`` u otro, aun con digitos) => literal, sin
+      placeholder (RC-MN-02: la politica MOV es por archivo).
+    """
     if not sample:
         return None
-    return TEMPLATE_EXPR.sub("####", sample, count=1)
+    if PAD_EXPR.search(sample):
+        return sample
+    if TEMPLATE_EXPR.search(sample):
+        return TEMPLATE_EXPR.sub("####", sample, count=1)
+    return sample
 
 
 def template_local(template, config):
@@ -380,6 +464,115 @@ def frames_existentes(template, inicio, fin):
         if os.path.isfile(p):
             por_frame.append((n, p))
     return por_frame
+
+
+# ---------------------------------------------------------------------------
+# Multi-nodo (PR2, D4): politica por nodo (EXR por frame / MOV por archivo),
+# CALIB/PLAN solo entrega EXR, previews piggyback y --force-exr (RC-MN-02/03)
+# ---------------------------------------------------------------------------
+
+
+def archivo_existente(path):
+    """Existencia de un archivo UNICO (MOV): os.path.isfile (RC-MN-02)."""
+    return bool(path) and os.path.isfile(path)
+
+
+def decidir_frames_por_politica(politica, rango, existentes_n, corruptos):
+    """Frames a renderizar segun la politica, desacoplada de args (multi-nodo).
+
+    - replace: todo el rango.
+    - corruptos: solo los corruptos validados.
+    - keep (default): no pierde trabajo valido => faltantes + corruptos.
+    """
+    if politica == "replace":
+        return sorted(rango)
+    if politica == "corruptos":
+        return sorted(set(corruptos))
+    validos = set(existentes_n) - set(corruptos)
+    return sorted(set(rango) - validos)
+
+
+def rango_efectivo_nodo(info, inicio, fin):
+    """Rango efectivo de render/existencia de un nodo (RC-MN-02, use_limit).
+
+    Con ``use_limit`` activo el Write confina su propio first/last; sin el
+    knob, el nodo cubre el rango de la corrida [inicio..fin].
+    """
+    if (info and info.get("use_limit")
+            and info.get("first") is not None and info.get("last") is not None):
+        return int(info["first"]), int(info["last"])
+    return inicio, fin
+
+
+def plan_nodo(info, template, inicio, fin, politica="keep"):
+    """Plan de existencia/render para UN nodo (RC-MN-02).
+
+    sequence EXR: {tipo, existentes:[(n,path)], corruptos:[n], decision,
+    a_render:[frames]}. archivo MOV: {tipo, existe, decision: skip|render,
+    a_render: [] | [path]} — un archivo se renderiza entero o se salta.
+    """
+    tipo = tipo_salida(template)
+    if tipo == "sequence":
+        existentes = frames_existentes(template, inicio, fin)
+        corruptos = [n for n, p in existentes if not header_exr_valido(p)]
+        a_render = decidir_frames_por_politica(
+            politica, range(inicio, fin + 1), [n for n, _ in existentes], corruptos
+        )
+        decision = "skip" if not a_render else politica
+        return {
+            "tipo": tipo,
+            "existentes": existentes,
+            "corruptos": corruptos,
+            "decision": decision,
+            "a_render": a_render,
+        }
+    existe = archivo_existente(template)
+    if existe and politica in ("keep", "ask", "corruptos"):
+        return {"tipo": tipo, "existe": True, "decision": "skip", "a_render": []}
+    return {"tipo": tipo, "existe": existe, "decision": "render", "a_render": [template]}
+
+
+def exigir_delivery_exr(en_scope):
+    """CALIB/PLAN solo sobre DELIVERY_EXR (RC-MN-02).
+
+    Si el filtro ``--wnodes`` lo excluye o el comp no lo tiene => abort claro,
+    sin degradacion silenciosa.
+    """
+    if "DELIVERY_EXR" not in en_scope:
+        raise SystemExit(
+            "CALIBRACION/PLAN requieren el nodo DELIVERY_EXR; nodos en "
+            "alcance: %s" % (", ".join(en_scope) or "ninguno")
+        )
+
+
+def env_piggyback(descubiertos, en_scope, inicio, fin):
+    """Env PIGGYBACK 'NAME:first:last,...' de previews (D4, RC-MN-02).
+
+    Cada preview descubierto que NO este ya en alcance viaja en el mismo
+    batch del delivery con SU rango efectivo (use_limit => first/last reales;
+    si no, el rango de la corrida). None si no hay previews.
+    """
+    partes = []
+    for nombre in descubiertos:
+        if nombre not in NODOS_PREVIEW or nombre in en_scope:
+            continue
+        e_i, e_f = rango_efectivo_nodo(descubiertos[nombre], inicio, fin)
+        partes.append("%s:%d:%d" % (nombre, e_i, e_f))
+    return ",".join(partes) or None
+
+
+def forzar_template_exr(file):
+    """--force-exr: plantilla de secuencia EXR para el nodo de entrega (RC-MN-03).
+
+    Archivo unico (mov/etc.) => mismo dir/base con ``####.exr``: la duracion
+    (rango) y la resolucion (formato del Write) no se tocan. Ya secuencia EXR
+    => derivar_template normal.
+    """
+    if not file:
+        return None
+    if tipo_salida(file) == "sequence":
+        return derivar_template(file)
+    return os.path.splitext(file)[0] + ".####.exr"
 
 
 def politica_reemplazo(args, existentes, corruptos):
@@ -581,6 +774,12 @@ def main():
                     help="confirma la seleccion por mtime sin preguntar")
     ap.add_argument("--use-version", default=None, metavar="V\\d+",
                     help="fuerza esa version .nk (override del falso positivo mtime)")
+    ap.add_argument("--wnodes", default=None,
+                    help="nodos Write reales del comp (DELIVERY_EXR/DELIVERY_DWG/"
+                         "REVIEW_REC709/SBS_REC709); default: rol de entrega")
+    ap.add_argument("--force-exr", action="store_true",
+                    help="fuerza salida EXR-sequence del nodo de entrega "
+                         "conservando duracion y resolucion (RC-MN-03)")
     args = ap.parse_args()
 
     # Infraestructura desde la config central estricta: workers, bases por SO
@@ -633,19 +832,26 @@ def main():
         sufijos["TO_SUF"], sufijos["COMP_SUF"], sufijos["FROM_SUF"]
     )
 
-    # ---- PROBE: rango del PLATE + patron de salida ----
+    # ---- PROBE: rango del PLATE + nodos Write descubiertos ----
     pr = None
     if args.auto_range:
-        print("== PROBE (detectar rango del PLATE) ==", flush=True)
+        print("== PROBE (detectar rango del PLATE y nodos) ==", flush=True)
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(workers)) as ex:
             fut = {ex.submit(probar, w, args): w["nombre"] for w in workers}
             for f in concurrent.futures.as_completed(fut):
                 nombre = fut[f]
                 pr = f.result()
-                print("  %-10s -> plate=%s-%s write=%s-%s file=%s"
-                      % (nombre, pr.get("plate_first"), pr.get("plate_last"),
-                         pr.get("wnode_first"), pr.get("wnode_last"),
-                         pr.get("wnode_file")), flush=True)
+                if pr.get("nodes"):
+                    print("  %-10s -> plate=%s-%s root=%sx%s@%sfps nodos=[%s]"
+                          % (nombre, pr.get("plate_first"), pr.get("plate_last"),
+                             pr.get("root_w") or "-", pr.get("root_h") or "-",
+                             pr.get("root_fps"), ", ".join(sorted(pr["nodes"]))),
+                          flush=True)
+                else:
+                    print("  %-10s -> plate=%s-%s write=%s-%s file=%s"
+                          % (nombre, pr.get("plate_first"), pr.get("plate_last"),
+                             pr.get("wnode_first"), pr.get("wnode_last"),
+                             pr.get("wnode_file")), flush=True)
         if pr and pr.get("plate_first") and pr.get("plate_last"):
             args.start = int(pr["plate_first"])
             args.frames = int(pr["plate_last"]) - args.start + 1
@@ -657,102 +863,172 @@ def main():
             print("  Rango del Write: %d-%d (%d frames)"
                   % (args.start, args.start + args.frames - 1, args.frames), flush=True)
 
+    # ---- Multi-nodo (PR2, D4): descubre Write reales y arma el plan por nodo ----
+    # Legacy (solo --comp) sigue el camino de abajo intacto (RC-QC-04).
+    nodos_plan = {}
+    mov_pendientes = []
+    multi_nodo = bool(args.wnodes or args.force_exr or es_flujo_asistido(args))
+    if multi_nodo and pr and pr.get("nodes"):
+        nodos_probe = pr["nodes"]
+        en_scope = filtrar_wnodes(nodos_probe, args.wnodes)
+        exigir_delivery_exr(en_scope)  # CALIB/PLAN exigen el nodo de entrega EXR
+        args.wnode = "DELIVERY_EXR"    # calib/plan/render apuntan a la entrega
+        args.wnodes = ",".join(en_scope) if en_scope else None
+        args.piggyback = env_piggyback(
+            nodos_probe, en_scope, args.start, args.start + args.frames - 1
+        )
+        print("\n== NODOS DESCUBIERTOS ==")
+        print("  %s" % ", ".join(sorted(nodos_probe)))
+        print("== ALCANCE (%s) ==" % (", ".join(en_scope) or "ninguno"))
+        inicio, fin = args.start, args.start + args.frames - 1
+        for nombre in en_scope:
+            info = nodos_probe[nombre]
+            template = template_local(
+                forzar_template_exr(info.get("file")) if args.force_exr
+                else derivar_template(info.get("file")), config)
+            if not template:
+                print("  %-14s sin file evaluado (skip)" % nombre)
+                continue
+            e_i, e_f = rango_efectivo_nodo(info, inicio, fin)
+            plan = plan_nodo(info, template, e_i, e_f, args.politica)
+            nodos_plan[nombre] = plan
+            if plan["tipo"] == "sequence":
+                print("  %-14s EXR [%d..%d] existentes=%d faltantes=%d (%s)"
+                      % (nombre, e_i, e_f, len(plan["existentes"]),
+                         len(plan["a_render"]), plan["decision"]))
+            else:
+                print("  %-14s archivo %s (%s)"
+                      % (nombre, os.path.basename(template), plan["decision"]))
+                if plan["a_render"]:
+                    mov_pendientes.append((nombre, e_i, e_f))
+        if ("DELIVERY_EXR" not in nodos_plan
+                or nodos_plan["DELIVERY_EXR"]["tipo"] != "sequence"):
+            raise SystemExit(
+                "Nodo de entrega DELIVERY_EXR sin template EXR: no hay frames "
+                "a distribuir (revisa el Write o --force-exr)."
+            )
+
     # ---- EXISTENTES + POLITICA ----
     existentes = []
     corruptos = set()
-    template = template_local(derivar_template((pr or {}).get("wnode_file")), config)
-    if template:
-        existentes = frames_existentes(template, args.start, args.start + args.frames - 1)
-        sin_header = [n for n, p in existentes if not header_exr_valido(p)]
-        corruptos = set(sin_header)
+    if multi_nodo and nodos_plan:
+        plan_exr = nodos_plan["DELIVERY_EXR"]
+        existentes = plan_exr["existentes"]
+        corruptos = set(plan_exr["corruptos"])
         if args.check_exr and existentes:
             paths = [p for n, p in existentes]
             print("== CHECK EXR (profundo, con Nuke) ==", flush=True)
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(workers)) as ex:
                 fut = {ex.submit(check_profundo, w, args, paths): w["nombre"]
-                       for w in workers if w["nombre"] in [x["nombre"] for x in workers]}
+                       for w in workers}
                 for f in concurrent.futures.as_completed(fut):
                     corruptos |= f.result()
-    decision, a_render = politica_reemplazo(args, existentes, corruptos)
+        decision = plan_exr["decision"]
+        a_render = plan_exr["a_render"]
+    else:
+        template = template_local(derivar_template((pr or {}).get("wnode_file")), config)
+        if template:
+            existentes = frames_existentes(template, args.start, args.start + args.frames - 1)
+            sin_header = [n for n, p in existentes if not header_exr_valido(p)]
+            corruptos = set(sin_header)
+            if args.check_exr and existentes:
+                paths = [p for n, p in existentes]
+                print("== CHECK EXR (profundo, con Nuke) ==", flush=True)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(workers)) as ex:
+                    fut = {ex.submit(check_profundo, w, args, paths): w["nombre"]
+                           for w in workers if w["nombre"] in [x["nombre"] for x in workers]}
+                    for f in concurrent.futures.as_completed(fut):
+                        corruptos |= f.result()
+        decision, a_render = politica_reemplazo(args, existentes, corruptos)
     print("== POLITICA ==")
     print("  Decision: %s | existentes=%d corruptos=%d a_renderizar=%d"
           % (decision, len(existentes), len(corruptos), len(a_render)), flush=True)
-    if decision in ("keep", "corruptos") and not a_render:
+    # Multi-nodo: no re-llenar el rango (el plan por nodo ya decidio).
+    if not a_render and not nodos_plan:
+        a_render = list(range(args.start, args.start + args.frames))
+    if not a_render and not mov_pendientes:
         print("  Nada que renderizar (todo ya exportado y valido).")
         return
-    if not a_render:
-        a_render = list(range(args.start, args.start + args.frames))
 
-    # ---- CALIB sobre los frames a renderizar ----
-    print("== CALIBRACION (workers: %s) ==" % ", ".join(w["nombre"] for w in workers), flush=True)
-    calibs = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(workers)) as ex:
-        fut = {ex.submit(calibrar, w, args, a_render): w["nombre"] for w in workers}
-        for f in concurrent.futures.as_completed(fut):
-            c = f.result()
-            calibs[c["worker"]] = c
-            cb = c.get("calib") or {}
-            fallo = ""
-            if cb.get("error"):
-                fallo = "  <ERROR: %s>" % cb
-            print("  %-10s startup=%ss load=%ss per_frame=%ss perf_w=%s perf_r=%s%s"
-                  % (c["worker"], c.get("startup_s"), cb.get("load_s"),
-                     cb.get("per_frame_s"), cb.get("perf_write"), cb.get("perf_read"),
-                     fallo), flush=True)
-
-    costes = []
-    for w in workers:
-        cb = calibs.get(w["nombre"], {}).get("calib") or {}
-        a = calibs.get(w["nombre"], {}).get("startup_s", 0) + cb.get("load_s", 0)
-        b = cb.get("per_frame_s", 1e9)
-        costes.append((a, b))
-    t_min, ns = repartir(len(a_render), costes)
-
-    print("\n== PLAN ==")
-    print("  Frames a renderizar: %d | Tiempo estimado optimo: %.2fs" % (len(a_render), t_min))
-    idx = 0
-    asignaciones = {}
-    for i, w in enumerate(workers):
-        n = ns[i]
-        if n <= 0:
-            print("  %-10s -> sin frames (no se lanza)" % w["nombre"])
-            continue
-        bloque = a_render[idx:idx + n]
-        idx += n
-        asignaciones[w["nombre"]] = bloque
-        print("  %-10s -> %d frames [%d..%d] | estimado %.2fs"
-              % (w["nombre"], len(bloque), bloque[0], bloque[-1],
-                 costes[i][0] + costes[i][1] * len(bloque)))
-
-    if args.solo_calib:
-        return
-
-    print("\n== RENDER ==", flush=True)
-    reales = {}
-    if asignaciones:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(asignaciones)) as ex:
-            fut = {
-                ex.submit(rendir, w, args, asignaciones[w["nombre"]]): w["nombre"]
-                for w in workers
-                if w["nombre"] in asignaciones
-            }
+    if a_render:
+        # ---- CALIB sobre los frames a renderizar (solo nodo de entrega) ----
+        print("== CALIBRACION (workers: %s) ==" % ", ".join(w["nombre"] for w in workers), flush=True)
+        calibs = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(workers)) as ex:
+            fut = {ex.submit(calibrar, w, args, a_render): w["nombre"] for w in workers}
             for f in concurrent.futures.as_completed(fut):
-                r = f.result()
-                reales[r["worker"]] = r
-                print("  %-10s %4d frames | real=%ss (nuke=%s)"
-                      % (r["worker"], r["frames"], r["real_s"], r.get("render_s")), flush=True)
+                c = f.result()
+                calibs[c["worker"]] = c
+                cb = c.get("calib") or {}
+                fallo = ""
+                if cb.get("error"):
+                    fallo = "  <ERROR: %s>" % cb
+                print("  %-10s startup=%ss load=%ss per_frame=%ss perf_w=%s perf_r=%s%s"
+                      % (c["worker"], c.get("startup_s"), cb.get("load_s"),
+                         cb.get("per_frame_s"), cb.get("perf_write"), cb.get("perf_read"),
+                         fallo), flush=True)
 
-    print("\n== RESUMEN ==")
-    plan_total = max(
-        costes[i][0] + costes[i][1] * len(asignaciones[w["nombre"]])
-        for i, w in enumerate(workers)
-        if w["nombre"] in asignaciones
-    )
-    real_total = max(r.get("real_s", 0) for r in reales.values()) if reales else 0
-    print("  Planificado (max esperado): %.2fs" % plan_total)
-    print("  Real (max medido):          %.2fs" % real_total)
-    if decision == "replace":
-        print("  ATENCION: se re-renderizaron TODOS los frames (politica replace).")
+        costes = []
+        for w in workers:
+            cb = calibs.get(w["nombre"], {}).get("calib") or {}
+            a = calibs.get(w["nombre"], {}).get("startup_s", 0) + cb.get("load_s", 0)
+            b = cb.get("per_frame_s", 1e9)
+            costes.append((a, b))
+        t_min, ns = repartir(len(a_render), costes)
+
+        print("\n== PLAN ==")
+        print("  Frames a renderizar: %d | Tiempo estimado optimo: %.2fs" % (len(a_render), t_min))
+        idx = 0
+        asignaciones = {}
+        for i, w in enumerate(workers):
+            n = ns[i]
+            if n <= 0:
+                print("  %-10s -> sin frames (no se lanza)" % w["nombre"])
+                continue
+            bloque = a_render[idx:idx + n]
+            idx += n
+            asignaciones[w["nombre"]] = bloque
+            print("  %-10s -> %d frames [%d..%d] | estimado %.2fs"
+                  % (w["nombre"], len(bloque), bloque[0], bloque[-1],
+                     costes[i][0] + costes[i][1] * len(bloque)))
+
+        if args.solo_calib:
+            return
+
+        print("\n== RENDER ==", flush=True)
+        reales = {}
+        if asignaciones:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(asignaciones)) as ex:
+                fut = {
+                    ex.submit(rendir, w, args, asignaciones[w["nombre"]]): w["nombre"]
+                    for w in workers
+                    if w["nombre"] in asignaciones
+                }
+                for f in concurrent.futures.as_completed(fut):
+                    r = f.result()
+                    reales[r["worker"]] = r
+                    print("  %-10s %4d frames | real=%ss (nuke=%s)"
+                          % (r["worker"], r["frames"], r["real_s"], r.get("render_s")), flush=True)
+
+        print("\n== RESUMEN ==")
+        plan_total = max(
+            costes[i][0] + costes[i][1] * len(asignaciones[w["nombre"]])
+            for i, w in enumerate(workers)
+            if w["nombre"] in asignaciones
+        )
+        real_total = max(r.get("real_s", 0) for r in reales.values()) if reales else 0
+        print("  Planificado (max esperado): %.2fs" % plan_total)
+        print("  Real (max medido):          %.2fs" % real_total)
+        if decision == "replace":
+            print("  ATENCION: se re-renderizaron TODOS los frames (politica replace).")
+
+    # ---- Archivos unicos (MOV): render entero por nodo, sin reparto ----
+    for nombre, e_i, e_f in mov_pendientes:
+        print("\n== RENDER ARCHIVO (%s) ==" % nombre, flush=True)
+        res = rendir_archivo(workers[0], args, nombre, e_i, e_f)
+        print("  %s -> %s real=%ss (nuke=%s, rc=%s)"
+              % (res["worker"], nombre, res["real_s"],
+                 res.get("render_s"), res["rc"]), flush=True)
 
 
 if __name__ == "__main__":
