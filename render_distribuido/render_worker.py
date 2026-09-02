@@ -8,6 +8,7 @@ subdirectorio). El worker NO hardcodea rutas de estudio.
 
 import json
 import os
+import re
 import sys
 import time
 
@@ -18,6 +19,10 @@ MODE = os.environ.get("MODE", "render")
 BASE = os.environ["BASE"]
 COMP = os.environ.get("COMP", BASE + "/TEST_RENDER/prueba_test.nk")
 WNODE = os.environ.get("WNODE", "Write1")
+
+# Nombres REALES de Write del comp (RC-MN-01): jamas labels friendly
+# ("delivery"/"preview"/"side by side") como nombres de nodo.
+NODOS_RENDER = ("DELIVERY_EXR", "DELIVERY_DWG", "REVIEW_REC709", "SBS_REC709")
 
 
 def sufijos_desde_env(env):
@@ -131,6 +136,149 @@ def rango_plate():
         return None
 
 
+# ---------------------------------------------------------------------------
+# Multi-nodo (D4, RC-MN-01/02/03): descubrimiento de Write reales por nombre
+# ---------------------------------------------------------------------------
+
+
+def file_type_de(nodo, file_val=None):
+    """Tipo de archivo de un Write: knob file_type si existe, o extension.
+
+    La extension del file evaluado es el fallback (``.exr`` => exr, ``.mov``
+    => mov); un .mov con digitos en el nombre sigue siendo mov (threat
+    'Output existence classification': no confundir con secuencia EXR).
+    """
+    try:
+        if "file_type" in nodo.knobs():
+            tipo = nodo["file_type"].value()
+            if tipo:
+                return str(tipo)
+    except Exception:
+        pass
+    if file_val is None:
+        try:
+            file_val = nodo["file"].getEvaluatedValue()
+        except Exception:
+            file_val = None
+    if file_val:
+        ext = os.path.splitext(file_val)[1].lower()
+        if ext == ".exr":
+            return "exr"
+        if ext in (".mov", ".mp4"):
+            return "mov"
+        return ext.lstrip(".") or None
+    return None
+
+
+def info_nodo(nombre, nodo):
+    """{first, last, use_limit, file, file_type} de un Write (D6, RC-MN-01).
+
+    None si los knobs de rango no son legibles. ``use_limit`` es el knob
+    real del Write: cuando esta activo, el nodo confina su propio rango.
+    """
+    try:
+        use_limit = bool(nodo["use_limit"].value()) if "use_limit" in nodo.knobs() else False
+        first = int(nodo["first"].value())
+        last = int(nodo["last"].value())
+    except Exception:
+        return None
+    try:
+        file_val = nodo["file"].getEvaluatedValue()
+    except Exception:
+        file_val = None
+    return {
+        "first": first,
+        "last": last,
+        "use_limit": use_limit,
+        "file": file_val,
+        "file_type": file_type_de(nodo, file_val),
+    }
+
+
+def scan_write_nodes():
+    """Descubre los Write reales del comp entre los nombres de NODOS_RENDER.
+
+    Nombre -> info; solo los presentes en el comp (los ausentes no aparecen).
+    Orden deterministico (alfabetico) para payloads estables.
+    """
+    resultado = {}
+    for nombre in sorted(NODOS_RENDER):
+        nodo = nuke.toNode(nombre)
+        if nodo is None:
+            continue
+        info = info_nodo(nombre, nodo)
+        if info is not None:
+            resultado[nombre] = info
+    return resultado
+
+
+def forzar_exr_en(nodo):
+    """--force-exr: reescribe un Write a secuencia EXR ####.exr (RC-MN-03).
+
+    Conserva la duracion (first/last del nodo intactos) y la resolucion (el
+    formato del Write intacto): solo se tocan los knobs file y file_type.
+    Ya es EXR o secuencia => no-op (devuelve False).
+    """
+    try:
+        if nodo is None:
+            return False
+        actual = nodo["file"].getEvaluatedValue()
+        if not actual:
+            return False
+        if actual.endswith(".exr") or "#" in actual or "%0" in actual:
+            return False
+        base = os.path.splitext(actual)[0]
+        nodo["file"].setValue(base + ".####.exr")
+        if "file_type" in nodo.knobs():
+            nodo["file_type"].setValue("exr")
+        return True
+    except Exception:
+        return False
+
+
+def _parsear_piggyback(valor):
+    """'NAME:first:last,NAME2' -> [(nombre, first, last | None)].
+
+    Formato del env PIGGYBACK (D6): previews que viajan en el mismo batch
+    del delivery; ``NAME:first:last`` lleva el rango propio del preview
+    (use_limit), ``NAME`` solo se ejecuta con los rangos del batch.
+    """
+    resultado = []
+    for frag in (valor or "").split(","):
+        frag = frag.strip()
+        if not frag:
+            continue
+        partes = frag.split(":")
+        if len(partes) == 3:
+            try:
+                resultado.append((partes[0], int(partes[1]), int(partes[2])))
+                continue
+            except ValueError:
+                pass
+        resultado.append((partes[0], None, None))
+    return resultado
+
+
+def _clip(lista, primero, ultimo):
+    """Frames de la lista dentro del rango [primero..ultimo] (piggyback)."""
+    return [x for x in lista if primero <= x <= ultimo]
+
+
+def _root_info():
+    """(fps, first, last, w, h) del root; None por campo si no es legible (D6)."""
+    try:
+        root = nuke.root()
+        fps = float(root["fps"].value())
+        first = int(root["first_frame"].value())
+        last = int(root["last_frame"].value())
+        partes = re.split(r"\s+", str(root["format"].value()).strip())
+        w = int(partes[0]) if partes and partes[0].isdigit() else None
+        h = int(partes[1]) if len(partes) > 1 and partes[1].isdigit() else None
+        return fps, first, last, w, h
+    except Exception:
+        return None, None, None, None, None
+
+
 if MODE == "probe":
     setear_variables(BASE)
     nuke.scriptOpen(COMP)
@@ -146,6 +294,7 @@ if MODE == "probe":
     except Exception:
         w_file = None
     plate = rango_plate()
+    root_fps, root_first, root_last, root_w, root_h = _root_info()
     emitir(
         {
             "wnode_first": w_first,
@@ -153,6 +302,12 @@ if MODE == "probe":
             "wnode_file": w_file,
             "plate_first": plate[0] if plate else None,
             "plate_last": plate[1] if plate else None,
+            "root_fps": root_fps,
+            "root_first": root_first,
+            "root_last": root_last,
+            "root_w": root_w,
+            "root_h": root_h,
+            "nodes": scan_write_nodes(),
         }
     )
     raise SystemExit
@@ -232,15 +387,36 @@ elif MODE == "check":
 else:
     first = int(os.environ.get("FIRST", "1"))
     last = int(os.environ.get("LAST", "1"))
-    lista_render = [x for x in os.environ.get("RENDER_LIST", "").split(",") if x.strip()]
+    lista_render = [int(x) for x in os.environ.get("RENDER_LIST", "").split(",") if x.strip()]
+    nodos = [x for x in os.environ.get("WNODES", "").split(",") if x.strip()] or [WNODE]
+    piggybacks = _parsear_piggyback(os.environ.get("PIGGYBACK", ""))
     setear_variables(BASE)
     nuke.scriptOpen(COMP)
     setear_variables(BASE)
     t0 = time.time()
-    if lista_render:
-        n_frames = ejecutar_frames(WNODE, [int(x) for x in lista_render])
-    else:
-        nuke.execute(WNODE, first, last)
-        n_frames = last - first + 1
+    total = 0
+    for nodo in nodos:
+        if os.environ.get("FORCE_EXR"):
+            forzar_exr_en(nuke.toNode(nodo))
+        if lista_render:
+            total += ejecutar_frames(nodo, lista_render)
+        else:
+            nuke.execute(nodo, first, last)
+            total += last - first + 1
+    for pn, pfirst, plast in piggybacks:
+        # Previews piggyback: mismo batch que el delivery, con su rango propio
+        # (use_limit) recortado al rango de este worker (D4, RC-MN-02).
+        if pfirst is not None:
+            if lista_render:
+                total += ejecutar_frames(pn, _clip(lista_render, pfirst, plast))
+            else:
+                total += ejecutar_frames(
+                    pn, _clip(list(range(first, last + 1)), pfirst, plast)
+                )
+        elif lista_render:
+            total += ejecutar_frames(pn, lista_render)
+        else:
+            nuke.execute(pn, first, last)
+            total += last - first + 1
     dur = time.time() - t0
-    emitir({"render_s": round(dur, 3), "frames": n_frames})
+    emitir({"render_s": round(dur, 3), "frames": total})
