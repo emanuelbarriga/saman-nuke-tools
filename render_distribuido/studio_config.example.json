@@ -34,5 +34,10 @@
     "TO_VFX": "/STUDIO/TO_VFX/",
     "COMP": "/STUDIO/COMP/",
     "FROM_VFX": "/STUDIO/FROM_VFX/"
+  },
+  "proyectos": {
+    "HTLR": true,
+    "IPYD": true,
+    "PCF": true
   }
 }

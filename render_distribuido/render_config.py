@@ -213,6 +213,7 @@ def _guia(llave):
         "TO_VFX": "sufijo del subdirectorio TO_VFX, ej. '/ESTUDIO/TO_VFX/'",
         "COMP": "sufijo del subdirectorio COMP, ej. '/ESTUDIO/COMP/'",
         "FROM_VFX": "sufijo del subdirectorio FROM_VFX, ej. '/ESTUDIO/FROM_VFX/'",
+        "proyectos": "dict {proyecto: bool} opcional (ausencia valida; habilita layouts)",
         "nombre": "nombre del worker",
         "ssh": "host SSH del worker, o None si es la maquina local",
         "ssh_user": "usuario SSH del worker",
@@ -265,6 +266,18 @@ def validar_esquema(config):
         errores.append(_error_tipo("workers", "list", config["workers"]))
     if "sufijos" in config and not isinstance(config["sufijos"], dict):
         errores.append(_error_tipo("sufijos", "dict", config["sufijos"]))
+
+    # --- proyectos: aditivo (RC-CN-02); ausencia VALIDA (configs legacy) ---
+    if "proyectos" in config:
+        proyectos = config["proyectos"]
+        if not isinstance(proyectos, dict):
+            errores.append(
+                _error_tipo("proyectos", "dict (mapa proyecto->bool)", proyectos)
+            )
+        else:
+            for nombre, valor in proyectos.items():
+                if not isinstance(valor, bool):
+                    errores.append(_error_tipo("proyectos.%s" % nombre, "bool", valor))
 
     # --- bases_por_so: valores string ---
     bases = config.get("bases_por_so")
@@ -556,6 +569,8 @@ def obtener_config_efectiva():
         errores = validar_esquema(config)
         if errores:
             _abortar_esquema(errores)
+        # RC-CN-02: la ausencia de proyectos es valida; se resuelve a vacio.
+        config.setdefault("proyectos", {})
         return config
 
     # Disco no disponible: el local completo rescata (autonomia).
@@ -563,6 +578,9 @@ def obtener_config_efectiva():
         errores = validar_esquema(local)
         if errores:
             _abortar_local_incompleto(error_disco, errores)
-        return local
+        # Copia + setdefault para no mutar el dict importado de config_local.
+        resultado = dict(local)
+        resultado.setdefault("proyectos", {})
+        return resultado
 
     _abortar_sin_fuente(error_disco)

@@ -670,6 +670,51 @@ def test_validar_esquema_worker_base_windows_canonico_ok():
 
 
 # ---------------------------------------------------------------------------
+# proyectos: clave aditiva de enablement (RC-CN-02)
+# ---------------------------------------------------------------------------
+
+
+def test_proyectos_bool_valido_no_genera_errores():
+    """proyectos con valores bool => valido (mapa nombre->bool, aditivo)."""
+    cfg = config_valida()
+    cfg["proyectos"] = {"HTLR": True, "IPYD": True, "PCF": False}
+    assert render_config.validar_esquema(cfg) == []
+
+
+def test_proyectos_valor_str_es_error_de_tipo():
+    """proyectos.PCF con string en vez de bool => error con key path."""
+    cfg = config_valida()
+    cfg["proyectos"] = {"HTLR": True, "PCF": "si"}
+    errores = render_config.validar_esquema(cfg)
+    alguno = "\n".join(errores)
+    assert "proyectos.PCF" in alguno
+    assert "bool" in alguno
+
+
+def test_proyectos_no_dict_es_error_de_tipo():
+    """proyectos como lista => error que indica el tipo esperado dict."""
+    cfg = config_valida()
+    cfg["proyectos"] = ["HTLR"]
+    errores = render_config.validar_esquema(cfg)
+    alguno = "\n".join(errores)
+    assert "proyectos" in alguno
+    assert "dict" in alguno
+
+
+def test_proyectos_ausente_valido_legacy_y_resuelve_vacio(
+    tmp_path, monkeypatch, sin_env_base
+):
+    """RC-CN-02 'Proyectos absent is valid': legacy carga y proyectos vacio."""
+    escribir_json(tmp_path, config_valida())  # sin clave proyectos
+    monkeypatch.setenv(render_config.ENV_BASE, str(tmp_path))
+    monkeypatch.setattr(render_config, "_cargar_config_local", lambda: None)
+
+    efectiva = render_config.obtener_config_efectiva()
+
+    assert efectiva["proyectos"] == {}
+
+
+# ---------------------------------------------------------------------------
 # Contrato de exportacion
 # ---------------------------------------------------------------------------
 
