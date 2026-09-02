@@ -39,7 +39,9 @@ ARCHIVOS_BATCH = [
     "tests/test_render_config.py",
     "tests/test_render_worker.py",
     "tests/test_render_distribuido.py",
+    "tests/test_layouts.py",
     "tests/test_seleccion.py",
+    "tests/test_multinodo.py",
 ]
 
 # Raices reales del estudio: se verifican SOLO en archivos de produccion
