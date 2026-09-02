@@ -1,9 +1,10 @@
 """
 Tests del menú superior SamanTools y del buscador de Nodos (Tab).
 
-Cubre la reestructuración aprobada: el menú superior se organiza en
-Composición / VFXFlow / Sistema / Configuración, y el buscador TAB solo
-expone "Insertar Nodo" (Rutas / Review / Breakdown) — sin Utilidades.
+Cubre la reestructuración aprobada: el menú superior es PLANO (las herramientas
+van directas en SamanTools) y solo queda el submenú "Configuración" para el
+mantenimiento. El buscador TAB solo expone "Insertar Nodo"
+(Rutas / Review / Breakdown) — sin Utilidades.
 """
 
 import os
@@ -60,21 +61,26 @@ def test_instalar_crea_estructura_nueva(monkeypatch):
     saman = _submenu_de(menu, "SamanTools")
     assert saman is not None, "Falta el submenu 'SamanTools'"
 
+    # Menú plano: las herramientas van DIRECTAS, sin submenús intermedios.
+    nombres_comandos = _nombres_comandos(saman)
+    assert "Cambiar ColorSpace..." in nombres_comandos
+    assert "Breakdown" in nombres_comandos
+    assert "Panel de Comentarios" in nombres_comandos
+    assert "Diagnóstico de Red" in nombres_comandos
+
+    # Los submenús viejos (Composición / VFXFlow / Sistema / Configuración)
+    # ya no existen: solo queda "Configuración".
     nombres_submenus = [getattr(sub, "_nombre", None) for sub in saman.items()]
-    assert "Composición" in nombres_submenus
-    assert "VFXFlow" in nombres_submenus
-    assert "Sistema / Configuración" in nombres_submenus
+    assert "Composición" not in nombres_submenus
+    assert "VFXFlow" not in nombres_submenus
+    assert "Sistema / Configuración" not in nombres_submenus
+    assert "Configuración" in nombres_submenus
 
-    composicion = _submenu_de(saman, "Composición")
-    assert "Cambiar ColorSpace..." in _nombres_comandos(composicion)
-    assert "Breakdown" in _nombres_comandos(composicion)
+    # Atajo Ctrl+Alt+C registrado en "Panel de Comentarios".
+    assert ("Panel de Comentarios", "Ctrl+Alt+C") in saman.shortcuts
 
-    vfxflow = _submenu_de(saman, "VFXFlow")
-    assert "Panel de Comentarios" in _nombres_comandos(vfxflow)
-    assert "Diagnóstico de Red" in _nombres_comandos(vfxflow)
-
-    sistema = _submenu_de(saman, "Sistema / Configuración")
-    nombres_cmd = _nombres_comandos(sistema)
+    configuracion = _submenu_de(saman, "Configuración")
+    nombres_cmd = _nombres_comandos(configuracion)
     assert "Verificar Salud del Plugin..." in nombres_cmd
     assert "Escanear Scripts del Proyecto" in nombres_cmd
     assert "Limpiar knobs volátiles" in nombres_cmd

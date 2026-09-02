@@ -274,32 +274,35 @@ def _inyectar_frame_manager():
 
 
 def instalar():
-    """Crea el menú SamanTools en la barra superior de Nuke y registra las herramientas."""
+    """Crea el menú SamanTools en la barra superior de Nuke y registra las herramientas.
+
+    Estructura plana (reestructuración aprobada): las herramientas van
+    DIRECTAS en el menú SamanTools y solo queda el submenú "Configuración"
+    para el mantenimiento. Menos niveles = menos clics.
+    """
     menu = nuke.menu("Nuke").addMenu("SamanTools")
 
-    # --- Categoría: Composición ---
-    sub_composicion = menu.addMenu("Composición")
-    sub_composicion.addCommand(
+    # --- Herramientas directas (menú plano) ---
+    menu.addCommand(
         "Cambiar ColorSpace...",
         cambiar_colorspace.ejecutar_cambio_colorespace_reads,
         icon=_ruta_icono("ChangeColorSpace.svg"),
     )
-    sub_composicion.addCommand(
+    menu.addCommand(
         "Breakdown",
         _insertar_breakdown,
     )
-
-    # --- Categoría: VFXFlow ---
-    sub_vfxflow = menu.addMenu("VFXFlow")
     # Comando lazy (string): el módulo panel_comentarios solo se importa al
     # hacer clic, para no romper la carga del menú si PySide no está o no hay GUI.
-    sub_vfxflow.addCommand(
+    # Atajo Ctrl+Alt+C: abre la pestaña de comentarios desde cualquier lado.
+    menu.addCommand(
         "Panel de Comentarios",
         "from SamanTools import panel_comentarios\npanel_comentarios.abrir_panel()",
+        shortcut="Ctrl+Alt+C",
     )
     # Comando lazy (string): diagnostico_red no se importa al tope para no
     # cargar urllib al arrancar; se importa solo al hacer clic.
-    sub_vfxflow.addCommand(
+    menu.addCommand(
         "Diagnóstico de Red",
         "from SamanTools import diagnostico_red\ndiagnostico_red.ejecutar()",
     )
@@ -307,27 +310,27 @@ def instalar():
     # Separador visual entre categorías (Nuke lo dibuja como línea).
     menu.addMenu("-")
 
-    # --- Categoría: Sistema / Configuración ---
+    # --- Categoría: Configuración ---
     # Los comandos de mantenimiento del bootstrap (Actualizar/Desinstalar) se
     # agregan DESPUÉS, sobre este mismo submenú, desde bootstrap/menu.py.
-    sub_sistema = menu.addMenu("Sistema / Configuración")
-    sub_sistema.addCommand(
+    sub_configuracion = menu.addMenu("Configuración")
+    sub_configuracion.addCommand(
         "Verificar Salud del Plugin...",
         _verificar_salud,
     )
-    sub_sistema.addCommand(
+    sub_configuracion.addCommand(
         "Escanear Scripts del Proyecto",
         _escanear_scripts_proyecto,
     )
-    sub_sistema.addCommand(
+    sub_configuracion.addCommand(
         "Limpiar knobs volátiles",
         _limpiar_knobs_volatiles,
     )
-    sub_sistema.addCommand(
+    sub_configuracion.addCommand(
         "Limpiar knobs volátiles en carpeta...",
         _limpiar_knobs_volatiles_carpeta,
     )
-    sub_sistema.addCommand(
+    sub_configuracion.addCommand(
         "Acerca de SamanTools...",
         _acerca_de,
     )

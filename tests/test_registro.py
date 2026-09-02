@@ -276,7 +276,7 @@ def test_instalar_agrega_boton_carpeta(monkeypatch):
     )
     assert saman is not None
     sistema = next(
-        (sub for sub in saman.items() if getattr(sub, "_nombre", None) == "Sistema / Configuración"),
+        (sub for sub in saman.items() if getattr(sub, "_nombre", None) == "Configuración"),
         None,
     )
     assert sistema is not None

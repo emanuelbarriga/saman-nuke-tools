@@ -22,7 +22,11 @@ from SamanTools import nombres
 # --------------------------------------------------------------------------
 
 
-def test_plato_canonico():
+def test_plato_canonico(monkeypatch):
+    # Hermetico: las bases candidatas dependen del SO (macOS -> /Volumes/wupm/2026,
+    # Linux -> /mnt/wupm/2026). La ruta del test es la convencion macOS, asi que
+    # forzamos detectar_so para que pase en cualquier maquina.
+    monkeypatch.setattr(entorno, "detectar_so", lambda: "macOS")
     res = nombres.parsear_plato(
         "/Volumes/wupm/2026/HTLR/TO_VFX/EP_107/20260826/"
         "HTLR_107_008_00100_V01.mov"
@@ -37,7 +41,9 @@ def test_plato_canonico():
     assert res["canonico"] == res["archivo"] == "HTLR_107_008_00100_V01.mov"
 
 
-def test_plato_malformado_version_en_el_medio():
+def test_plato_malformado_version_en_el_medio(monkeypatch):
+    # Hermetico: misma razon que test_plato_canonico (bases por SO).
+    monkeypatch.setattr(entorno, "detectar_so", lambda: "macOS")
     res = nombres.parsear_plato(
         "/Volumes/wupm/2026/HTLR/TO_VFX/EP_108/20260819/"
         "HTLR_108_012_V01_0100.mov"

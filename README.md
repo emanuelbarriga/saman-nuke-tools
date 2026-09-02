@@ -162,7 +162,7 @@ Las skills de OpenCode/Claude usadas por el estudio viven versionadas en
 ## Cómo se verifica
 
 Tras reiniciar Nuke:
-- Aparece el menú **SamanTools** (Composición / VFXFlow / Sistema y Configuración).
+- Aparece el menú **SamanTools** plano: Cambiar ColorSpace, Breakdown, Panel de Comentarios (`Ctrl+Alt+C`), Diagnóstico de Red y el submenú **Configuración** (mantenimiento).
 - En el buscador (TAB), escribiendo **breakdown**, **review** o **rutas** se crean los nodos.
 
 ## Rutas de red (importante)

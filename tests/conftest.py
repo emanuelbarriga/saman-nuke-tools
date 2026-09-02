@@ -154,6 +154,7 @@ def _instalar_stub_nuke():
             # resetean/leen con `_items`.
             self._items = []
             self.commands = []
+            self.shortcuts = []
             self.removed = []
 
         def items(self):
@@ -167,6 +168,8 @@ def _instalar_stub_nuke():
 
         def addCommand(self, name, cmd, **k):
             self.commands.append((name, cmd))
+            if k.get("shortcut"):
+                self.shortcuts.append((name, k["shortcut"]))
 
         def removeItem(self, name):
             self.removed.append(name)
