@@ -42,6 +42,11 @@ try:
 except ImportError:  # script mode: sys.path[0] es la carpeta render_distribuido
     import render_config
 
+try:
+    from render_distribuido import layouts
+except ImportError:  # script mode
+    import layouts
+
 
 def ruta_repo(worker):
     return worker["base"] + "/saman-nuke-tools/render_distribuido"
@@ -432,6 +437,120 @@ def check_profundo(worker, args, paths):
     return corruptos
 
 
+# ---------------------------------------------------------------------------
+# Flujo asistido: layout + seleccion por mtime (PR1, D1/D2)
+# ---------------------------------------------------------------------------
+
+
+def resolver_proyecto(proyecto_arg):
+    """(proyecto, aviso): default HTLR con aviso explicito (RC-SS-03).
+
+    Sin ``--proyecto`` el flujo asistido usa HTLR y lo anuncia; con el flag
+    explicito no hay aviso.
+    """
+    if proyecto_arg:
+        return proyecto_arg, False
+    print("AVISO: proyecto no especificado; se usa HTLR (default).")
+    return "HTLR", True
+
+
+def es_flujo_asistido(args):
+    """True si la corrida usa flags nuevos del flujo asistido.
+
+    Legacy (solo ``--comp`` y flags viejos) => False: sin seleccion por
+    layout ni gate, para no regresionar (RC-QC-04).
+    """
+    return bool(
+        args.proyecto or args.comp_dir or args.resolve_latest or args.use_version
+    )
+
+
+def planos_del_proyecto(args, config):
+    """Carpetas de planos (relativas a la base) del flujo asistido.
+
+    ``--comp-dir`` con carpeta literal existente => se usa tal cual (carpeta
+    unica directa, RC-SS-03). Si el valor NO existe literalmente bajo la
+    base, se trata como intencion y se remapea con el layout del proyecto
+    (RC-SS-01: ``2VFX/Capitulo_7`` -> ``EP_07``). Sin ``--comp-dir`` =>
+    abort claro (nunca skip silencioso).
+    """
+    if not args.comp_dir:
+        raise SystemExit(
+            "Flujo asistido: falta --comp-dir (carpeta de planos relativa a "
+            "la base, ej. HTLR/COMP/EP_07/<plan>, o una intencion como "
+            "'Capitulo 7')."
+        )
+    ruta_abs = layouts.ruta_bajo_base(args.comp_dir, config)
+    if ruta_abs and os.path.isdir(ruta_abs):
+        return [args.comp_dir]
+    # Default HTLR cuando el CLI no trajo --proyecto (misma regla que main).
+    return layouts.resolver_planos(args.comp_dir, args.proyecto or "HTLR", config)
+
+
+def confirmar_planos(planos, args, leer=None, imprimir=None):
+    """Confirma la seleccion: [Confirmar] / [Ver lista y desmarcar] (RC-SS-03).
+
+    ``--resolve-latest``: confirma todo SIN prompt. Sin TTY (EOFError):
+    confirma todo. ``lista``/``desmarcar``: muestra la lista numerada y deja
+    desmarcar por indice en una ronda => subset confirmado para render.
+    """
+    if args.resolve_latest:
+        return list(planos)
+    if leer is None:
+        leer = input
+    if imprimir is None:
+        imprimir = print
+    imprimir("\n== SELECCION ==")
+    imprimir(
+        "  %d planos detectados. [Confirmar] / [Ver lista y desmarcar]"
+        % len(planos)
+    )
+    try:
+        respuesta = leer("  Accion (default confirmar): ").strip().lower()
+    except EOFError:
+        return list(planos)
+    lista = ("lista", "desmarcar", "ver", "l", "d")
+    if respuesta in lista:
+        imprimir("  Lista de planos:")
+        for i, p in enumerate(planos, 1):
+            imprimir("    %2d) %s" % (i, p))
+        try:
+            excl = leer(
+                "  Desmarcar (indices separados por comas; vacio = confirmar "
+                "todos): "
+            ).strip()
+        except EOFError:
+            return list(planos)
+        excluidos = set()
+        for frag in excl.split(","):
+            frag = frag.strip()
+            if frag.isdigit():
+                idx = int(frag)
+                if 1 <= idx <= len(planos):
+                    excluidos.add(idx)
+        return [p for i, p in enumerate(planos, 1) if i not in excluidos]
+    return list(planos)
+
+
+def seleccionar_version(plan_dir, args, layout):
+    """Devuelve el .nk elegido para el plano: mtime o override --use-version.
+
+    ``--use-version V\\d+`` fuerza esa version (RC-SS-02, override no
+    interactivo del falso positivo); si no existe => SinCompError nombrando
+    la carpeta y las disponibles. Sin override: mejor_version_comp (mtime
+    real + tie-break). Carpeta sin .nk calificante => SinCompError nombrando
+    la carpeta (RC-SS-03: nunca skip silencioso).
+    """
+    if args.use_version:
+        if not re.match(r"^V\d+$", args.use_version, re.IGNORECASE):
+            raise SystemExit(
+                "--use-version debe ser V\\d+ (ej. V015); se recibio %r."
+                % args.use_version
+            )
+        return layouts.elegir_por_version(plan_dir, args.use_version, layout)
+    return layouts.mejor_version_comp(plan_dir, layout)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--comp", default="TEST_RENDER/prueba_test.nk")
@@ -454,11 +573,58 @@ def main():
                     choices=["ask", "keep", "replace", "corruptos"])
     ap.add_argument("--check-exr", action="store_true",
                     help="valida profundamente los EXR existentes con Nuke")
+    ap.add_argument("--proyecto", default=None,
+                    help="proyecto del layout (default: HTLR, con aviso)")
+    ap.add_argument("--comp-dir", default=None,
+                    help="carpeta de planos relativa a la base, o intencion")
+    ap.add_argument("--resolve-latest", action="store_true",
+                    help="confirma la seleccion por mtime sin preguntar")
+    ap.add_argument("--use-version", default=None, metavar="V\\d+",
+                    help="fuerza esa version .nk (override del falso positivo mtime)")
     args = ap.parse_args()
 
     # Infraestructura desde la config central estricta: workers, bases por SO
     # y sufijos por defecto. El CLI solo sobreescribe los sufijos por corrida.
     config = render_config.obtener_config_efectiva()
+
+    # ---- Flujo asistido (PR1): layout + seleccion por mtime ----
+    # Legacy sin flags nuevos => este bloque no corre (RC-QC-04).
+    if es_flujo_asistido(args):
+        args.proyecto, _ = resolver_proyecto(args.proyecto)
+        layout = layouts.obtener_layout(args.proyecto)
+        planos = planos_del_proyecto(args, config)
+        if not planos:
+            raise SystemExit(
+                "Sin planos bajo %r: revisa la intencion o --comp-dir."
+                % (args.comp_dir or "")
+            )
+        planos = confirmar_planos(planos, args)
+        elegidos = {}
+        for plano in planos:
+            abs_dir = layouts.ruta_bajo_base(plano, config)
+            if not abs_dir:
+                raise SystemExit("Sin base local para resolver %r." % plano)
+            try:
+                version = seleccionar_version(abs_dir, args, layout)
+            except layouts.SinCompError as e:
+                raise SystemExit("ABORTA: %s" % e)
+            elegidos[plano] = version
+        print("\n== SELECCION POR MTIME ==")
+        for plano, version in elegidos.items():
+            print("  %s -> %s" % (plano, version))
+        if len(elegidos) == 1:
+            plano, version = next(iter(elegidos.items()))
+            args.comp = plano.rstrip("/") + "/" + version
+            print("  Comp seleccionado: %s" % args.comp)
+        else:
+            print(
+                "  %d planos seleccionados: el flujo actual rinde UN comp "
+                "por invocacion; repeti con --comp-dir apuntando a uno solo."
+                % len(elegidos)
+            )
+            return
+        args.auto_range = True  # el rango sale de la PROBE del comp elegido
+
     workers = filtrar_por_nombre(construir_workers(config["workers"]), args.workers)
     sufijos = sufijos_efectivos(
         config["sufijos"], args.to_suf, args.comp_suf, args.from_suf
