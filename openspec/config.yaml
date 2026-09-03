@@ -52,7 +52,7 @@ testing:
   layers:
     unit:
       available: true
-      tool: "pytest + nuke stub in tests/conftest.py (392 tests PASS)"
+      tool: "pytest + nuke stub in tests/conftest.py (502 tests PASS)"
     integration:
       available: false
       tool: null
@@ -62,7 +62,7 @@ testing:
   coverage:
     available: true
     command: "python3 -m pytest --cov"
-    last_measured: "83% (pytest --cov, 2026-09-02); health index reports 67% on its module scope"
+    last_measured: "81% (pytest --cov, 2026-09-02; suite: 502 passed); health index reports 67% on its module scope"
   quality:
     linter:
       available: false
