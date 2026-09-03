@@ -52,7 +52,7 @@ testing:
   layers:
     unit:
       available: true
-      tool: "pytest + nuke stub in tests/conftest.py (502 tests PASS)"
+      tool: "pytest + nuke stub in tests/conftest.py (634 tests PASS)"
     integration:
       available: false
       tool: null
@@ -62,7 +62,7 @@ testing:
   coverage:
     available: true
     command: "python3 -m pytest --cov"
-    last_measured: "81% (pytest --cov, 2026-09-02; suite: 502 passed); health index reports 67% on its module scope"
+    last_measured: "60% batch del cambio --cov (224 passed, 2026-09-02; layouts 90%, plate_qc 92%, render_config 85%, render_distribuido 37%, render_worker 51%); suite completa 634 passed (verify render-agente-qc); 67% health index on its module scope"
   quality:
     linter:
       available: false
