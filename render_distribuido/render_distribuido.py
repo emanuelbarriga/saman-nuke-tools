@@ -36,6 +36,7 @@ import struct
 import subprocess
 import sys
 import time
+import zlib
 
 try:
     from render_distribuido import render_config
@@ -383,12 +384,16 @@ def path_frame(template, n):
 
 
 def header_exr_valido(path):
-    """Check barato pero ESTRUCTURAL del EXR (sin decodificar scanlines).
+    """Check ESTRUCTURAL + CONTENIDO del EXR (sin decodificar pixeles).
 
-    Valida: magic 'v/1\\1', cabecera parseable (dataWindow + compression),
-    tabla de offsets de chunks completa y coherente, y el chunk leader del
-    primer chunk. Detecta el patron real de corrupcion LucidLink/FUSE:
-    tamano normal pero tabla de offsets rota / chunk leader invalido.
+    Pasa 1 (estructura): magic 'v/1\\1', cabecera parseable (dataWindow +
+    compression), tabla de offsets completa y coherente, chunk leader del
+    primer chunk. Detecta el patron LucidLink/FUSE de offsets rotos.
+
+    Pasa 2 (contenido, compresion zlib ZIP/ZIPS): valida cada chunk con
+    zlib.decompressobj() y rechaza los datos comprimidos corruptos aun con
+    la tabla de offsets intacta (patron EXR_ERR_CORRUPT_CHUNK: el frame
+    pesa bien, QuickLook falla, estructura ok). Stdlib, sin OpenEXR.
     """
     try:
         if not os.path.isfile(path):
@@ -396,14 +401,13 @@ def header_exr_valido(path):
         size = os.path.getsize(path)
         if size < 1024:
             return False
+        compression = dw = None
         with open(path, "rb") as f:
             if f.read(4) != b"v/1\x01":
                 return False
             ver = f.read(4)
             tiled = bool(struct.unpack("<I", ver)[0] & 0x00000200)
             # cabecera: atributos null-terminated (nombre, tipo), size, valor
-            compression = None
-            dw = None
             while True:
                 nombre = b""
                 while True:
@@ -453,14 +457,29 @@ def header_exr_valido(path):
                 prev = v
             if tabla[-1] + 8 > size:
                 return False
-            # chunk leader del primer chunk: y == dataWindow.min.y
-            f.seek(first)
-            leader = f.read(8)
-            if len(leader) < 8:
-                return False
-            y, dsz = struct.unpack("<ii", leader)
-            if y != mny or dsz <= 0 or first + 8 + dsz > size:
-                return False
+            # Pasa 2: contenido zlib de cada chunk (solo ZIP=2/ZIPS=3)
+            if compression in (2, 3):
+                for i, chunk_off in enumerate(tabla):
+                    if chunk_off + 8 > size:
+                        return False
+                    f.seek(chunk_off)
+                    leader = f.read(8)
+                    if len(leader) < 8:
+                        return False
+                    y, dsz = struct.unpack("<ii", leader)
+                    if y != mny + i * lines_bloque or dsz <= 0:
+                        return False
+                    if chunk_off + 8 + dsz > size:
+                        return False
+                    datos = f.read(dsz)
+                    if len(datos) != dsz:
+                        return False
+                    try:
+                        d = zlib.decompressobj()
+                        d.decompress(datos)
+                        d.flush()
+                    except zlib.error:
+                        return False
         return True
     except (OSError, struct.error, EOFError):
         return False
