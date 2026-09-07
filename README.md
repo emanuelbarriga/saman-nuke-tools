@@ -100,19 +100,19 @@ cp -r saman-nuke-tools ~/.nuke/SamanTools
 cp ~/.nuke/SamanTools/bootstrap/menu.py ~/.nuke/menu.py
 ```
 
-> La copia manual funciona (menú + nodos + nodo Rutas), pero como el `git fetch`
-> no puede salir a GitHub, **no habrá aviso de actualizaciones**: para actualizar
+> La copia manual funciona (menú + nodos + nodo Rutas), pero como el `git pull`
+> no puede salir a GitHub, **no se auto-actualizará**: para actualizar
 > repetí la copia con la versión nueva (o corré `git pull` cuando haya red).
 
 ## Actualizaciones (modelo actual)
 
 El mantenedor hace **commit + push** a `main`. En cada equipo:
 
-- El bootstrap hace `git fetch` al arrancar (no modifica nada) y compara.
-- **Hay versión nueva** → alerta "¿Querés actualizar ahora?" (Sí/No).
-- El botón **SamanTools ▸ Actualizar SamanTools...** funciona a demanda y
-  también **reinstala** si el checkout falta.
-- Solo con consentimiento se ejecuta `git pull --ff-only`.
+- El bootstrap hace `git pull --ff-only --quiet` al arrancar e **aplica sola la
+  última versión** (push automático), antes de construir el menú.
+- **Seguro**: con `--ff-only` NO avanza si el árbol local está sucio o divergió;
+  mantiene la copia local y el botón **SamanTools ▸ Actualizar SamanTools...**
+  sigue como respaldo (y **reinstala** si el checkout falta).
 - Sin red → usa la copia local sin romper Nuke. Desinstalado → sin menú.
 
 ### Opción A — Clonar + NUKE_PATH (sin copiar)
@@ -162,7 +162,7 @@ Las skills de OpenCode/Claude usadas por el estudio viven versionadas en
 ## Cómo se verifica
 
 Tras reiniciar Nuke:
-- Aparece el menú **SamanTools** plano: Cambiar ColorSpace, Breakdown, Panel de Comentarios (`Ctrl+Alt+C`), Diagnóstico de Red, **Panel de Rutas** y el submenú **Configuración** (mantenimiento).
+- Aparece el menú **SamanTools** organizado por categorías: **Acerca de** y **Actualizar** directos, con submenús **Tools** (Cambiar ColorSpace, Breakdown), **Paneles** (Panel de Rutas, Panel de Comentarios con `Ctrl+Alt+C`), **Salud** (Diagnóstico de Red, Verificar Salud, Escanear Scripts, Limpiar knobs) y **Desinstalar** al final (mantenimiento).
 - El **Panel de Rutas** es la config global de rutas (`~/.config/saman/rutas_global.json`); aplica `PYTHON_TO_VFX/COMP/FROM_VFX` al arrancar. El nodo Rutas legacy sigue funcionando por compatibilidad (coexistencia), y el panel permite **Importar desde nodo** para migrar. El día del reemplazo solo se elimina el adaptador del nodo (ver `rutas_global.py`).
 - En el buscador (TAB), escribiendo **breakdown**, **review** o **rutas** se crean los nodos.
 

@@ -1,9 +1,9 @@
 """
 Tests del menú superior SamanTools y del buscador de Nodos (Tab).
 
-Cubre la reestructuración aprobada: el menú superior es PLANO (las herramientas
-van directas en SamanTools) y solo queda el submenú "Configuración" para el
-mantenimiento. El buscador TAB solo expone "Insertar Nodo"
+Cubre la reestructuración aprobada: el menú superior se organiza por
+categorías con "Acerca de" directo en la raíz y submenús temáticos
+(Tools / Paneles / Salud). El buscador TAB solo expone "Insertar Nodo"
 (Rutas / Review / Breakdown) — sin Utilidades.
 """
 
@@ -61,31 +61,40 @@ def test_instalar_crea_estructura_nueva(monkeypatch):
     saman = _submenu_de(menu, "SamanTools")
     assert saman is not None, "Falta el submenu 'SamanTools'"
 
-    # Menú plano: las herramientas van DIRECTAS, sin submenús intermedios.
+    # Raíz: "Acerca de" y "Breakdown" como comandos directos. (Actualizar/
+    # Desinstalar los agrega bootstrap/menu.py, no este módulo.)
     nombres_comandos = _nombres_comandos(saman)
-    assert "Cambiar ColorSpace..." in nombres_comandos
+    assert "Acerca de SamanTools..." in nombres_comandos
     assert "Breakdown" in nombres_comandos
-    assert "Panel de Comentarios" in nombres_comandos
-    assert "Diagnóstico de Red" in nombres_comandos
-    assert "Panel de Rutas" in nombres_comandos
+    assert "Cambiar ColorSpace..." not in nombres_comandos
 
-    # Los submenús viejos (Composición / VFXFlow / Sistema / Configuración)
-    # ya no existen: solo queda "Configuración".
+    # Submenús temáticos: sin "Configuración" ni estructura vieja.
     nombres_submenus = [getattr(sub, "_nombre", None) for sub in saman.items()]
+    assert "Tools" in nombres_submenus
+    assert "Paneles (En construcción)" in nombres_submenus
+    assert "Salud" in nombres_submenus
+    assert "Configuración" not in nombres_submenus
     assert "Composición" not in nombres_submenus
     assert "VFXFlow" not in nombres_submenus
     assert "Sistema / Configuración" not in nombres_submenus
-    assert "Configuración" in nombres_submenus
 
+    tools = _submenu_de(saman, "Tools")
+    assert "Cambiar ColorSpace..." in _nombres_comandos(tools)
+    assert "Breakdown" not in _nombres_comandos(tools)
+
+    paneles = _submenu_de(saman, "Paneles (En construcción)")
+    assert "Panel de Rutas" in _nombres_comandos(paneles)
+    assert "Panel de Comentarios" in _nombres_comandos(paneles)
     # Atajo Ctrl+Alt+C registrado en "Panel de Comentarios".
-    assert ("Panel de Comentarios", "Ctrl+Alt+C") in saman.shortcuts
+    assert ("Panel de Comentarios", "Ctrl+Alt+C") in paneles.shortcuts
 
-    configuracion = _submenu_de(saman, "Configuración")
-    nombres_cmd = _nombres_comandos(configuracion)
-    assert "Verificar Salud del Plugin..." in nombres_cmd
-    assert "Escanear Scripts del Proyecto" in nombres_cmd
-    assert "Limpiar knobs volátiles" in nombres_cmd
-    assert "Acerca de SamanTools..." in nombres_cmd
+    salud = _submenu_de(saman, "Salud")
+    nombres_salud = _nombres_comandos(salud)
+    assert "Diagnóstico de Red" in nombres_salud
+    assert "Verificar Salud del Plugin..." in nombres_salud
+    assert "Escanear Scripts del Proyecto" in nombres_salud
+    assert "Limpiar knobs volátiles" in nombres_salud
+    assert "Limpiar knobs volátiles en carpeta..." in nombres_salud
 
 
 def test_instalar_no_registra_changecolorspace_en_nodes(monkeypatch):

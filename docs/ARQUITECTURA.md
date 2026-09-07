@@ -13,7 +13,7 @@ primero.
 Toolkit global de Nuke para el estudio **Samán Estudio**:
 
 - **Nodos globales**: Breakdown (widget de frames), Review (comparación), Rutas (rutas VFX dinámicas).
-- **Menú SamanTools** en la barra superior: Composición / VFXFlow / Sistema y Configuración (incluye Actualizar/Desinstalar).
+- **Menú SamanTools** en la barra superior: Acerca de / Actualizar directos, submenús Tools / Paneles (En construcción) / Salud y Desinstalar (mantenimiento).
 - Multiplataforma: macOS, Windows, Linux.
 - Fuente de todo: repo público `emanuelbarriga/saman-nuke-tools` en GitHub.
 
@@ -36,9 +36,9 @@ Toolkit global de Nuke para el estudio **Samán Estudio**:
 
 | Pieza | Rol |
 |---|---|
-| `bootstrap/menu.py` | El `menu.py` del artista (copiado a `~/.nuke`). Mantenimiento: alerta de update, botones Actualizar/Desinstalar, auto-sincronización del bootstrap mismo. **Nunca depende del código del repo** (funciona aunque el repo esté roto). |
+| `bootstrap/menu.py` | El `menu.py` del artista (copiado a `~/.nuke`). Mantenimiento: **auto-update con `git pull --ff-only` en cada arranque** (push automático), alerta de update, botones Actualizar/Desinstalar, auto-sincronización del bootstrap mismo. **Nunca depende del código del repo** (funciona aunque el repo esté roto). |
 | `menu.py` (raíz) | Carga real: `sys.path`, `pluginAddPath`, `registro.instalar()`. Se ejecuta vía `exec` desde el bootstrap. |
-| `SamanTools/registro.py` | Construye el menú SamanTools (Composición / VFXFlow / Sistema y Configuración) + buscador TAB (solo Insertar Nodo: Rutas/Review/Breakdown). |
+| `SamanTools/registro.py` | Construye el menú SamanTools (Acerca / Tools / Paneles / Salud) + buscador TAB (solo Insertar Nodo: Rutas/Review/Breakdown). |
 | `SamanTools/proyecto.py` | Carga dinámica de galerías/gizmos del proyecto (`{PYTHON_COMP}/Scripts`). |
 | `SamanTools/rutas.py` | Lógica del nodo ÚNICO Rutas (`crear_o_reutilizar` — menú y TAB usan la misma vía, máximo 1 por proyecto, `_enfocar_nodo` navega al nodo existente + abre propiedades), recomendación de usuario según SO, visibilidad por usuario activo, y ahora dividido en `aplicar_proyecto` (cambiar proyecto / variables) + `refrescar_fuentes` (recarga de Reads a demanda, `forzar=True`) — el botón del nodo ofrece "Cambiar Proyecto" y "Refrescar Fuentes". |
 | `SamanTools/entorno.py` | Detección de SO, ruta base por SO (`/Volumes/wupm/2026`, `L:/2026`, `/mnt/wupm/2026`) y estado de la unidad `wupm` con timeout (mount muerto no cuelga Nuke). Puro stdlib, NO importa nuke. |
@@ -48,22 +48,25 @@ Toolkit global de Nuke para el estudio **Samán Estudio**:
 
 ---
 
-## 3. Modelo de actualización (el artista decide)
+## 3. Modelo de actualización (push automático)
 
-**Principio**: nunca se fuerza un update. El artista consiente.
+**Principio**: la última versión de main se aplica sola en cada arranque. El
+artista no decide; el `git pull --ff-only` en el bootstrap garantiza que el
+menú que se construye use la versión publicada más reciente.
 
-1. Al arrancar, el bootstrap hace solo `git fetch` (no modifica nada) y compara HEAD vs `origin/main`.
-2. Si hay versión nueva → alerta `nuke.ask("¿Querés actualizar ahora?")` (máx. 1 vez cada 6 h — `LOCK_FILE`).
-3. El botón **SamanTools ▸ Actualizar SamanTools...** consulta a demanda y, si no hay checkout, **reinstala** (clone limpio).
-4. Solo con consentimiento se ejecuta `git pull --ff-only`.
+1. Al arrancar, el bootstrap hace `git pull --ff-only --quiet` sobre el checkout instalado (`_auto_actualizar`), **antes** de cargar el código del repo.
+2. El pull es seguro: con `--ff-only` NO avanza si el árbol local está sucio (cambios del artista) o divergió — deja el checkout intacto (rollback natural) y se sigue con la versión local.
+3. El botón **SamanTools ▸ Actualizar SamanTools...** sigue como respaldo: consulta a demanda y, si no hay checkout, **reinstala** (clone limpio).
+4. La alerta automática (máx. 1 vez cada 6 h — `LOCK_FILE`) sigue como aviso visual si el pull automático no pudo correr (sin red, divergencia).
 5. El bootstrap se **auto-actualiza** en cada arranque: compara hash de `~/.nuke/menu.py` vs `bootstrap/menu.py` y se reemplaza solo si difieren.
 
 ### Estados posibles
 
 | Estado | Comportamiento |
 |---|---|
-| Checkout completo + red | Carga el menú; alerta si hay update. |
-| Checkout completo sin red | Carga la copia local; sin alerta. |
+| Checkout completo + red | Pull automático → aplica última versión y carga el menú nuevo. |
+| Checkout completo sin red | Carga la copia local; sin actualización, sin alerta. |
+| Checkout completo + árbol local sucio/divergido | Pull `--ff-only` no avanza; carga la copia local; el botón Actualizar manual pide decisión. |
 | Checkout incompleto (clone/pull a medias) | `git reset --hard origin/main` automático; si falla, carga local. |
 | Sin checkout (desinstalado / nunca instalado) | **Silencio total**: sin menú, sin errores. Solo botones via bootstrap. |
 | Sin checkout + botón Actualizar | Reinstala desde GitHub (previo consentimiento). |
@@ -78,7 +81,7 @@ Estos bugs se corrigieron; **no reintroducirlos**:
 2. **`nuke.pluginAddPath(dir, addToMenuBar=False)` → TypeError** — misma versión no soporta ese kwarg. Usar `pluginAddPath(dir)` a secas.
 3. **`padding_fix()` inexistente** — el fallback `/Volumes/` del botón Rutas llamaba una función que no existía → `NameError` latente. Se eliminó usando `partes[3]` directo.
 4. **Clone sobre directorio no vacío falla en silencio** — `git clone` a una carpeta con instalación vieja por-copia falla con "already exists and is not an empty directory", y el `DEVNULL` ocultaba el error → `copy2` reventaba después. El instalador actual usa **clone a temporal + rename** (`clonar_limpio`).
-5. **Pull silencioso rompía la red de seguridad** — el auto-update original aplicaba sin consentimiento; se reemplazó por alerta + confirmación.
+5. **Pull silencioso rompía la red de seguridad** — el auto-update original aplicaba `git reset --hard` sin consentimiento y podía pisar el árbol del artista. El modelo push automático actual reintroduce el auto-update PERO de forma segura: usa `git pull --ff-only`, que **nunca** avanza sobre un árbol sucio ni divergido. Nunca usar `reset --hard` ni `pull` sin `--ff-only` en el arranque automático.
 6. **Desinstalar acumulaba respaldos** — la versión vieja "movía a respaldo"; se cambió a **borrar definitivo** (`shutil.rmtree`), sin dejar nada.
 7. **Bootstrap que no se auto-actualizaba** — los botones del bootstrap solo se copiaban al instalar; ahora se auto-sincroniza por hash.
 8. **Ciclo infinito desinstalado→error** — el arranque intentaba clonar sin red y dejaba checkout parcial con `.git`; ahora el arranque NO clona y el estado sin checkout es silencio.

@@ -3,20 +3,23 @@ menu.py — Bootstrap de artista para SamanTools (NO editar a mano).
 
 Instalado por setup_artista.sh / setup_artista.bat en ~/.nuke/menu.py.
 
-MODELO DE ACTUALIZACION (el artista decide, nunca se fuerza):
-  1) Al arrancar Nuke solo hace 'git fetch' (barato, no modifica nada).
-  2) Si hay version nueva -> alerta: "Hay una actualizacion disponible".
-  3) El artista pulsa el boton del menu SamanTools > Actualizar, o acepta
-     la alerta; SOLO entonces se hace 'git pull' y se aplica la version.
-  4) Puede posponerlo: sigue trabajando con la version actual sin problema.
-  5) La alerta se muestra como maximo 1 vez cada 6 h (no es intrusiva).
+MODELO DE ACTUALIZACION (push automatico):
+  1) Al arrancar Nuke se hace 'git pull --ff-only' -> se aplica automaticamente
+     la ultima version publicada en main. El artista ya no decide: la version
+     nueva queda instalada y se carga en el arranque.
+  2) El pull es seguro: con --ff-only NO avanza si el arbol local esta sucio o
+     divergio, dejando el checkout intacto (rollback natural).
+  3) El boton del menu SamanTools > Actualizar sigue disponible como respaldo
+     (instalar por primera vez o re-aplicar una version que no avanzo sola).
+  4) La alerta automatica del arranque (max 1 vez/6h) sigue como aviso visual
+     de que hay version nueva aunque el pull automatico no haya podido correr.
 
-Para el mantenedor: los updates llegan a todos los artistas cuando ELLOS
-eligen actualizar (y reinician Nuke). Una version nueva rota no afecta a
-quienes aun no actualizaron: quedan en la version estable.
+Para el mantenedor: un push a main se distribuye a todos los artistas en su
+siguiente arranque de Nuke. Si una version nueva es problematica, usar revert
+en main y los demas vuelven a estar al dia en su proximo arranque.
 
 La logica de update vive AQUI (archivo estable), no en el codigo del repo:
-si una version nueva rompe el menu, el boton de actualizar sigue disponible.
+si una version nueva rompe el menu, el auto-update sigue disponible.
 """
 
 import nuke
@@ -282,6 +285,10 @@ def _agregar_boton_menu():
     SamanTools (con Actualizar/Desinstalar) aparece únicamente cuando el
     checkout existe — instalado o en estado de reparación. Así el estado
     'desinstalado' deja el menú completamente limpio.
+
+    Posición: "Actualizar" se inserta en la posición 1 (justo después de
+    "Acerca de SamanTools...", que siempre es el item 0); "Desinstalar" se
+    agrega al final del menú.
     """
     if not _tiene_checkout():
         return  # desinstalado: sin menú de SamanTools
@@ -289,11 +296,8 @@ def _agregar_boton_menu():
         menu = nuke.menu("Nuke").findItem("SamanTools")
         if menu is None:
             menu = nuke.menu("Nuke").addMenu("SamanTools")
-        sub = menu.findItem("Configuración")
-        if sub is None:
-            sub = menu.addMenu("Configuración")
-        sub.addCommand("Actualizar SamanTools...", _actualizar_ahora)
-        sub.addCommand("Desinstalar SamanTools...", _desinstalar_ahora)
+        menu.addCommand("Actualizar SamanTools", _actualizar_ahora, index=1)
+        menu.addCommand("Desinstalar SamanTools...", _desinstalar_ahora)
     except Exception:
         pass
 
@@ -420,7 +424,36 @@ def _auto_actualizar_bootstrap():
         pass
 
 
+def _auto_actualizar():
+    """Aplica en cada arranque la última versión de main (modelo push automático).
+
+    El artista ya NO decide: al abrir Nuke se hace `git pull --ff-only` sobre
+    el checkout instalado, de modo que la última versión publicada se carga en
+    el arranque siguiente.
+
+    Seguridad (rollback natural): `--ff-only` NO avanza si el árbol local está
+    sucio (cambios del artista) o si la historia divergió; en ese caso deja el
+    checkout intacto y el botón Actualizar manual sigue disponible como
+    respaldo. No muestra UI: es silencioso.
+
+    Devuelve True si el checkout quedó al día (ya estaba o el pull avanzó);
+    False si no se pudo (sin git/checkout o divergencia).
+    """
+    if not _hay_git() or not _tiene_checkout():
+        return False
+    try:
+        rc, _, _ = _ejecutar_git(["pull", "--ff-only", "--quiet"], timeout=120)
+        return rc == 0
+    except Exception:
+        return False
+
+
 def instalar():
+    # Modelo de delivery "push automático": sincroniza el checkout con origin
+    # ANTES de cargar el código, para que el menú que se construye en este
+    # arranque ya use la última versión publicada. Si el pull no avanza (sin
+    # red / divergencia) simplemente seguimos con la versión local instalada.
+    _auto_actualizar()
     _auto_actualizar_bootstrap()
     # NO se clona en el arranque: si no hay checkout (desinstalado / sin red),
     # el bootstrap queda en silencio con solo los botones de mantenimiento.

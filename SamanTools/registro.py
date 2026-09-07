@@ -276,69 +276,74 @@ def _inyectar_frame_manager():
 def instalar():
     """Crea el menú SamanTools en la barra superior de Nuke y registra las herramientas.
 
-    Estructura plana (reestructuración aprobada): las herramientas van
-    DIRECTAS en el menú SamanTools y solo queda el submenú "Configuración"
-    para el mantenimiento. Menos niveles = menos clics.
+    Estructura por categorías (reestructuración aprobada): "Acerca de" queda
+    directo en la raíz y las herramientas se agrupan en submenús temáticos
+    (Tools, Paneles, Salud). Los comandos de mantenimiento del bootstrap
+    (Actualizar/Desinstalar) se agregan DESPUÉS, sobre este mismo menú, desde
+    bootstrap/menu.py. Menos niveles = menos clics.
     """
     menu = nuke.menu("Nuke").addMenu("SamanTools")
 
-    # --- Herramientas directas (menú plano) ---
+    # --- Acerca de: versión y contacto, siempre a la vista ---
     menu.addCommand(
-        "Cambiar ColorSpace...",
-        cambiar_colorspace.ejecutar_cambio_colorespace_reads,
-        icon=_ruta_icono("ChangeColorSpace.svg"),
+        "Acerca de SamanTools...",
+        _acerca_de,
     )
+    # Actualizar SamanTools se inserta aquí por bootstrap (posición 1, justo
+    # después de "Acerca de"), SOLO si hay checkout instalado.
+
+    # Breakdown directo en la raíz (herramienta estrella, un solo clic).
     menu.addCommand(
         "Breakdown",
         _insertar_breakdown,
     )
-    # Comando lazy (string): el módulo panel_comentarios solo se importa al
-    # hacer clic, para no romper la carga del menú si PySide no está o no hay GUI.
+
+    # --- Categoría: Tools ---
+    sub_tools = menu.addMenu("Tools")
+    sub_tools.addCommand(
+        "Cambiar ColorSpace...",
+        cambiar_colorspace.ejecutar_cambio_colorespace_reads,
+        icon=_ruta_icono("ChangeColorSpace.svg"),
+    )
+
+    # --- Categoría: Paneles (En construcción) ---
+    # Lazy (string): PySide solo se importa al hacer clic en GUI, para no
+    # romper la carga del menú si PySide no está o no hay GUI.
+    sub_paneles = menu.addMenu("Paneles (En construcción)")
+    sub_paneles.addCommand(
+        "Panel de Rutas",
+        "from SamanTools import panel_rutas\npanel_rutas.abrir_panel()",
+    )
     # Atajo Ctrl+Alt+C: abre la pestaña de comentarios desde cualquier lado.
-    menu.addCommand(
+    sub_paneles.addCommand(
         "Panel de Comentarios",
         "from SamanTools import panel_comentarios\npanel_comentarios.abrir_panel()",
         shortcut="Ctrl+Alt+C",
     )
-    # Comando lazy (string): diagnostico_red no se importa al tope para no
-    # cargar urllib al arrancar; se importa solo al hacer clic.
-    menu.addCommand(
+
+    # --- Categoría: Salud ---
+    sub_salud = menu.addMenu("Salud")
+    # Lazy (string): diagnostico_red no se importa al tope para no cargar
+    # urllib al arrancar; se importa solo al hacer clic.
+    sub_salud.addCommand(
         "Diagnóstico de Red",
         "from SamanTools import diagnostico_red\ndiagnostico_red.ejecutar()",
     )
-    # Panel global de rutas (reemplaza a futuro el nodo Rutas legacy).
-    # Lazy (string): PySide solo se importa al hacer clic en GUI.
-    menu.addCommand(
-        "Panel de Rutas",
-        "from SamanTools import panel_rutas\npanel_rutas.abrir_panel()",
-    )
-
-    # Separador visual entre categorías (Nuke lo dibuja como línea).
-    menu.addMenu("-")
-
-    # --- Categoría: Configuración ---
-    # Los comandos de mantenimiento del bootstrap (Actualizar/Desinstalar) se
-    # agregan DESPUÉS, sobre este mismo submenú, desde bootstrap/menu.py.
-    sub_configuracion = menu.addMenu("Configuración")
-    sub_configuracion.addCommand(
+    sub_salud.addCommand(
         "Verificar Salud del Plugin...",
         _verificar_salud,
     )
-    sub_configuracion.addCommand(
+    sub_salud.addCommand(
         "Escanear Scripts del Proyecto",
         _escanear_scripts_proyecto,
     )
-    sub_configuracion.addCommand(
+    sub_salud.addCommand(
         "Limpiar knobs volátiles",
         _limpiar_knobs_volatiles,
     )
-    sub_configuracion.addCommand(
+    sub_salud.addCommand(
         "Limpiar knobs volátiles en carpeta...",
         _limpiar_knobs_volatiles_carpeta,
-    )
-    sub_configuracion.addCommand(
-        "Acerca de SamanTools...",
-        _acerca_de,
     )
 
     # Carga automatica si el proyecto ya esta disponible al arrancar.
