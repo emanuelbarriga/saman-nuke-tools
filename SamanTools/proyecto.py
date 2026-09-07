@@ -54,19 +54,53 @@ def actualizar_desde_nodo_rutas(n=None):
     return rutas.actualizar(n)
 
 
+def _es_archivo_valido(ruta_archivo):
+    """True si el .gizmo/.nk tiene contenido mínimo para ser un nodo.
+
+    Un plugin vacío (0 bytes) o de puro espacio en blanco NO define su clase:
+    Nuke responde "plugin did not define <nombre>" y puede romper la carga del
+    menú del proyecto. Se saltea para que un archivo corrupto no tumbe a las
+    demás galerías. Es una defensa conservadora: solo descarta lo que
+    claramente no puede ser un nodo.
+    """
+    try:
+        tamano = os.path.getsize(ruta_archivo)
+    except OSError:
+        return False
+    if tamano == 0:
+        return False
+    # Marcador mínimo de un .nk/.gizmo válido: el fichero arranca con la
+    # versión o con un Token (Group/Read/...). Si ni siquiera hay bytes
+    # legibles de contenido, lo tratamos como corrupto.
+    try:
+        with open(ruta_archivo, "r", errors="replace") as f:
+            cabeza = f.read(2048)
+    except OSError:
+        return False
+    return bool(cabeza.strip())
+
+
 def _escanear(ruta):
-    """Escanea recursivamente .gizmo/.nk; devuelve [(nombre_nodo, etiqueta_menu)]."""
+    """Escanea recursivamente .gizmo/.nk; devuelve [(nombre_nodo, etiqueta_menu)].
+
+    Saltea archivos vacíos o corruptos (ver _es_archivo_valido): un plugin sin
+    contenido dispararía "plugin did not define" al insertarlo y ensucia el menú.
+    """
     resultados = []
     for curr_dir, _sub_dirs, archivos in os.walk(ruta):
         rel = os.path.relpath(curr_dir, ruta)
         for archivo in sorted(archivos):
-            if archivo.lower().endswith(EXTENSIONES):
-                nombre = os.path.splitext(archivo)[0]
-                if rel == ".":
-                    etiqueta = nombre
-                else:
-                    etiqueta = "/".join(rel.split(os.sep) + [nombre])
-                resultados.append((nombre, etiqueta))
+            if not archivo.lower().endswith(EXTENSIONES):
+                continue
+            ruta_completa = os.path.join(curr_dir, archivo)
+            if not _es_archivo_valido(ruta_completa):
+                continue
+            nombre = os.path.splitext(archivo)[0]
+            if rel == ".":
+                etiqueta = nombre
+            else:
+                etiqueta = "/".join(rel.split(os.sep) + [nombre])
+            resultados.append((nombre, etiqueta))
     return resultados
 
 

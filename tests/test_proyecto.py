@@ -10,6 +10,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import nuke
 from SamanTools import proyecto
 
+# Contenido mínimo de un .gizmo/.nk válido: arranca con la version junto a un
+# Token (Group/Read/...). Los helpers de tests lo usan en vez de archivos 0
+# bytes, porque el escaneo real saltea plugins vacíos (corruptos).
+GIZMO_VALIDO = "version 17.1 v1\n Group {\n  name Algo\n }\n"
+
+
+def _escribir_gizmo(ruta, contenido=GIZMO_VALIDO):
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text(contenido)
+    return ruta
+
 
 class TestClasificar:
     def test_galeria_por_palabra_asset(self):
@@ -36,9 +47,7 @@ class TestClasificar:
 class TestEscanear:
     def _crear_scripts(self, tmp_path, archivos):
         for rel in archivos:
-            ruta = tmp_path / rel
-            ruta.parent.mkdir(parents=True, exist_ok=True)
-            ruta.touch()
+            _escribir_gizmo(tmp_path / rel)
         return str(tmp_path)
 
     def test_escaneo_raiz(self, tmp_path):
@@ -55,6 +64,21 @@ class TestEscanear:
     def test_ignora_no_gizmo(self, tmp_path):
         ruta = self._crear_scripts(tmp_path, ["nota.txt", "img.png"])
         assert proyecto._escanear(ruta) == []
+
+    def test_saltear_archivo_vacio(self, tmp_path):
+        # Un .gizmo de 0 bytes (corrupto) NO debe registrarse: dispararia
+        # "plugin did not define <nombre>" al insertarlo.
+        ruta = str(tmp_path)
+        (tmp_path / "muzzle_flashes_vol_2.gizmo").touch()
+        _escribir_gizmo(tmp_path / "blood_vol_1.gizmo")
+        res = proyecto._escanear(ruta)
+        assert ("blood_vol_1", "blood_vol_1") in res
+        assert all(nombre != "muzzle_flashes_vol_2" for nombre, _ in res)
+
+    def test_saltear_solo_espacios(self, tmp_path):
+        # Puro espacio en blanco tampoco define una clase de nodo.
+        _escribir_gizmo(tmp_path / "rotos.gizmo", contenido="   \n  \n")
+        assert proyecto._escanear(str(tmp_path)) == []  # no era un archivo válido.
 
 
 class TestObtenerRutaScripts:
@@ -156,7 +180,7 @@ class TestCargarScriptsProyecto:
         scripts = tmp_path / "Scripts"
         scripts.mkdir(exist_ok=True)
         for nombre in archivos:
-            (scripts / nombre).touch()
+            _escribir_gizmo(scripts / nombre)
         import __main__
         monkeypatch.setattr(__main__, "PYTHON_COMP", str(tmp_path))
         return str(scripts)
@@ -180,6 +204,25 @@ class TestCargarScriptsProyecto:
         assert galerias is not None
         assert [name for (name, _) in herramientas.commands] == ["mis_refs"]
         assert [name for (name, _) in galerias.commands] == ["muzzle_flashes_v1"]
+
+    def test_carga_salteando_gizmo_vacio(self, monkeypatch, tmp_path):
+        # Reproduce el bug reportado: un .gizmo de 0 bytes no debe tumbar al
+        # resto de las galerías ni aparecer en el submenú.
+        self._reset_menu()
+        (tmp_path / "Scripts").mkdir(exist_ok=True)
+        (tmp_path / "Scripts" / "muzzle_flashes_vol_2.gizmo").touch()  # corrupto
+        _escribir_gizmo(tmp_path / "Scripts" / "blood_vol_1.gizmo")
+        import __main__
+        monkeypatch.setattr(__main__, "PYTHON_COMP", str(tmp_path))
+
+        assert proyecto.cargar_scripts_proyecto() is True
+        menu = nuke.menu("Nodes")
+        submenu = self._submenu_de(menu, proyecto.SUBMENU)
+        assert submenu is not None
+        galerias = self._submenu_de(submenu, "Galerías")
+        nombres = [name for (name, _) in galerias.commands]
+        assert "blood_vol_1" in nombres
+        assert "muzzle_flashes_vol_2" not in nombres
 
     def test_sin_ruta_devuelve_false_y_limpia_submenu(self, monkeypatch):
         self._reset_menu()
