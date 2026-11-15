@@ -210,3 +210,103 @@ class TestRefrescarFuentesBoton:
         mensajes[:] = []
         rutas.refrescar_fuentes_boton(n)
         assert any("No se encontraron" in m for m in mensajes)
+
+class TestAplicarVariablesDesdeNodo:
+    """Hook de ScriptLoad: las PYTHON_* se re-derivan del nodo Rutas.
+
+    Es el ajuste que vivia solo en el ~/.nuke/init.py de la maquina: sin el,
+    abrir un comp en un Nuke nuevo deja las expresiones [python {PYTHON_*}]
+    de los Reads sin resolver hasta que alguien toca el nodo.
+    """
+
+    NOMBRES = ("PYTHON_TO_VFX", "PYTHON_COMP", "PYTHON_FROM_VFX")
+
+    def setup_method(self):
+        nuke._estado["nodos"] = []
+        nuke._estado["mensajes"] = []
+        main = sys.modules["__main__"]
+        for nombre in self.NOMBRES:
+            setattr(main, nombre, "")
+
+    def _variables(self):
+        main = sys.modules["__main__"]
+        return tuple(getattr(main, nombre) for nombre in self.NOMBRES)
+
+    def test_define_las_tres_variables_desde_el_nodo_rutas(self):
+        nuke._estado["nodos"] = [_nodo_rutas()]
+
+        assert rutas.aplicar_variables_desde_nodo() is True
+        assert self._variables() == ("/vol/TO_VFX", "/vol/COMP", "/vol/FROM_VFX")
+
+    def test_sin_nodo_rutas_devuelve_false_y_conserva_lo_previo(self):
+        main = sys.modules["__main__"]
+        main.PYTHON_TO_VFX = "previo"
+
+        assert rutas.aplicar_variables_desde_nodo() is False
+        assert main.PYTHON_TO_VFX == "previo"
+
+    def test_usuario_desconocido_devuelve_false(self):
+        nuke._estado["nodos"] = [_nodo_rutas(usuario="Fantasma")]
+        assert rutas.aplicar_variables_desde_nodo() is False
+
+    def test_si_falta_una_ruta_no_define_nada(self):
+        n = _nodo_rutas()
+        del n.knobs_d["comp_SERVER_MAC"]
+        nuke._estado["nodos"] = [n]
+
+        assert rutas.aplicar_variables_desde_nodo() is False
+        assert self._variables() == ("", "", "")
+
+    def test_un_nodo_roto_no_lanza(self):
+        class Roto(object):
+            def knobs(self):
+                raise RuntimeError("boom")
+
+            def __getitem__(self, nombre):
+                raise RuntimeError("boom")
+
+        assert rutas.aplicar_variables_desde_nodo(Roto()) is False
+
+    def test_toma_el_primer_nodo_rutas_del_comp(self):
+        primero = _nodo_rutas(usuario="Artist")
+        primero.knobs_d["TO_VFX_SERVER_ARTIST"] = nuke.KnobFake("/a/TO_VFX")
+        primero.knobs_d["comp_SERVER_ARTIST"] = nuke.KnobFake("/a/COMP")
+        primero.knobs_d["FROM_VFX_SERVER_ARTIST"] = nuke.KnobFake("/a/FROM")
+        nuke._estado["nodos"] = [primero, _nodo_rutas()]
+
+        assert rutas.aplicar_variables_desde_nodo() is True
+        assert self._variables() == ("/a/TO_VFX", "/a/COMP", "/a/FROM")
+
+
+class TestHookDeCarga:
+    """registro.instalar() deja el hook enganchado (y no lo duplica)."""
+
+    def test_registro_engancha_la_funcion_en_script_load(self):
+        from SamanTools import registro
+
+        nuke._estado["hooks_carga"] = []
+
+        assert registro._registrar_hooks_de_carga() is True
+        assert rutas.aplicar_variables_desde_nodo in nuke._estado["hooks_carga"]
+
+    def test_registrar_dos_veces_no_duplica_el_hook(self):
+        from SamanTools import registro
+
+        nuke._estado["hooks_carga"] = []
+        registro._registrar_hooks_de_carga()
+        registro._registrar_hooks_de_carga()
+
+        assert (
+            nuke._estado["hooks_carga"].count(rutas.aplicar_variables_desde_nodo) == 1
+        )
+
+    def test_el_hook_aplica_las_variables_al_cargar_un_script(self):
+        from SamanTools import registro
+
+        nuke._estado["hooks_carga"] = []
+        registro._registrar_hooks_de_carga()
+        nuke._estado["nodos"] = [_nodo_rutas()]
+
+        nuke._disparar_script_load()
+
+        assert sys.modules["__main__"].PYTHON_COMP == "/vol/COMP"

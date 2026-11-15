@@ -206,6 +206,24 @@ def _instalar_stub_nuke():
     nuke.ask = ask
     nuke.pluginAddPath = pluginAddPath
     nuke.nodePaste = nodePaste
+    # --- hooks de ScriptLoad: los usa rutas.aplicar_variables_desde_nodo ---
+    estado["hooks_carga"] = []
+
+    def addOnScriptLoad(funcion):
+        estado["hooks_carga"].append(funcion)
+
+    def removeOnScriptLoad(funcion):
+        if funcion in estado["hooks_carga"]:
+            estado["hooks_carga"].remove(funcion)
+
+    def disparar_script_load():
+        for funcion in list(estado["hooks_carga"]):
+            funcion()
+
+    nuke.addOnScriptLoad = addOnScriptLoad
+    nuke.removeOnScriptLoad = removeOnScriptLoad
+    nuke._disparar_script_load = disparar_script_load
+
     nuke.menu = menu
     nuke.usingOcio = usingOcio
     nuke.getOcioColorSpaces = getOcioColorSpaces

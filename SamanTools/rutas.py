@@ -242,6 +242,49 @@ def _aplicar_config(cfg):
         return False
 
 
+def aplicar_variables_desde_nodo(nodo=None):
+    """Define PYTHON_TO_VFX / PYTHON_COMP / PYTHON_FROM_VFX desde el nodo Rutas.
+
+    Pensada para `nuke.addOnScriptLoad`: al abrir un comp en un Nuke nuevo,
+    sin tocar el nodo, las expresiones `[python {PYTHON_*}]` de los Reads
+    evaluan con variables indefinidas (y el render de PostageStamps puede
+    crashear). Esto las re-deriva del nodo en cada carga de script.
+
+    Hace SOLO las tres variables, a proposito: `_aplicar_config` ademas
+    re-escanea las herramientas del proyecto, costo que no corresponde
+    pagar en cada apertura de comp.
+
+    Devuelve True si definio las tres variables; False si no hay nodo, el
+    usuario activo no es valido o falta alguna ruta. Nunca lanza: un comp
+    sin Rutas, o con un nodo de una version vieja, no puede romper la
+    apertura del script.
+    """
+    try:
+        if nodo is None:
+            nodos = encontrar_nodos_rutas()
+            if not nodos:
+                return False
+            nodo = nodos[0]
+
+        sufijo = SUFIJOS.get(str(nodo["UsuarioActivo"].value()).strip())
+        if not sufijo:
+            return False
+
+        knobs = nodo.knobs()
+        claves = ("TO_VFX_SERVER_", "comp_SERVER_", "FROM_VFX_SERVER_")
+        valores = []
+        for clave in claves:
+            nombre = clave + sufijo
+            if nombre not in knobs:
+                return False
+            valores.append(str(nodo[nombre].value()))
+
+        __main__.PYTHON_TO_VFX, __main__.PYTHON_COMP, __main__.PYTHON_FROM_VFX = valores
+        return True
+    except Exception:
+        return False
+
+
 def _reescribir_proyecto_en_rutas(rutas_dict, proy):
     """
     Puro: reemplaza el segmento de proyecto en un dict de rutas base.

@@ -273,6 +273,31 @@ def _inyectar_frame_manager():
         pass
 
 
+def _registrar_hooks_de_carga():
+    """Engancha la definicion de PYTHON_* a cada carga de script.
+
+    Vive aca (y no en un init.py de la maquina) para que viaje con el repo y
+    lo tenga todo artista: sin este hook, abrir un comp en un Nuke nuevo deja
+    las expresiones [python {PYTHON_*}] de los Reads sin resolver hasta que
+    alguien toca el nodo Rutas.
+
+    No duplica el hook si se llama dos veces. Devuelve True si quedo
+    enganchado.
+    """
+    from SamanTools import rutas
+
+    try:
+        nuke.removeOnScriptLoad(rutas.aplicar_variables_desde_nodo)
+    except Exception:
+        pass
+
+    try:
+        nuke.addOnScriptLoad(rutas.aplicar_variables_desde_nodo)
+        return True
+    except Exception:
+        return False
+
+
 def instalar():
     """Crea el menú SamanTools en la barra superior de Nuke y registra las herramientas.
 
@@ -282,6 +307,10 @@ def instalar():
     (Actualizar/Desinstalar) se agregan DESPUÉS, sobre este mismo menú, desde
     bootstrap/menu.py. Menos niveles = menos clics.
     """
+    # Antes del menu: `nuke.menu("Nuke")` no existe fuera de modo GUI, y este
+    # hook tambien tiene que quedar enganchado en nuke -t (renders sin GUI).
+    _registrar_hooks_de_carga()
+
     menu = nuke.menu("Nuke").addMenu("SamanTools")
 
     # --- Acerca de: versión y contacto, siempre a la vista ---
