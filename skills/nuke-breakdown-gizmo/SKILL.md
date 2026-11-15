@@ -4,7 +4,7 @@ description: "Trigger: breakdown, frames breakdown, VFX breakdown, generar frame
 license: Apache-2.0
 metadata:
   author: "emanuel"
-  version: "2.0"
+  version: "3.0"
 ---
 
 # Nuke Breakdown Gizmo
@@ -47,7 +47,7 @@ Antes de elegir un knob para storage, verificar el round-trip save/load. Lo medi
 - `nuke.Table_Knob` (ID 63) **no existe** en la API Python: no hay tabla nativa, el `QTableWidget` en el knob 52 es la única vía de UI.
 - `nuke.Bitmask_Knob` **no sobrevive**: serializa como `addUserKnob {4 ... M {...}}` y al recargar vuelve como `Enumeration_Knob` (pierde la multi-selección). Prohibido como storage.
 - `nuke.Array_Knob` crea un array de floats de tamaño fijo: `resize()` no surte efecto y solo serializa el primer valor (`{78 ... n 1}`). Prohibido para N frames.
-- Sí sobreviven: `Int_Knob` (`{3}`), `Enumeration_Knob` (`{4 name l Label M {a b c}}`), `Boolean_Knob` (`{6}`), `Double_Knob` (`{7}`), `BBox_Knob` (`{15}` + `name {0 0 100 50}`), `File_Knob` (`{2}`), `Text_Knob` (`{26}`), `Tab_Knob` (`{20}`).
+- Sí sobreviven: `String_Knob` (`{1}`), `Int_Knob` (`{3}`), `Enumeration_Knob` (`{4 name l Label M {a b c}}`), `Boolean_Knob` (`{6}`), `Double_Knob` (`{7}`), `BBox_Knob` (`{15}` + `name {0 0 100 50}`), `File_Knob` (`{2}`), `Text_Knob` (`{26}`), `Tab_Knob` (`{20}`).
 - Un knob marcado `+INVISIBLE` en el `.gizmo` persiste su valor entre save/load aunque el artista no lo vea (verificado: `F_1 42` → 42).
 
 ## Group Knob Contract (the group the gizmo must contain)
@@ -56,10 +56,11 @@ Storage tipado, todo `+INVISIBLE` y al final del panel:
 
 - `N` (`addUserKnob {3}`, Int): cantidad de filas, 1..`POOL`.
 - `F_<i>` (`{3}`, Int): frame de la fila `i`.
-- `L_<i>` (`{3}`, Int): máscara de capas de la fila `i`. Bits fijos: `brillo=1, muzzle=2, humo=4, impacto=8, sangre=16` (máx. 31).
-- `frame_data` (`addUserKnob {1}`, `+INVISIBLE`): JSON legacy. Se lee SOLO para migrar. Su default en el `.gizmo` es el ejemplo de 3 filas (10/20/30) que shipea el Breakdown de siempre, así un nodo nuevo y un comp viejo recorren el mismo camino de migración.
-- `datos_ver` (`addUserKnob {3}`, `+INVISIBLE`, default 0): marca de "ya migrado" (`VERSION_DATOS = 1`). NO uses el contenido de `frame_data` como marca: si el legacy no entra entero en el pool hay que conservarlo como respaldo sin volver a migrar.
-- Defaults tipados en CERO (`N`, `F_<i>`, `L_<i>` sin línea de valor). Si `N` shipea `3`, un comp donde el artista vació la tabla revive 3 filas fantasma.
+- `L_<i>` (`{3}`, Int): máscara de tildes de la fila `i`. El bit de cada columna es `1 << (slot - 1)` (hasta 8 columnas, máscara máxima 255).
+- `TXT` (`addUserKnob {1}`, String, `+INVISIBLE`): valores de las columnas de texto y número, `{fila: {slot: valor}}` en JSON. **Tiene que ser tipo 1 (String)**: declarado como `{3}` Nuke lo crea Int y `setValue` revienta con `expecting a float, str found`. Se escribe al confirmar una celda (temporizador de 350 ms), nunca por tecla.
+- `frame_data` (`addUserKnob {1}`, `+INVISIBLE`): JSON legacy. Se lee SOLO para migrar. Default vacío: un nodo nuevo no migra nada y conserva las columnas de ejemplo.
+- `datos_ver` (`addUserKnob {3}`, `+INVISIBLE`, **sin** línea de valor): marca de versión (`VERSION_DATOS = 2`). Si el `.gizmo` shipea `datos_ver 2`, un comp del gizmo original arranca creyéndose migrado y sus filas nunca se vuelcan. Nunca le pongas default.
+- Defaults de fila SÍ (`N 3`, `F_1 10`, `F_2 20`, `F_3 30`, `L_2 1`): así un nodo nuevo muestra filas de ejemplo. Un comp viejo con la tabla vacía lo normaliza la migración (que reescribe las filas aunque vengan vacías), no la ausencia de defaults.
 - `POOL = 32` en `breakdown_datos.py` y 32 pares `F_<i>`/`L_<i>` declarados en el `.gizmo`. Si cambia uno, cambia el otro (hay test).
 
 UI visible:
@@ -69,9 +70,25 @@ UI visible:
 - `Desfase` (addUserKnob type 3, Int): shifts ALL generated frames, wired into each FrameHold via `firstFrame` expression `"<frame> + parent.Desfase"`.
 - `VerTexto` (addUserKnob type 6 boolean, default true): toggles the Text2 overlays via `disable "{{!parent.VerTexto}}"`.
 
+## Pestaña Columnas (columnas configurables)
+
+Segunda pestaña del panel, nativa, sin diálogos. Particiona los knobs que vienen después, así que se declara **al final** del bloque de knobs:
+
+- `Cantidad` (`addUserKnob {3}`, Int, `R 0 8`): cuántas columnas tiene la tabla además de `Frame`.
+- `Col_<i>_nombre` (`{1}`, String) y `Col_<i>_tipo` (`{4 ... M {Tilde Texto Numero}}`) para `i` en 1..8.
+- `Aplicar_columnas` (type 22): llama a `frame_manager.aplicar_columnas(nodo)`, que relee la configuración y reconstruye la tabla si el panel está abierto. Toda acción de la tabla también relee la configuración.
+- Defaults del `.gizmo`: `Cantidad 2`, columna 1 `Muzzle`/`Tilde`, columna 2 `Nota`/`Texto` (así se ven los dos tipos de entrada).
+
+Reglas de las columnas:
+
+- `Frame` es fija, siempre la primera: no se configura ni se renombra.
+- Un cambio de tipo **no borra datos**: el valor queda oculto en su storage (máscara para tilde, `TXT` para texto/número) y reaparece si se vuelve al tipo anterior. No convertir valores: una conversión `tilde → texto` inventaría contenido.
+- Celda de texto/número: `escribir_celda` reescribe `TXT` entero pero sólo cuando se confirma la celda, y omite los vacíos. Un número inválido revierte la celda al valor guardado.
+- Tildes: `escribir_celda` toca únicamente `L_<i>`.
+
 ## Internal Node Graph and generation
 
-The graph is: `Input1 -> Dot1 -> (per fila: FrameHold_Auto_N + Text_Auto_N) -> ContactSheetAuto -> Crop1 -> Reformat2 -> Output1`. El `.gizmo` shipea 3 ramas de ejemplo (frames 10/20/30, capas 0/1/2) igual que el default de `N`, `F_<i>`, `L_<i>`.
+The graph is: `Input1 -> Dot1 -> (per fila: FrameHold_Auto_N + Text_Auto_N) -> ContactSheetAuto -> Crop1 -> Reformat2 -> Output1`. El `.gizmo` shipea 3 ramas de ejemplo (frames 10/20/30) igual que el default de `N` y `F_<i>`; `L_2 1` marca la columna 1 del ejemplo. Las columnas **no** intervienen en la generación: son anotación.
 
 `generar()` **reconcilia**, no reconstruye:
 
@@ -111,7 +128,8 @@ Reglas duras de la generación:
 - Los dos módulos viajan juntos a `~/.nuke/SamanTools/`. Si `breakdown_datos.py` no está, `frame_manager` falla al importarse y el panel no aparece.
 - PyCustom knob type 52 evaluates `__import__('frame_manager').FrameManagerKnob()` alive — do not depend on `__main__`.
 - Nuke keyword `tags=` is NOT supported in `Menu.addCommand` on this version — never use it.
-- Tests de la lógica de datos: `python -m pytest tests/test_breakdown_datos.py tests/test_breakdown_knobs.py` (no requieren Nuke ni Qt).
+- Tests de la lógica de datos: `python -m pytest tests/test_breakdown_datos.py tests/test_breakdown_knobs.py tests/test_breakdown_columnas.py` (no requieren Nuke ni Qt).
+- Ojo con los tests de `.gizmo` basados en regex: todas las líneas van indentadas con un espacio, así que `^nombre\s+` nunca matchea y el test pasa por la razón equivocada. Usá `^\s*nombre\s+` (pasó de verdad con un test que decía verificar los defaults).
 - `tests/test_breakdown_knobs.py` tiene un test que compara el pool declarado en el `.gizmo` con `POOL`: si agregás o quitás filas, actualizá los dos lados o la suite falla.
 - Verificación headless ejecutada y esperada en Nuke 17.1v3: crear nodo, migrar comps viejos (vacío, 3 filas, 40 filas), generar con 2/6/32 filas, `resMult` preservado, un `Merge1` del comp del artista intacto y round-trip save/load sin re-migrar.
 
@@ -125,6 +143,7 @@ Return: the `.gizmo` path, the `breakdown_datos.py` + `frame_manager.py` paths, 
 - `SamanTools/frame_manager.py` — widget Qt + generación del grafo.
 - `SamanTools/breakdown_datos.py` — storage tipado, máscara de capas, reconciliación y migración legacy.
 - `tests/test_breakdown_datos.py` — la especificación ejecutable de la lógica de datos.
+- `tests/test_breakdown_columnas.py` — modelo de columnas, valores por tipo y las cuatro ramas de migración a `datos_ver = 2`.
 - `tests/test_breakdown_knobs.py` — contrato de knobs: pool vs gizmo, defaults ausentes, escritura por fila, limpieza acotada, migración con respaldo.
 - `/Volumes/wupm/2026/HTLR/.opencode/skills/nuke-gallery-gizmo/SKILL.md` — sibling skill; same project-level skill conventions.
 - `/Users/emanuel/.nuke/SamanTools/` — bootstrap (registro.py `_inyectar_frame_manager`) and TAB registration (proyecto.py).

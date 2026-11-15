@@ -56,23 +56,29 @@ _NODOS_BASE = ("Input1", "Dot1", "ContactSheetAuto", "Crop1", "Reformat2", "Outp
 #: Separacion horizontal entre ramas generadas, en el DAG.
 _PASO_X = 180
 
+#: Milisegundos de espera antes de volcar una celda de texto/numero.
+_ESPERA_TEXTOS_MS = 350
+
 #: Color de tile del ContactSheetAuto.
 _TILE_COLOR = 0xFF69F7FF
 
 
 class FrameManagerTable(QtWidgets.QTableWidget):
-    """Tabla editable de frames y capas, todo el componente en si mismo."""
-
-    KEYS = list(datos.CAPAS)
-    CABECERAS = ["Frame"] + [capa.capitalize() for capa in datos.CAPAS]
+    """Tabla editable de frames y columnas configurables (tilde/texto/numero)."""
 
     def __init__(self, node):
         super(FrameManagerTable, self).__init__()
         self.node = node
+        self.columnas = datos.leer_columnas(node)
         _INSTANCES[node.name()] = self
 
-        self.setColumnCount(len(self.CABECERAS))
-        self.setHorizontalHeaderLabels(self.CABECERAS)
+        # Las celdas de texto y numero se escriben al confirmar, no en cada
+        # tecla: un unico temporizador coalesce la escritura del knob TXT.
+        self._timer_textos = QtCore.QTimer(self)
+        self._timer_textos.setSingleShot(True)
+        self._timer_textos.setInterval(_ESPERA_TEXTOS_MS)
+        self._timer_textos.timeout.connect(self._volcar_textos)
+
         self.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
@@ -108,8 +114,8 @@ class FrameManagerTable(QtWidgets.QTableWidget):
         try:
             self.insertRow(row)
             self._escribir_celda_frame(row, frame)
-            for col_idx in range(1, len(self.KEYS) + 1):
-                self.setItem(row, col_idx, self._celda_check(_UNCHECK))
+            for slot, columna in enumerate(self.columnas, start=1):
+                self.setItem(row, slot, self._item_para(columna["tipo"], None))
         finally:
             self.blockSignals(False)
 
@@ -157,6 +163,20 @@ class FrameManagerTable(QtWidgets.QTableWidget):
         chk.setCheckState(estado)
         return chk
 
+    def _construir_columnas(self):
+        """Arma las cabeceras desde la configuracion de la pestana Columnas."""
+        cabeceras = ["Frame"] + [columna["nombre"] for columna in self.columnas]
+        self.setColumnCount(len(cabeceras))
+        self.setHorizontalHeaderLabels(cabeceras)
+
+    def _item_para(self, tipo, valor):
+        """Item de tabla segun el tipo de columna."""
+        if tipo == "tilde":
+            return self._celda_check(_CHECK if valor else _UNCHECK)
+        if tipo == "numero":
+            return QtWidgets.QTableWidgetItem(_formato_numero(valor))
+        return QtWidgets.QTableWidgetItem("" if valor is None else str(valor))
+
     def _escribir_celda_frame(self, row, frame):
         item = QtWidgets.QTableWidgetItem(str(frame))
         item.setTextAlignment(_ALINEACION_CENTRO)
@@ -174,15 +194,34 @@ class FrameManagerTable(QtWidgets.QTableWidget):
             self.blockSignals(False)
 
     def _fila(self, row):
-        """Una fila de la tabla como `{"frame": int, "capas": mascara}`."""
+        """Una fila como `{"frame": int, "capas": mascara}` (solo tildes)."""
         item_frame = self.item(row, 0)
         frame = datos.normalizar_frame(item_frame.text()) if item_frame else 0
 
-        estados = {}
-        for col_idx, capa in enumerate(datos.CAPAS, start=1):
-            celda = self.item(row, col_idx)
-            estados[capa] = celda is not None and celda.checkState() == _CHECK
-        return {"frame": frame, "capas": datos.codificar_capas(estados)}
+        mascara = 0
+        for slot, columna in enumerate(self.columnas, start=1):
+            if columna["tipo"] != "tilde":
+                continue
+            celda = self.item(row, slot)
+            if celda is not None and celda.checkState() == _CHECK:
+                mascara |= datos.bit_de_columna(slot)
+        return {"frame": frame, "capas": mascara}
+
+    def _textos(self):
+        """`{fila: {slot: valor}}` con las celdas de texto y numero."""
+        textos = {}
+        for row in range(self.rowCount()):
+            for slot, columna in enumerate(self.columnas, start=1):
+                if columna["tipo"] == "tilde":
+                    continue
+                celda = self.item(row, slot)
+                valor = celda.text().strip() if celda is not None else ""
+                if valor:
+                    textos.setdefault(row + 1, {})[slot] = valor
+        return textos
+
+    def _texto_guardado(self, row, slot):
+        return (datos.leer_textos(self.node).get(row + 1) or {}).get(slot, "")
 
     # ------------------------------------------------------- persistencia
 
@@ -193,13 +232,19 @@ class FrameManagerTable(QtWidgets.QTableWidget):
             migrado = datos.migrar_legacy(self.node)
             if migrado:
                 self._avisar_excedente()
+            # La migracion pudo cambiar la configuracion: se relee siempre.
+            self.columnas = datos.leer_columnas(self.node)
+            self._construir_columnas()
+
+            textos = datos.leer_textos(self.node)
             for row_idx, fila in enumerate(datos.leer_filas(self.node)):
                 self.insertRow(row_idx)
                 self._escribir_celda_frame(row_idx, fila["frame"])
-                estados = datos.decodificar_capas(fila["capas"])
-                for col_idx, capa in enumerate(datos.CAPAS, start=1):
-                    estado = _CHECK if estados[capa] else _UNCHECK
-                    self.setItem(row_idx, col_idx, self._celda_check(estado))
+                for slot, columna in enumerate(self.columnas, start=1):
+                    valor = datos.valor_celda(
+                        fila, textos, row_idx + 1, slot, columna["tipo"]
+                    )
+                    self.setItem(row_idx, slot, self._item_para(columna["tipo"], valor))
         finally:
             self.blockSignals(False)
 
@@ -217,16 +262,65 @@ class FrameManagerTable(QtWidgets.QTableWidget):
 
     def guardar_filas(self):
         datos.escribir_filas(self.node, [self._fila(r) for r in range(self.rowCount())])
+        self._volcar_textos()
+
+    def _volcar_textos(self):
+        """Escribe `TXT` una sola vez, revirtiendo numeros invalidos (S18)."""
+        revertir = []
+        for row in range(self.rowCount()):
+            for slot, columna in enumerate(self.columnas, start=1):
+                if columna["tipo"] != "numero":
+                    continue
+                celda = self.item(row, slot)
+                texto = celda.text().strip() if celda is not None else ""
+                if texto and not _es_numero(texto):
+                    revertir.append((celda, self._texto_guardado(row, slot)))
+        if revertir:
+            self.blockSignals(True)
+            try:
+                for celda, valor in revertir:
+                    celda.setText(_formato_numero(valor))
+            finally:
+                self.blockSignals(False)
+        datos.escribir_textos(self.node, self._textos())
+
+    def aplicar_columnas(self):
+        """Relee la pestana Columnas y reconstruye la tabla."""
+        self._timer_textos.stop()
+        self.cargar_datos()
+
+    def hideEvent(self, event):
+        # Ultima red: lo tipeado se confirma aunque el panel se cierre antes
+        # de que venza el temporizador.
+        self._timer_textos.stop()
+        self._volcar_textos()
+        super(FrameManagerTable, self).hideEvent(event)
 
     def guardar_fila(self, row):
         if 0 <= row < self.rowCount():
             datos.escribir_fila(self.node, row + 1, self._fila(row))
 
     def on_cell_changed(self, row, col):
-        self.guardar_fila(row)
-        # Live update no destructivo: solo si se modifica la columna 'Frame'.
         if col == 0:
+            self.guardar_fila(row)
+            # Live update no destructivo: solo el FrameHold de esa fila.
             self.actualizar_frame_en_vivo(row)
+            return
+        if not (1 <= col <= len(self.columnas)):
+            return
+
+        tipo = self.columnas[col - 1]["tipo"]
+        if tipo == "tilde":
+            celda = self.item(row, col)
+            datos.escribir_celda(
+                self.node,
+                row + 1,
+                col,
+                celda is not None and celda.checkState() == _CHECK,
+            )
+            return
+        # Texto y numero: escritura demorada, un solo knob para toda la tabla.
+        self._timer_textos.start()
 
     def actualizar_frame_en_vivo(self, row):
         """Cambia la expresion firstFrame solo del FrameHold de esa fila.
@@ -267,6 +361,13 @@ class FrameManagerKnob(object):
 
 
 # ------------------------------------------------- generacion del DAG
+
+
+def aplicar_columnas(nodo):
+    """Reconstruye la tabla si el panel esta abierto (boton del grupo)."""
+    tabla = FrameManagerTable.instancia(nodo)
+    if tabla is not None:
+        tabla.aplicar_columnas()
 
 
 def sincronizar_grafo(nodo):
@@ -394,6 +495,26 @@ def _sincronizar_rama(indice, fila, dot, xpos, ypos):
     _expresion_si_cambia(txt["disable"], "!parent.VerTexto")
     if txt.input(0) is None or txt.input(0).name() != fh.name():
         txt.setInput(0, fh)
+
+
+def _es_numero(texto):
+    try:
+        float(texto)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _formato_numero(valor):
+    """Presenta un numero sin `.0` sobrante y sin romper valores raros."""
+    texto = "" if valor is None else str(valor).strip()
+    if texto == "":
+        return ""
+    try:
+        numero = float(texto)
+    except (TypeError, ValueError):
+        return texto
+    return str(int(numero)) if numero == int(numero) else repr(numero)
 
 
 def _padre(nodo):
