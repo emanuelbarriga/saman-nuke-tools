@@ -10,6 +10,7 @@ Group {
  addUserKnob {20 User l Breakdown}
  addUserKnob {1 frame_data l "" +STARTLINE +INVISIBLE}
  frame_data "\[\{\"frame\": 10, \"brillo\": false, \"muzzle\": false, \"humo\": false, \"impacto\": false, \"sangre\": false\}, \{\"frame\": 20, \"brillo\": true, \"muzzle\": false, \"humo\": false, \"impacto\": false, \"sangre\": false\}, \{\"frame\": 30, \"brillo\": false, \"muzzle\": true, \"humo\": false, \"impacto\": false, \"sangre\": false\}]"
+ addUserKnob {3 datos_ver l "Version de datos" +INVISIBLE}
  addUserKnob {26 sep l "" +STARTLINE}
  addUserKnob {52 table_ui l "" -STARTLINE T __import__('frame_manager').FrameManagerKnob()}
  addUserKnob {22 Agregar l "+ Agregar" T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.agregar()" +STARTLINE}
@@ -22,6 +23,72 @@ Group {
  addUserKnob {26 Espacio_1 l "  " -STARTLINE T "    "}
  addUserKnob {6 VerTexto l "Ver Overlay Texto" -STARTLINE}
  VerTexto true
+ addUserKnob {26 Sep_datos l "" +STARTLINE}
+ addUserKnob {3 N l "Cantidad de filas" +INVISIBLE}
+ addUserKnob {3 F_1 l "Frame 1" +INVISIBLE}
+ addUserKnob {3 L_1 l "Capas 1" +INVISIBLE}
+ addUserKnob {3 F_2 l "Frame 2" +INVISIBLE}
+ addUserKnob {3 L_2 l "Capas 2" +INVISIBLE}
+ addUserKnob {3 F_3 l "Frame 3" +INVISIBLE}
+ addUserKnob {3 L_3 l "Capas 3" +INVISIBLE}
+ addUserKnob {3 F_4 l "Frame 4" +INVISIBLE}
+ addUserKnob {3 L_4 l "Capas 4" +INVISIBLE}
+ addUserKnob {3 F_5 l "Frame 5" +INVISIBLE}
+ addUserKnob {3 L_5 l "Capas 5" +INVISIBLE}
+ addUserKnob {3 F_6 l "Frame 6" +INVISIBLE}
+ addUserKnob {3 L_6 l "Capas 6" +INVISIBLE}
+ addUserKnob {3 F_7 l "Frame 7" +INVISIBLE}
+ addUserKnob {3 L_7 l "Capas 7" +INVISIBLE}
+ addUserKnob {3 F_8 l "Frame 8" +INVISIBLE}
+ addUserKnob {3 L_8 l "Capas 8" +INVISIBLE}
+ addUserKnob {3 F_9 l "Frame 9" +INVISIBLE}
+ addUserKnob {3 L_9 l "Capas 9" +INVISIBLE}
+ addUserKnob {3 F_10 l "Frame 10" +INVISIBLE}
+ addUserKnob {3 L_10 l "Capas 10" +INVISIBLE}
+ addUserKnob {3 F_11 l "Frame 11" +INVISIBLE}
+ addUserKnob {3 L_11 l "Capas 11" +INVISIBLE}
+ addUserKnob {3 F_12 l "Frame 12" +INVISIBLE}
+ addUserKnob {3 L_12 l "Capas 12" +INVISIBLE}
+ addUserKnob {3 F_13 l "Frame 13" +INVISIBLE}
+ addUserKnob {3 L_13 l "Capas 13" +INVISIBLE}
+ addUserKnob {3 F_14 l "Frame 14" +INVISIBLE}
+ addUserKnob {3 L_14 l "Capas 14" +INVISIBLE}
+ addUserKnob {3 F_15 l "Frame 15" +INVISIBLE}
+ addUserKnob {3 L_15 l "Capas 15" +INVISIBLE}
+ addUserKnob {3 F_16 l "Frame 16" +INVISIBLE}
+ addUserKnob {3 L_16 l "Capas 16" +INVISIBLE}
+ addUserKnob {3 F_17 l "Frame 17" +INVISIBLE}
+ addUserKnob {3 L_17 l "Capas 17" +INVISIBLE}
+ addUserKnob {3 F_18 l "Frame 18" +INVISIBLE}
+ addUserKnob {3 L_18 l "Capas 18" +INVISIBLE}
+ addUserKnob {3 F_19 l "Frame 19" +INVISIBLE}
+ addUserKnob {3 L_19 l "Capas 19" +INVISIBLE}
+ addUserKnob {3 F_20 l "Frame 20" +INVISIBLE}
+ addUserKnob {3 L_20 l "Capas 20" +INVISIBLE}
+ addUserKnob {3 F_21 l "Frame 21" +INVISIBLE}
+ addUserKnob {3 L_21 l "Capas 21" +INVISIBLE}
+ addUserKnob {3 F_22 l "Frame 22" +INVISIBLE}
+ addUserKnob {3 L_22 l "Capas 22" +INVISIBLE}
+ addUserKnob {3 F_23 l "Frame 23" +INVISIBLE}
+ addUserKnob {3 L_23 l "Capas 23" +INVISIBLE}
+ addUserKnob {3 F_24 l "Frame 24" +INVISIBLE}
+ addUserKnob {3 L_24 l "Capas 24" +INVISIBLE}
+ addUserKnob {3 F_25 l "Frame 25" +INVISIBLE}
+ addUserKnob {3 L_25 l "Capas 25" +INVISIBLE}
+ addUserKnob {3 F_26 l "Frame 26" +INVISIBLE}
+ addUserKnob {3 L_26 l "Capas 26" +INVISIBLE}
+ addUserKnob {3 F_27 l "Frame 27" +INVISIBLE}
+ addUserKnob {3 L_27 l "Capas 27" +INVISIBLE}
+ addUserKnob {3 F_28 l "Frame 28" +INVISIBLE}
+ addUserKnob {3 L_28 l "Capas 28" +INVISIBLE}
+ addUserKnob {3 F_29 l "Frame 29" +INVISIBLE}
+ addUserKnob {3 L_29 l "Capas 29" +INVISIBLE}
+ addUserKnob {3 F_30 l "Frame 30" +INVISIBLE}
+ addUserKnob {3 L_30 l "Capas 30" +INVISIBLE}
+ addUserKnob {3 F_31 l "Frame 31" +INVISIBLE}
+ addUserKnob {3 L_31 l "Capas 31" +INVISIBLE}
+ addUserKnob {3 F_32 l "Frame 32" +INVISIBLE}
+ addUserKnob {3 L_32 l "Capas 32" +INVISIBLE}
 }
  Input {
   inputs 0
@@ -146,8 +213,8 @@ push $N8fa63a00
   inputs 3
   width {{input.width*columns*resMult}}
   height {{input.height*rows*resMult}}
-  rows {{"\[expr \{int( (sqrt( \[numvalue inputs] ) ) )\} ] * \[expr \{int( ceil ( (\[numvalue inputs] /(sqrt( \[numvalue inputs] ) ) )) )\} ] < \[numvalue inputs] ? \[expr \{int( (sqrt( \[numvalue inputs] ) ) )\} ] +1 : \[expr \{int( (sqrt( \[numvalue inputs] ) ) )\} ]"}}
-  columns {{"\[expr \{int( ceil ( (\[numvalue inputs] /(sqrt( \[numvalue inputs] )) )) )\} ]"}}
+  rows 2
+  columns 2
   center true
   roworder TopBottom
   name ContactSheetAuto
