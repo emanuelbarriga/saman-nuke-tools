@@ -310,10 +310,6 @@ def instalar():
     # Lazy (string): PySide solo se importa al hacer clic en GUI, para no
     # romper la carga del menú si PySide no está o no hay GUI.
     sub_paneles = menu.addMenu("Paneles (En construcción)")
-    sub_paneles.addCommand(
-        "Panel de Rutas",
-        "from SamanTools import panel_rutas\npanel_rutas.abrir_panel()",
-    )
     # Atajo Ctrl+Alt+C: abre la pestaña de comentarios desde cualquier lado.
     sub_paneles.addCommand(
         "Panel de Comentarios",
