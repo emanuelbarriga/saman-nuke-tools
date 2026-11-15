@@ -262,13 +262,14 @@ def test_migrar_legacy_es_idempotente():
     assert datos.leer_filas(nodo) == [{"frame": 10, "capas": 0}]
 
 
-def test_migrar_legacy_no_toca_el_pool_si_el_json_esta_vacio():
+def test_migrar_legacy_de_un_comp_vaciado_normaliza_a_cero_filas():
+    """Un comp viejo con la tabla vacía no revive filas de ejemplo (S17)."""
     nodo = _nodo_vacio()
     datos.escribir_filas(nodo, [{"frame": 7, "capas": 5}])
     nodo[datos.KNOB_LEGACY].setValue("[]")
 
-    assert datos.migrar_legacy(nodo) is False
-    assert datos.leer_filas(nodo) == [{"frame": 7, "capas": 5}]
+    assert datos.migrar_legacy(nodo) is True
+    assert datos.leer_filas(nodo) == []
 
 
 def test_migrar_legacy_versionado_no_escribe_ningun_knob():

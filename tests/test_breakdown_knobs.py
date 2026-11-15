@@ -74,14 +74,37 @@ def test_el_pool_del_modulo_coincide_con_el_del_gizmo():
     assert "addUserKnob {3 N " in gizmo
 
 
-def test_el_gizmo_declara_marcador_de_version_y_no_asigna_defaults_tipados():
-    """S4/S8: N, F_1 y datos_ver nacen sin valores serializados."""
+def test_el_gizmo_declara_el_marcador_de_version_sin_default():
+    """S17: `datos_ver` no puede tener valor serializado.
+
+    Si el `.gizmo` shipea `datos_ver 2`, un comp del gizmo original arranca
+    creyendose migrado y sus filas nunca se vuelcan. En cambio `N`/`F_<i>` si
+    llevan defaults: asi un nodo nuevo muestra las filas de ejemplo (un comp
+    viejo con la tabla vacia lo normaliza la migracion, no la ausencia de
+    defaults).
+
+    El regex tolera la indentacion porque en el `.gizmo` todas las lineas
+    van con un espacio adelante.
+    """
     with open(GIZMO) as archivo:
         gizmo = archivo.read()
 
     assert "addUserKnob {3 datos_ver " in gizmo
-    for nombre in ("N", "F_1", "datos_ver"):
-        assert re.search(r"^%s\s+" % re.escape(nombre), gizmo, re.M) is None
+    assert re.search(r"^\s*datos_ver\s+\S", gizmo, re.M) is None
+
+
+def test_el_gizmo_declara_la_pestana_columnas_y_sus_knobs():
+    """S13/S15: pestana Columnas, 8 slots de nombre/tipo y el knob TXT."""
+    with open(GIZMO) as archivo:
+        gizmo = archivo.read()
+
+    assert "addUserKnob {20 Columnas l Columnas}" in gizmo
+    assert "addUserKnob {3 Cantidad " in gizmo
+    assert "addUserKnob {1 TXT " in gizmo
+    for slot in range(1, datos.MAX_COLUMNAS + 1):
+        assert "addUserKnob {1 Col_%d_nombre " % slot in gizmo
+        assert "addUserKnob {4 Col_%d_tipo " % slot in gizmo
+    assert "aplicar_columnas" in gizmo
 
 
 def test_escribir_filas_nunca_pide_knobs_fuera_del_pool():
