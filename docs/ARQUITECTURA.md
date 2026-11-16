@@ -12,8 +12,8 @@ primero.
 
 Toolkit global de Nuke para el estudio **Samán Estudio**:
 
-- **Nodos globales**: Breakdown (widget de frames), Review (comparación), Rutas (rutas VFX dinámicas).
-- **Menú SamanTools** en la barra superior: Acerca de / Actualizar directos, submenús Tools / Paneles (En construcción) / Salud y Desinstalar (mantenimiento).
+- **Nodos globales**: Breakdown (widget de frames), Review (comparación), Rutas (rutas VFX dinámicas), fSpy (cámara calibrada desde una foto).
+- **Menú SamanTools** en la barra superior: Acerca de / Breakdown / fSpy / Actualizar directos, submenús Tools / Paneles (En construcción, solo Comentarios) / Salud y Desinstalar (mantenimiento).
 - Multiplataforma: macOS, Windows, Linux.
 - Fuente de todo: repo público `emanuelbarriga/saman-nuke-tools` en GitHub.
 
@@ -38,9 +38,12 @@ Toolkit global de Nuke para el estudio **Samán Estudio**:
 |---|---|
 | `bootstrap/menu.py` | El `menu.py` del artista (copiado a `~/.nuke`). Mantenimiento: **auto-update con `git pull --ff-only` en cada arranque** (push automático), alerta de update, botones Actualizar/Desinstalar, auto-sincronización del bootstrap mismo. **Nunca depende del código del repo** (funciona aunque el repo esté roto). |
 | `menu.py` (raíz) | Carga real: `sys.path`, `pluginAddPath`, `registro.instalar()`. Se ejecuta vía `exec` desde el bootstrap. |
-| `SamanTools/registro.py` | Construye el menú SamanTools (Acerca / Tools / Paneles / Salud) + buscador TAB (solo Insertar Nodo: Rutas/Review/Breakdown). |
+| `SamanTools/registro.py` | Construye el menú SamanTools (Acerca / Breakdown / fSpy / Tools / Paneles / Salud) + buscador TAB (Rutas/Review/Breakdown/fSpy). En el arranque, `_componente_disponible` determina si puede consumir `rutas_global.py` para aplicar la configuración global, sin exponer una UI. |
 | `SamanTools/proyecto.py` | Carga dinámica de galerías/gizmos del proyecto (`{PYTHON_COMP}/Scripts`). |
 | `SamanTools/rutas.py` | Lógica del nodo ÚNICO Rutas (`crear_o_reutilizar` — menú y TAB usan la misma vía, máximo 1 por proyecto, `_enfocar_nodo` navega al nodo existente + abre propiedades), recomendación de usuario según SO, visibilidad por usuario activo, y ahora dividido en `aplicar_proyecto` (cambiar proyecto / variables) + `refrescar_fuentes` (recarga de Reads a demanda, `forzar=True`) — el botón del nodo ofrece "Cambiar Proyecto" y "Refrescar Fuentes". |
+| `SamanTools/rutas_global.py` | Persistencia de la configuración global de rutas en `~/.config/saman/rutas_global.json` y aplicación de `PYTHON_*`; lo consume el hook de arranque de `registro.py`, no es un panel de UI. |
+| `SamanTools/fspy_core.py` | Lector de proyectos `.fspy` (formato oficial) + matemática de cámara: focal relativa, FOV, matriz 4x4, escala, y extracción de la imagen embebida. Puro stdlib, NO importa nuke; testeado en `tests/test_fspy_core.py` con un `.fspy` sintético. |
+| `SamanTools/fspy.py` | Panel `fSpy` (NoOp): lee el `.fspy`, muestra la calibración y crea `fSpy_cam` (Camera con focal/aperturas/matriz exacta), `fSpy_cube` (referencia en el origen) y `fSpy_read` con la **foto embebida** que el `.fspy` lleva adentro, extraída a `~/.nuke/fspy_cache` y nombrada por contenido (sha1). Botón «Abrir en fSpy…» lanza la app con el mismo archivo para corregir y volver a leer. Los generados van JUNTO al panel, en su contexto. Usa el icono `SamanTools/fSpy.svg` en los menús SamanTools y Nodes. |
 | `SamanTools/entorno.py` | Detección de SO, ruta base por SO (`/Volumes/wupm/2026`, `L:/2026`, `/mnt/wupm/2026`) y estado de la unidad `wupm` con timeout (mount muerto no cuelga Nuke). Puro stdlib, NO importa nuke. |
 | `SamanTools/limpiar.py` | Sanitizador de texto .nk/.gizmo: elimina knobs volatiles de maquina (mov64_prraw_plugin, render_settings_schema, monitorOutNDISenderName). Puro stdlib, NO importa nuke. Se usa al insertar nodos, al generar galerias y desde el menu (Limpiar knobs volatiles). |
 | `instalar_script_editor.py` | Instalador desde cero (Script Editor). Idempotente: detecta 3 estados. |
@@ -92,7 +95,7 @@ Estos bugs se corrigieron; **no reintroducirlos**:
 
 Ver `VERSIONING.md`. Resumen:
 
-- Fuente única: `SamanTools/__init__.py` → `__version__` (SemVer).
+- Fuente única: `SamanTools/__init__.py` → `__version__ = "2.0.0"` (SemVer).
 - Reglas: PATCH = fix; MINOR = función compatible; MAJOR = incompatibilidad.
 - Release: bump `__version__` → commit → `git tag v<version>` → `git push origin main --tags`.
 - El tag debe coincidir con `__version__` (lo verifica `verificar_salud.py`).
@@ -101,7 +104,7 @@ Ver `VERSIONING.md`. Resumen:
 
 ## 6. Calidad y cobertura
 
-Suite pytest en `tests/` (72 tests, PASS) + stub de `nuke` en `conftest.py`.
+Suite pytest en `tests/` (745 tests PASS, verificados con `python3.13` + PySide6 6.12) + stub de `nuke` en `conftest.py`.
 
 La cobertura exacta NO se declara a mano: `verificar_salud.py` la reporta real en
 cada corrida (módulos puros `entorno.py`/`rutas.py`/`cambiar_colorspace.py`/
@@ -109,6 +112,10 @@ cada corrida (módulos puros `entorno.py`/`rutas.py`/`cambiar_colorspace.py`/
 aceptable — UI Nuke sin lógica pura testeable).
 
 **Regla**: no falsear cobertura. La skill reporta el número real.
+
+### Distribución verificable
+
+`python3 -m SamanTools.build_dist` genera `dist/samantools/` desde la fuente única. El resultado incluye `MANIFIESTO.md`, con los componentes, assets y tests asociados. `dist/` está ignorado en `.gitignore`: es un artefacto generado, no una fuente editable.
 
 ### Detector del nodo Rutas (importante para futuros cambios de estructura)
 

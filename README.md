@@ -1,7 +1,7 @@
 # saman-nuke-tools
 
 Herramientas globales de Nuke para el estudio (multiplataforma: macOS, Windows, Linux).
-Incluye los nodos **Breakdown**, **Review**, **Rutas** y el menú **SamanTools** (ChangeColorspace).
+Versión actual: **2.0.0**. Incluye los nodos **Breakdown**, **Review**, **Rutas**, **fSpy** y el menú **SamanTools** (ChangeColorspace).
 
 > **Antes de tocar el código**: lee [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) —
 > decisiones de diseño, flujo de actualización, errores históricos y reglas operativas.
@@ -18,6 +18,9 @@ saman-nuke-tools/
 │   ├── registro.py          # registra menú superior + buscador TAB
 │   ├── proyecto.py          # carga dinámica de galerías del proyecto
 │   ├── rutas.py             # variables PYTHON_COMP/FROM/TO
+│   ├── rutas_global.py      # config global aplicada por el hook de arranque
+│   ├── fspy.py / fspy_core.py
+│   ├── fSpy.svg             # icono de fSpy
 │   ├── cambiar_colorspace.py
 │   ├── frame_manager.py     # widget Qt del nodo Breakdown (tabla de frames)
 │   ├── nodos/
@@ -143,6 +146,16 @@ cd saman-nuke-tools && install.bat
 
 > Actualizar = `git pull && ./install.sh` (o `.bat`).
 
+## Distribución verificable
+
+La distribución se genera desde la fuente única con:
+
+```bash
+python3 -m SamanTools.build_dist
+```
+
+El resultado queda en `dist/samantools/` e incluye `MANIFIESTO.md` con los componentes y sus tests asociados. `dist/` está en `.gitignore`: es un artefacto generado y no se edita a mano.
+
 ## Skills del estudio (versionadas aquí)
 
 Las skills de OpenCode/Claude usadas por el estudio viven versionadas en
@@ -162,9 +175,10 @@ Las skills de OpenCode/Claude usadas por el estudio viven versionadas en
 ## Cómo se verifica
 
 Tras reiniciar Nuke:
-- Aparece el menú **SamanTools** organizado por categorías: **Acerca de** y **Actualizar** directos, con submenús **Tools** (Cambiar ColorSpace, Breakdown), **Paneles** (Panel de Rutas, Panel de Comentarios con `Ctrl+Alt+C`), **Salud** (Diagnóstico de Red, Verificar Salud, Escanear Scripts, Limpiar knobs) y **Desinstalar** al final (mantenimiento).
-- El **Panel de Rutas** es la config global de rutas (`~/.config/saman/rutas_global.json`); aplica `PYTHON_TO_VFX/COMP/FROM_VFX` al arrancar. El nodo Rutas legacy sigue funcionando por compatibilidad (coexistencia), y el panel permite **Importar desde nodo** para migrar. El día del reemplazo solo se elimina el adaptador del nodo (ver `rutas_global.py`).
-- En el buscador (TAB), escribiendo **breakdown**, **review** o **rutas** se crean los nodos.
+- Aparece el menú **SamanTools** con **Acerca de**, **Breakdown**, **fSpy** y **Actualizar** directos; los submenús son **Tools** (Cambiar ColorSpace), **Paneles (En construcción)** (Panel de Comentarios con `Ctrl+Alt+C`) y **Salud** (Diagnóstico de Red, Verificar Salud, Escanear Scripts, Limpiar knobs). **Desinstalar** queda al final (mantenimiento).
+- `rutas_global.py` conserva la configuración global de rutas en `~/.config/saman/rutas_global.json`. El hook de arranque de `registro.py` la consume, mediante `_componente_disponible`, para aplicar `PYTHON_TO_VFX/COMP/FROM_VFX`; no es una interfaz de usuario. El nodo Rutas sigue siendo la herramienta para configurar rutas en el comp.
+- fSpy usa el icono `SamanTools/fSpy.svg` en el menú SamanTools y en el menú Nodes.
+- En el buscador (TAB), escribiendo **breakdown**, **review**, **rutas** o **fSpy** se crean los nodos.
 
 ## Rutas de red (importante)
 

@@ -18,6 +18,7 @@ Solo entran los componentes listados por el humano; todo lo demás queda afuera 
 - **S11** — Lo que no está verificado se declara no verificado. Ningún componente entra al dist con estado `verificado` sin evidencia ejecutada en esta sesión.
 - **S12** — «Actualización» se entrega con `bootstrap/menu.py` dentro del dist (es el `.nuke/menu.py` del artista: auto-update por `git pull --ff-only`, alerta y botones) y con un test que fija su contrato de seguridad: compila, define sus puntos de entrada, usa `--ff-only` y **nunca** `reset --hard` (regla de `docs/ARQUITECTURA.md` §4). Estado `verificado` solo con ese test en verde.
 - **S13** — «fSpy» lleva icono propio: asset `SamanTools/fSpy.svg` (32×32, misma familia visual que `SamanTools/ChangeColorSpace.svg`: cuerpo `#1C1C1C`, acento en gradiente, highlight claro), referenciado con `icon=_ruta_icono("fSpy.svg")` en los DOS `addCommand` de fSpy (menú SamanTools y menú Nodes) y declarado en `componentes.py` para que viaje al dist. Sin `icon=`, Nuke muestra el nombre del comando como texto en la barra: ese es el defecto reportado.
+- **S14** — `README.md` y `docs/ARQUITECTURA.md` describen el estado real de 2.0.0: NO presentan el panel global de rutas como herramienta disponible (retirado en `489f2e7`) ni listan `SamanTools/panel_rutas.py` entre las piezas; `SamanTools/rutas_global.py` se documenta por lo que hace hoy (lo consume el hook de arranque de `registro.py`, no un panel de UI); informan `__version__ = 2.0.0`; el conteo de tests es el verificado por ejecución, **745**, nunca un número estimado; documentan el dist (`python3 -m SamanTools.build_dist`, `dist/` ignorado) y el icono de fSpy. Se preservan los agregados de fSpy que el humano ya tenía sin commitear.
 
 ## Tasks
 
@@ -31,7 +32,8 @@ Solo entran los componentes listados por el humano; todo lo demás queda afuera 
 | T6 | S6, S7 | Smoke test del dist: importar cada módulo incluido y verificar que los assets declarados existen | pendiente |
 | T7 | S7, S11 | `MANIFIESTO.md` final con el veredicto por componente | pendiente |
 | T8 | S11, S12 | Corregir `actualizacion`: `bootstrap/menu.py` al dist + `tests/test_bootstrap_menu.py` con el contrato `--ff-only`; jamás `verificado` con 0 tests | pendiente |
-| T9 | S13 | Icono de fSpy: asset `SamanTools/fSpy.svg`, `icon=` en los dos `addCommand`, declaración en `componentes.py`, test de que toda referencia `_ruta_icono(...)` resuelve y de que `_insertar_fspy` no lanza, y regeneración del dist | pendiente |
+| T9 | S13 | Icono de fSpy: asset `SamanTools/fSpy.svg`, `icon=` en los dos `addCommand`, declaración en `componentes.py`, test de que toda referencia `_ruta_icono(...)` resuelve y de que `_insertar_fspy` no lanza, y regeneración del dist | hecho |
+| T10 | S14 | Actualizar `README.md` y `docs/ARQUITECTURA.md` al estado 2.0.0 sin el panel de rutas | pendiente |
 
 ## Log
 
