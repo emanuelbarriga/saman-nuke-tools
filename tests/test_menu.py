@@ -83,7 +83,9 @@ def test_instalar_crea_estructura_nueva(monkeypatch):
     assert "Breakdown" not in _nombres_comandos(tools)
 
     paneles = _submenu_de(saman, "Paneles (En construcción)")
-    assert "Panel de Rutas" in _nombres_comandos(paneles)
+    # El panel global de rutas se retiro: el nodo Rutas es la unica via.
+    # El submenu se conserva por el Panel de Comentarios.
+    assert "Panel de Rutas" not in _nombres_comandos(paneles)
     assert "Panel de Comentarios" in _nombres_comandos(paneles)
     # Atajo Ctrl+Alt+C registrado en "Panel de Comentarios".
     assert ("Panel de Comentarios", "Ctrl+Alt+C") in paneles.shortcuts
