@@ -1,0 +1,34 @@
+NoOp {
+ name fSpy
+ selected true
+ addUserKnob {20 User}
+ addUserKnob {26 hdr l "" +STARTLINE T "<b>fSpy</b> — cámara calibrada desde una foto"}
+ addUserKnob {2 fspy_file l "Proyecto .fspy"}
+ addUserKnob {1 ctx l "" +STARTLINE +HIDDEN}
+ ctx root
+ addUserKnob {22 btn_leer l "Leer .fspy" -STARTLINE T "from SamanTools import fspy\nfspy.cb('leer')"}
+ addUserKnob {22 btn_editar l "Abrir en fSpy…" -STARTLINE T "from SamanTools import fspy\nfspy.cb('editar')"}
+ addUserKnob {26 div_calibracion l calibración}
+ addUserKnob {26 r_modo l "Modo de calibración" +DISABLED T —}
+ addUserKnob {26 r_imagen l "Imagen y aspecto" +DISABLED T —}
+ addUserKnob {26 r_sensor l "Sensor (mm)" +DISABLED T —}
+ addUserKnob {26 r_focal l "Distancia focal" +DISABLED T —}
+ addUserKnob {26 r_fov l "Campo de visión H / V" +DISABLED T —}
+ addUserKnob {26 r_principal l "Punto principal" +DISABLED T —}
+ addUserKnob {26 r_fuga l "Puntos de fuga" +DISABLED T —}
+ addUserKnob {26 r_escala l Escala +DISABLED T —}
+ addUserKnob {26 r_referencia l "Distancia de referencia" +DISABLED T —}
+ addUserKnob {26 estado l "" +STARTLINE T "<i>Elegí un .fspy y apretá Leer.</i>"}
+ addUserKnob {26 div_generados l "nodos generados"}
+ addUserKnob {6 crear_camara l Cámara -STARTLINE}
+ crear_camara true
+ addUserKnob {6 crear_cubo l "Cubo de referencia en el origen" -STARTLINE}
+ crear_cubo true
+ addUserKnob {7 tamano_cubo l "Tamaño del cubo" t "Lado del cubo, en unidades del mundo de fSpy."}
+ tamano_cubo 1
+ addUserKnob {6 crear_read l "Read con la imagen del proyecto" t "El .fspy lleva la foto adentro: se extrae a ~/.nuke/fspy_cache y se lee desde ahí, así el Read no depende de que la imagen original siga en su lugar." -STARTLINE}
+ crear_read true
+ addUserKnob {22 btn_construir l Construir -STARTLINE T "from SamanTools import fspy\nfspy.cb('construir')"}
+ addUserKnob {22 btn_borrar l "Borrar nodos generados" -STARTLINE T "from SamanTools import fspy\nfspy.cb('borrar')"}
+ addUserKnob {26 info l "" +STARTLINE}
+}

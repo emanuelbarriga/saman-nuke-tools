@@ -11,6 +11,23 @@ import sys
 
 from . import cambiar_colorspace
 from . import proyecto as proyecto_tools
+from .componentes import COMPONENTES
+
+
+def _componente_disponible(identificador):
+    """True si un componente puede exponerse en esta instalación.
+
+    En el checkout de desarrollo no hay manifiesto generado y se conserva el
+    menú histórico completo. En un dist, COMPONENTES es el manifiesto único:
+    sólo se registra una entrada si su componente fue declarado activo.
+    """
+    manifiesto = os.path.join(os.path.dirname(os.path.dirname(__file__)), "MANIFIESTO.md")
+    if not os.path.isfile(manifiesto):
+        return True
+    return any(
+        componente["id"] == identificador and componente["activo"]
+        for componente in COMPONENTES
+    )
 
 
 def _ruta_icono(nombre_icono):
@@ -35,6 +52,21 @@ def _insertar_rutas():
     from SamanTools import rutas
 
     rutas.crear_o_reutilizar()
+
+
+def _insertar_fspy():
+    """Inserta el nodo fSpy (cámara calibrada desde una foto) en el script actual."""
+    from SamanTools import fspy
+
+    ruta_archivo = fspy.ruta_gizmo()
+    fspy.crear_o_reutilizar()  # máximo uno por contexto, igual que Rutas
+    try:
+        from SamanTools import limpiar
+        limpiar.sanitizar_archivo(ruta_archivo)
+    except Exception:
+        # Defensa idempotente y nunca lanza: el archivo puede ya estar limpio
+        # (devuelve 0) o no ser legible/escribible en esta instalacion.
+        pass
 
 
 def _insertar_review():
@@ -327,6 +359,13 @@ def instalar():
         _insertar_breakdown,
     )
 
+    # fSpy directo en la raíz: es un nodo de trabajo, no una utilidad.
+    menu.addCommand(
+        "fSpy (cámara desde foto)",
+        _insertar_fspy,
+        icon=_ruta_icono("fSpy.svg"),
+    )
+
     # --- Categoría: Tools ---
     sub_tools = menu.addMenu("Tools")
     sub_tools.addCommand(
@@ -338,22 +377,24 @@ def instalar():
     # --- Categoría: Paneles (En construcción) ---
     # Lazy (string): PySide solo se importa al hacer clic en GUI, para no
     # romper la carga del menú si PySide no está o no hay GUI.
-    sub_paneles = menu.addMenu("Paneles (En construcción)")
-    # Atajo Ctrl+Alt+C: abre la pestaña de comentarios desde cualquier lado.
-    sub_paneles.addCommand(
-        "Panel de Comentarios",
-        "from SamanTools import panel_comentarios\npanel_comentarios.abrir_panel()",
-        shortcut="Ctrl+Alt+C",
-    )
+    if _componente_disponible("panel_comentarios"):
+        sub_paneles = menu.addMenu("Paneles (En construcción)")
+        # Atajo Ctrl+Alt+C: abre la pestaña de comentarios desde cualquier lado.
+        sub_paneles.addCommand(
+            "Panel de Comentarios",
+            "from SamanTools import panel_comentarios\npanel_comentarios.abrir_panel()",
+            shortcut="Ctrl+Alt+C",
+        )
 
     # --- Categoría: Salud ---
     sub_salud = menu.addMenu("Salud")
     # Lazy (string): diagnostico_red no se importa al tope para no cargar
     # urllib al arrancar; se importa solo al hacer clic.
-    sub_salud.addCommand(
-        "Diagnóstico de Red",
-        "from SamanTools import diagnostico_red\ndiagnostico_red.ejecutar()",
-    )
+    if _componente_disponible("diagnostico_red"):
+        sub_salud.addCommand(
+            "Diagnóstico de Red",
+            "from SamanTools import diagnostico_red\ndiagnostico_red.ejecutar()",
+        )
     sub_salud.addCommand(
         "Verificar Salud del Plugin...",
         _verificar_salud,
@@ -380,9 +421,11 @@ def instalar():
     # Solo en GUI (en batch/render el comp viejo con nodo sigue mandando via
     # knobChanged; el reemplazo total del nodo es el siguiente paso).
     try:
-        if getattr(nuke, "GUI", False):
-            from SamanTools import rutas_global
-            rutas_global.aplicar_global()
+        if getattr(nuke, "GUI", False) and _componente_disponible("rutas_global"):
+            # Import dinámico: rutas_global no pertenece al dist; la compuerta
+            # anterior hace que el artefacto no tenga una ruta de ejecución
+            # hacia él, sin alterar el comportamiento del checkout completo.
+            __import__("SamanTools.rutas_global", fromlist=["rutas_global"]).aplicar_global()
     except Exception:
         pass
 
@@ -395,6 +438,15 @@ def instalar():
     # removeItem propio) para las herramientas dinamicas del proyecto; este submenu
     # "HTLR · Saman · Samán" es para las herramientas FIJAS y no debe borrarse.
     menu_nodos = nuke.menu("Nodes")
+
+    # fSpy es herramienta del toolkit, no del proyecto HTLR: va en la raíz del
+    # menú Nodes (el que alimenta el buscador TAB), no dentro del submenú de proyecto.
+    menu_nodos.addCommand(
+        "fSpy (cámara desde foto)",
+        _insertar_fspy,
+        icon=_ruta_icono("fSpy.svg"),
+    )
+
     menu_saman = menu_nodos.addMenu("HTLR · Saman · Samán")
 
     # Subcategoría dentro del buscador: Insertar Nodo
@@ -403,14 +455,16 @@ def instalar():
         "Rutas (Rutas VFX)",
         _insertar_rutas,
     )
-    sub_nodos_nodos.addCommand(
-        "Review (Comparación)",
-        _insertar_review,
-    )
+    if _componente_disponible("review"):
+        sub_nodos_nodos.addCommand(
+            "Review (Comparación)",
+            _insertar_review,
+        )
     sub_nodos_nodos.addCommand(
         "Breakdown (frames por tabla)",
         _insertar_breakdown,
     )
+
 
     # Inyección del widget FrameManagerTable (lo importa desde el proyecto).
     _inyectar_frame_manager()

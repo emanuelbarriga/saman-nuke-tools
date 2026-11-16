@@ -9,6 +9,7 @@ poco fiable dentro del buscador de nodos y puede no insertar nada al pulsar
 Enter. Review y Breakdown usan callables; Rutas debe ser consistente.
 """
 
+import ast
 import os
 import subprocess
 import sys
@@ -114,6 +115,45 @@ def test_ruta_icono_absoluta():
     ruta = registro._ruta_icono("MiIcono.svg")
     assert os.path.isabs(ruta)
     assert ruta.endswith("MiIcono.svg")
+
+
+def test_icono_fspy_existe_y_es_svg_no_vacio():
+    ruta = registro._ruta_icono("fSpy.svg")
+    with open(ruta, encoding="utf-8") as archivo:
+        contenido = archivo.read()
+    assert contenido.strip()
+    assert "<svg" in contenido
+
+
+def test_toda_referencia_a_ruta_icono_resuelve_a_un_archivo():
+    ruta_registro = os.path.join(os.path.dirname(registro.__file__), "registro.py")
+    arbol = ast.parse(open(ruta_registro, encoding="utf-8").read())
+    referencias = [
+        llamada.args[0].value
+        for llamada in ast.walk(arbol)
+        if isinstance(llamada, ast.Call)
+        and isinstance(llamada.func, ast.Name)
+        and llamada.func.id == "_ruta_icono"
+        and llamada.args
+        and isinstance(llamada.args[0], ast.Constant)
+        and isinstance(llamada.args[0].value, str)
+    ]
+    assert referencias
+    assert all(os.path.isfile(registro._ruta_icono(nombre)) for nombre in referencias)
+
+
+def test_los_dos_comandos_fspy_declaran_su_icono():
+    ruta_registro = os.path.join(os.path.dirname(registro.__file__), "registro.py")
+    contenido = open(ruta_registro, encoding="utf-8").read()
+    assert contenido.count('icon=_ruta_icono("fSpy.svg")') == 2
+
+
+def test_insertar_fspy_no_lanza_con_los_stubs(monkeypatch):
+    from SamanTools import fspy
+
+    monkeypatch.setattr(fspy, "ruta_gizmo", lambda: "/tmp/fSpy.gizmo")
+    monkeypatch.setattr(fspy, "crear_o_reutilizar", lambda: None)
+    registro._insertar_fspy()
 
 
 def test_escanear_scripts_ok(monkeypatch):

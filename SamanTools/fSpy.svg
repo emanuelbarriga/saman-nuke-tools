@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+    <defs>
+        <linearGradient id="fspy_lens" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#38BDF8"/> <stop offset="100%" stop-color="#6366F1"/>
+        </linearGradient>
+    </defs>
+
+    <!-- visor -->
+    <rect x="10" y="7.5" width="8.5" height="4.5" rx="1.3" fill="#1C1C1C"/>
+    <!-- cuerpo de camara -->
+    <rect x="4.5" y="10.5" width="23" height="15.5" rx="3.8" fill="#1C1C1C"/>
+
+    <!-- lente calibrada -->
+    <circle cx="16" cy="18.3" r="6" fill="url(#fspy_lens)"/>
+    <circle cx="16" cy="18.3" r="2.8" fill="#0B0B0B"/>
+    <circle cx="13.7" cy="16" r="1.35" fill="#F3F4F6" opacity="0.92"/>
+</svg>

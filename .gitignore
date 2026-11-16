@@ -21,3 +21,6 @@ menu.py.bak.*
 
 # Registro de skills (local, regenerable)
 .atl/
+
+# Artefacto generado por SamanTools.build_dist (no versionar)
+dist/
