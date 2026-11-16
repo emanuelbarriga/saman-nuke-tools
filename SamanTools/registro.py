@@ -55,11 +55,11 @@ def _insertar_rutas():
 
 
 def _insertar_fspy():
-    """Inserta el nodo fSpy (cámara calibrada desde una foto) en el script actual."""
+    """Inserta un panel fSpy nuevo (cámara calibrada desde una foto)."""
     from SamanTools import fspy
 
     ruta_archivo = fspy.ruta_gizmo()
-    fspy.crear_o_reutilizar()  # máximo uno por contexto, igual que Rutas
+    fspy.crear()
     try:
         from SamanTools import limpiar
         limpiar.sanitizar_archivo(ruta_archivo)

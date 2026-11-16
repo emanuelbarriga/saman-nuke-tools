@@ -10,7 +10,7 @@ COMPONENTES = (
         "etiqueta": "fSpy",
         "modulos": ("SamanTools/fspy.py", "SamanTools/fspy_core.py"),
         "assets": ("SamanTools/nodos/fSpy.gizmo", "SamanTools/fSpy.svg"),
-        "tests": ("tests/test_fspy_core.py",),
+        "tests": ("tests/test_fspy_core.py", "tests/test_fspy_nodos.py"),
         "activo": True,
     },
     {

@@ -25,9 +25,9 @@ from . import fspy_core
 
 _EXTENSION = ".fspy"
 _NOMBRE_PANEL = "fSpy"
-_NOMBRE_CAMARA = "fSpy_cam"
-_NOMBRE_CUBO = "fSpy_cube"
-_NOMBRE_LECTURA = "fSpy_read"
+_SUFIJO_CAMARA = "cam"
+_SUFIJO_CUBO = "cube"
+_SUFIJO_LECTURA = "read"
 _CALLBACK = "from SamanTools import fspy\nfspy.cb('{0}')"
 
 # Campos de sólo lectura: (knob, etiqueta)
@@ -45,18 +45,14 @@ _CAMPOS = (
 
 
 # --------------------------------------------------------------------------- UI
-def crear_o_reutilizar():
-    """Inserta el panel, o enfoca el que ya exista en este contexto (máximo 1)."""
-    ctx = nuke.thisGroup()
-    existente = nuke.toNode(_ruta_completa(ctx, _NOMBRE_PANEL))
-    if existente is not None:
-        existente.showControlPanel()
-        return existente
-    return crear()
-
-
 def crear():
-    """Inserta el panel: pega nodos/fSpy.gizmo, o lo arma en Python si falta el archivo."""
+    """Inserta un panel nuevo y sus artefactos se nombran desde ese panel.
+
+    Por ejemplo, ``fSpy`` genera ``fSpy_cam`` y ``fSpy1`` genera
+    ``fSpy1_cam``. Si se renombra el panel después de construir, el próximo
+    «Construir» usa el nombre nuevo y los artefactos anteriores quedan
+    huérfanos.
+    """
     ruta = ruta_gizmo()
     if os.path.isfile(ruta):
         nuke.nodePaste(ruta)
@@ -268,14 +264,14 @@ def _construir_nodos(nodo, ctx):
     tamano = float(nodo["tamano_cubo"].value()) or 1.0
     hechos = []
     if nodo["crear_camara"].value():
-        _camara(ctx, cam)
-        hechos.append(_NOMBRE_CAMARA)
+        _camara(ctx, nodo, cam)
+        hechos.append(_nombre_generado(nodo, _SUFIJO_CAMARA))
     if nodo["crear_cubo"].value():
-        _cubo(ctx, tamano)
-        hechos.append("%s (%g u)" % (_NOMBRE_CUBO, tamano))
+        _cubo(ctx, nodo, tamano)
+        hechos.append("%s (%g u)" % (_nombre_generado(nodo, _SUFIJO_CUBO), tamano))
     if "crear_read" in nodo.knobs() and nodo["crear_read"].value():
-        ruta = _leer_imagen(ctx, cam)
-        hechos.append("%s (%s)" % (_NOMBRE_LECTURA, os.path.basename(ruta)))
+        ruta = _leer_imagen(ctx, nodo, cam)
+        hechos.append("%s (%s)" % (_nombre_generado(nodo, _SUFIJO_LECTURA), os.path.basename(ruta)))
     nodo["info"].setValue("creado: " + (", ".join(hechos) if hechos else "nada"))
     return cam
 
@@ -283,7 +279,8 @@ def _construir_nodos(nodo, ctx):
 def _borrar(nodo):
     ctx = _contexto(nodo)
     borrados = []
-    for nombre in (_NOMBRE_CAMARA, _NOMBRE_CUBO, _NOMBRE_LECTURA):
+    for sufijo in (_SUFIJO_CAMARA, _SUFIJO_CUBO, _SUFIJO_LECTURA):
+        nombre = _nombre_generado(nodo, sufijo)
         existente = nuke.toNode(_ruta_completa(ctx, nombre))
         if existente is not None:
             nuke.delete(existente)
@@ -294,8 +291,13 @@ def _borrar(nodo):
 
 
 # ------------------------------------------------------------------- nodos
-def _camara(ctx, cam):
-    nodo = _nuevo(ctx, "Camera", _NOMBRE_CAMARA)
+def _nombre_generado(panel, sufijo):
+    """Nombre estable de un artefacto, derivado del nombre actual del panel."""
+    return "%s_%s" % (panel.name(), sufijo)
+
+
+def _camara(ctx, panel, cam):
+    nodo = _nuevo(ctx, "Camera", _nombre_generado(panel, _SUFIJO_CAMARA))
     nodo["haperture"].setValue(cam["sensor_w_mm"])
     nodo["vaperture"].setValue(cam["sensor_h_mm"] or cam["sensor_w_mm"] / cam["aspect"])
     nodo["focal"].setValue(cam["focal_mm"])
@@ -325,16 +327,16 @@ def _carpeta_cache():
     raise IOError("no hay carpeta escribible para extraer la imagen del .fspy")
 
 
-def _leer_imagen(ctx, cam):
+def _leer_imagen(ctx, panel, cam):
     """Extrae la foto embebida en el .fspy y la apunta desde un Read."""
     ruta = fspy_core.extraer_imagen(cam, _carpeta_cache())
-    nodo = _nuevo(ctx, "Read", _NOMBRE_LECTURA)
+    nodo = _nuevo(ctx, "Read", _nombre_generado(panel, _SUFIJO_LECTURA))
     nodo["file"].setValue(ruta)
     return ruta
 
 
-def _cubo(ctx, tamano):
-    nodo = _nuevo(ctx, "Cube", _NOMBRE_CUBO)
+def _cubo(ctx, panel, tamano):
+    nodo = _nuevo(ctx, "Cube", _nombre_generado(panel, _SUFIJO_CUBO))
     nodo["scaling"].setValue([tamano, tamano, tamano], 3)
     nodo["translate"].setValue([0.0, tamano / 2.0, 0.0], 2)  # apoyado, no atravesado
     return nodo
@@ -356,7 +358,7 @@ def _ruta_completa(ctx, nombre):
 
 
 def _nuevo(ctx, clase, nombre):
-    """Crea el nodo con nombre fijo junto al panel; si ya existe, lo reemplaza."""
+    """Crea o reemplaza el artefacto con el nombre derivado de su panel."""
     existente = nuke.toNode(_ruta_completa(ctx, nombre))
     if existente is not None:
         nuke.delete(existente)

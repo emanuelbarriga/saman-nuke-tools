@@ -148,12 +148,16 @@ def test_los_dos_comandos_fspy_declaran_su_icono():
     assert contenido.count('icon=_ruta_icono("fSpy.svg")') == 2
 
 
-def test_insertar_fspy_no_lanza_con_los_stubs(monkeypatch):
+def test_insertar_fspy_llama_a_crear_un_panel_nuevo(monkeypatch):
     from SamanTools import fspy
 
+    creados = []
     monkeypatch.setattr(fspy, "ruta_gizmo", lambda: "/tmp/fSpy.gizmo")
-    monkeypatch.setattr(fspy, "crear_o_reutilizar", lambda: None)
+    monkeypatch.setattr(fspy, "crear", lambda: creados.append(object()))
     registro._insertar_fspy()
+    registro._insertar_fspy()
+
+    assert len(creados) == 2
 
 
 def test_escanear_scripts_ok(monkeypatch):
