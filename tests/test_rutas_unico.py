@@ -996,7 +996,11 @@ class TestCrearOActualizar:
         assert r["accion"] == "unico"
         assert r["nodos"] == 1
         assert r["superviviente"] == "Actual"
-        assert pastes == [] and preguntas == [] and eventos == []
+        assert pastes == [] and preguntas == []
+        # El unico borrado es el nodo descartable que se crea para leer el cursor
+        # (S15); el nodo real del comp no se toca.
+        assert len(eventos) == 1, "solo se borra el descartable del cursor"
+        assert all(nombre != "Actual" for (_, nombre) in eventos)
         assert actual.knobs_d["db_json"].value() == antes
         assert actual.enfocado == 1
 
@@ -1147,42 +1151,67 @@ class TestCrearOActualizar:
                 assert not linea.startswith("from nuke ")
 
 
-class TestNodoAlCentroDeLaVista:
-    """S4: si el nodo de rutas ya existe, el nodo viene a la vista del usuario."""
+class TestNodoBajoElCursor:
+    """S15: si el nodo ya existe, aparece bajo el cursor como un nodo nuevo."""
 
-    def _preparar(self, monkeypatch, centro):
+    def _preparar(self, monkeypatch, cursor=(4321, 8765)):
         actual = _nodo_v2("Actual")
         actual.setXYpos(900, 900)
         _escena([actual])
+        nuke._estado.pop("centro_vista", None)
         pastes, preguntas = [], []
         _instalar_paste(monkeypatch, lambda ruta: _nodo_v2("Pegado"), pastes)
         _instalar_ask(monkeypatch, True, preguntas)
-        nuke._estado["centro_vista"] = centro
+        eventos = []
+        _instalar_delete(monkeypatch, eventos)
         nuke._estado["zoom_to_fit"] = []
-        return actual, pastes, preguntas
+        descartables = []
 
-    def test_lo_trae_al_centro_de_la_vista_sin_panear(self, monkeypatch):
-        actual, pastes, preguntas = self._preparar(monkeypatch, [1200, -340])
+        def _crear(*a, **k):
+            if cursor is None:
+                raise RuntimeError("sin DAG")
+            nodo = _nodo_v2("Descartable")
+            nodo.setXYpos(*cursor)
+            descartables.append(nodo)
+            return nodo
+
+        monkeypatch.setattr(nuke, "createNode", _crear, raising=False)
+        return actual, pastes, preguntas, eventos, descartables
+
+    def test_aparece_bajo_el_cursor_como_un_nodo_nuevo(self, monkeypatch):
+        actual, pastes, preguntas, eventos, descartables = self._preparar(monkeypatch)
 
         r = ru.crear_o_actualizar()
 
         assert r["accion"] == "unico"
-        assert (actual.xpos(), actual.ypos()) == (1200, -340), (
-            "el nodo se mueve al centro visible (nuke.center)"
+        assert (actual.xpos(), actual.ypos()) == (4321, 8765), (
+            "el nodo se mueve a donde nace un nodo nuevo: el cursor"
         )
         assert nuke._estado["zoom_to_fit"] == [], "no se debe mover la vista"
         assert pastes == [] and preguntas == []
         assert actual.enfocado == 1, "el panel del nodo se abre igual"
+        assert len(descartables) == 1, "se crea UN nodo descartable para leer el cursor"
+        assert ("delete", "Descartable") in eventos, "el descartable se borra siempre"
+        assert all(n is not descartables[0] for n in nuke._estado["nodos"])
 
-    def test_sin_centro_legible_conserva_la_posicion(self, monkeypatch):
-        actual, _, _ = self._preparar(monkeypatch, [])
+    def test_sin_cursor_cae_al_centro_de_la_vista(self, monkeypatch):
+        actual, __, ___, ____, _____ = self._preparar(monkeypatch, cursor=None)
+        nuke._estado["centro_vista"] = [1200, -340]
+
+        ru.crear_o_actualizar()
+
+        assert (actual.xpos(), actual.ypos()) == (1200, -340)
+
+    def test_sin_cursor_ni_centro_conserva_la_posicion(self, monkeypatch):
+        actual = self._preparar(monkeypatch, cursor=None)[0]
+        nuke._estado["centro_vista"] = []
 
         ru.crear_o_actualizar()
 
         assert (actual.xpos(), actual.ypos()) == (900, 900)
 
     def test_en_headless_no_mueve_el_nodo(self, monkeypatch):
-        actual, _, _ = self._preparar(monkeypatch, [1200, -340])
+        actual = self._preparar(monkeypatch)[0]
         monkeypatch.setattr(ru, "_en_headless", lambda: True)
 
         ru.crear_o_actualizar()

@@ -642,26 +642,69 @@ def _centro_de_la_vista():
         return None
 
 
-def _mover_al_centro_de_la_vista(nodo):
-    """Pone `nodo` en el centro de lo que el usuario está mirando.
+def _posicion_del_cursor():
+    """(x, y) donde Nuke pondría un nodo nuevo: el cursor del Node Graph.
 
-    Devuelve True si lo movió. En headless no hay vista que respetar.
+    Nuke no expone el cursor del DAG por API —no hay `nuke.mousePosition` ni
+    equivalente—, pero un nodo nuevo sí nace justo en el cursor: se crea uno
+    descartable, se lee su posición y se borra. Es el workaround estándar de la
+    comunidad. Devuelve None si no se pudo.
+    """
+    if _en_headless():
+        return None
+    try:
+        import nuke
+
+        descartable = nuke.createNode("NoOp")
+    except Exception:
+        return None
+    if descartable is None:
+        return None
+    try:
+        return _posicion(descartable)
+    finally:
+        try:
+            import nuke
+
+            nuke.delete(descartable)
+        except Exception:
+            pass
+
+
+def _posicion_de_insercion():
+    """Dónde va el nodo cuando ya existe: el cursor; si no, el centro visible."""
+    posicion = _posicion_del_cursor()
+    if posicion is not None:
+        return posicion
+    return _centro_de_la_vista()
+
+
+def _mover_a_la_vista(nodo):
+    """Pone `nodo` donde aparece un nodo recién creado: bajo el cursor.
+
+    Devuelve True si lo movió. En headless no hay cursor que respetar.
     """
     if nodo is None or _en_headless():
         return False
-    centro = _centro_de_la_vista()
-    if centro is None:
+    posicion = _posicion_de_insercion()
+    if posicion is None:
         return False
-    return _restaurar_posicion(nodo, centro)
+    return _restaurar_posicion(nodo, posicion)
 
 
 def _mostrar_en_la_vista(nodo):
-    """Trae el nodo al centro de la vista en vez de llevar la vista al nodo.
+    """Pone el nodo donde nace uno nuevo: bajo el cursor, sin mover la vista.
 
     Es lo contrario de `_enfocar`: no hace zoom ni pan (no toca
-    `zoomToFitSelected`), mueve el nodo al centro visible y abre su panel.
+    `zoomToFitSelected`), trae el nodo al cursor y abre su panel. El nodo
+    descartable que se usa para leer el cursor y el movimiento van en el mismo
+    paso de undo, para que el artista deshaga todo junto.
     """
-    movido = _mover_al_centro_de_la_vista(nodo)
+    abierto = _iniciar_undo("Nodo de rutas al cursor")
+    try:
+        movido = _mover_a_la_vista(nodo)
+    finally:
+        _cerrar_undo(abierto)
     _seleccionar(nodo)
     abrir = getattr(nodo, "showControlPanel", None) if nodo is not None else None
     if abrir is not None:
