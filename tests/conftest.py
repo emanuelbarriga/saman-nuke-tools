@@ -160,11 +160,20 @@ def _instalar_stub_nuke():
         def items(self):
             return self._items
 
-        def addMenu(self, name):
+        def addMenu(self, name, **k):
+            # Acepta kwargs (icon=...) como nuke.Menu.addMenu de Nuke 13+; los
+            # tests pueden verificar el icono sin depender de esa version.
             sub = MenuFake()
             sub._nombre = name
+            sub.icon = k.get("icon")
             self._items.append(sub)
             return sub
+
+        def findItem(self, name):
+            for item in self._items:
+                if getattr(item, "_nombre", None) == name:
+                    return item
+            return None
 
         def addCommand(self, name, cmd, **k):
             self.commands.append((name, cmd))

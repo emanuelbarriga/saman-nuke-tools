@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+    <defs>
+        <linearGradient id="saman_grad" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#6AFF55"/> <stop offset="100%" stop-color="#55FFBF"/>
+        </linearGradient>
+    </defs>
+
+    <!-- placa: misma familia visual que fSpy.svg y ChangeColorSpace.svg -->
+    <rect x="1.5" y="1.5" width="29" height="29" rx="7.5" fill="#1C1C1C"/>
+    <rect x="1.5" y="1.5" width="29" height="29" rx="7.5" fill="none" stroke="#2C2C2C" stroke-width="1"/>
+
+    <!-- monograma S del estudio -->
+    <path d="M21.6 11.2c-1-1.1-2.5-1.8-4.2-1.8-2.7 0-4.6 1.5-4.6 3.6 0 4.6 9.1 2.3 9.1 7 0 2.2-2 3.8-4.8 3.8-2 0-3.7-.8-4.7-2"
+          fill="none" stroke="url(#saman_grad)" stroke-width="3.2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

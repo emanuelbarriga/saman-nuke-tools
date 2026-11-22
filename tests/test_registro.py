@@ -71,44 +71,28 @@ def _command_de(menu_cmds, nombre):
     return None
 
 
-def test_buscador_insertar_nodo_registra_callables_no_strings(monkeypatch):
+def test_el_menu_saman_registra_callables_no_strings(monkeypatch):
     menu = _instalar(monkeypatch)
 
-    # En el stub, nuke.menu() devuelve SIEMPRE el mismo MenuFake para cualquier
-    # raiz; el submenu del buscador TAB es 'HTLR · Saman · Samán'.
-    menu_saman = next(
-        (sub for sub in menu._items if getattr(sub, "_nombre", None) == "HTLR · Saman · Samán"),
+    saman = next(
+        (sub for sub in menu._items if getattr(sub, "_nombre", None) == "Samán"),
         None,
     )
-    assert menu_saman is not None, "Falta el submenu 'HTLR · Saman · Samán' del buscador Tab"
+    assert saman is not None, "Falta el submenu 'Samán' del buscador Tab"
 
-    insertar = next(
-        (sub for sub in menu_saman.items() if getattr(sub, "_nombre", None) == "Insertar Nodo"),
-        None,
-    )
-    assert insertar is not None, "Falta el submenu 'Insertar Nodo' en el buscador Tab"
-
-    nombres_cmd = [name for (name, _) in insertar.commands]
-    assert "Rutas (Rutas VFX)" in nombres_cmd
-    assert "Review (Comparación)" in nombres_cmd
-    assert "Breakdown (frames por tabla)" in nombres_cmd
-
-    for nombre in ("Rutas (Rutas VFX)", "Review (Comparación)", "Breakdown (frames por tabla)"):
-        par = _command_de(insertar.commands, nombre)
+    nombres_cmd = [name for (name, _) in saman.commands]
+    for nombre in (
+        "Rutas (rutas VFX)",
+        "Breakdown (frames por tabla)",
+        "Review (comparación)",
+        "ColorSpaces (espacio de color)",
+        "fSpy (cámara desde foto)",
+    ):
+        assert nombre in nombres_cmd
+        par = _command_de(saman.commands, nombre)
         assert par is not None
-        cmd = par[1]
         # Un callable (funcion) se ejecuta de forma fiable en el buscador Tab.
-        # Un string con '\n' puede fallar silenciosamente: lo consideramos bug.
-        assert not isinstance(cmd, str), (
-            "La herramienta '%s' se registro como string en el buscador Tab. "
-            "Usa la funcion directa (callable) para que Tab/Enter la ejecute." % nombre
-        )
-        assert callable(cmd)
-
-
-# ---------------------------------------------------------------------------
-# Funciones privadas de registro (cobertura adicional)
-# ---------------------------------------------------------------------------
+        assert callable(par[1])
 
 
 def test_ruta_icono_absoluta():
@@ -142,10 +126,11 @@ def test_toda_referencia_a_ruta_icono_resuelve_a_un_archivo():
     assert all(os.path.isfile(registro._ruta_icono(nombre)) for nombre in referencias)
 
 
-def test_los_dos_comandos_fspy_declaran_su_icono():
+def test_el_menu_saman_y_fspy_declaran_su_icono():
     ruta_registro = os.path.join(os.path.dirname(registro.__file__), "registro.py")
     contenido = open(ruta_registro, encoding="utf-8").read()
-    assert contenido.count('icon=_ruta_icono("fSpy.svg")') == 2
+    assert contenido.count('addMenu("Samán", icon=_ruta_icono("Saman.svg"))') == 1
+    assert contenido.count('icon=_ruta_icono("fSpy.svg")') == 1
 
 
 def test_insertar_fspy_llama_a_crear_un_panel_nuevo(monkeypatch):
@@ -312,17 +297,21 @@ def test_limpiar_carpeta_sin_archivos(monkeypatch, tmp_path):
     assert "No se encontraron" in mensajes[0]
 
 
-def test_instalar_agrega_boton_carpeta(monkeypatch):
+def test_las_utilidades_de_salud_quedan_fuera_del_menu(monkeypatch):
+    """El menu SamanTools queda en tres cosas; el codigo de Salud sigue ahi."""
     menu = _instalar(monkeypatch)
     saman = next(
         (sub for sub in menu._items if getattr(sub, "_nombre", None) == "SamanTools"),
         None,
     )
     assert saman is not None
-    sistema = next(
-        (sub for sub in saman.items() if getattr(sub, "_nombre", None) == "Salud"),
-        None,
-    )
-    assert sistema is not None
-    nombres = [name for (name, _) in sistema.commands]
-    assert "Limpiar knobs volátiles en carpeta..." in nombres
+    assert [getattr(sub, "_nombre", None) for sub in saman.items()] == []
+    for nombre in (
+        "_verificar_salud",
+        "_escanear_scripts_proyecto",
+        "_limpiar_knobs_volatiles",
+        "_limpiar_knobs_volatiles_carpeta",
+    ):
+        assert callable(getattr(registro, nombre))
+
+

@@ -54,7 +54,7 @@ COMPONENTES = (
         "id": "acerca_de",
         "etiqueta": "Acerca de SamanTools",
         "modulos": ("SamanTools/registro.py",),
-        "assets": (),
+        "assets": ("SamanTools/Saman.svg",),
         "tests": ("tests/test_menu.py", "tests/test_registro.py"),
         "activo": True,
     },

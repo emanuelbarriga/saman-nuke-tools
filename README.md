@@ -178,7 +178,8 @@ Las skills de OpenCode/Claude usadas por el estudio viven versionadas en
 ## Cómo se verifica
 
 Tras reiniciar Nuke:
-- Aparece el menú **SamanTools** con **Acerca de**, **Breakdown** y **fSpy** directos, el submenú **Salud** (Verificar Salud, Escanear Scripts, Limpiar knobs) y **Actualizar/Desinstalar** al final. No hay submenú de herramientas sueltas: los cinco nodos son la herramienta.
+- El menú **SamanTools** tiene **tres cosas**: **Acerca de SamanTools...**, **Actualizar SamanTools** y **Desinstalar SamanTools...**.
+- El buscador de Nodos (TAB) muestra un único menú **Samán**, con el ícono del estudio, y dentro están los cinco nodos: **Rutas**, **Breakdown**, **Review**, **ColorSpaces** y **fSpy**. Si el proyecto está montado, dentro del mismo menú aparece un submenú con el nombre del proyecto y sus galerías.
 - `rutas_unico.py` garantiza **un solo nodo de rutas por proyecto**: al abrir un comp detecta los nodos por sus knobs (nunca por nombre), fusiona los duplicados dejando uno y empuja las `PYTHON_*` de ese nodo para que los Reads dinámicos resuelvan sin tocar nada. Con un nodo de versión anterior no migra solo: la actualización es la acción explícita del menú, que conserva el estado y la posición del nodo.
 - fSpy usa el icono `SamanTools/fSpy.svg` en el menú SamanTools y en el menú Nodes.
 - En el buscador (TAB), escribiendo **breakdown**, **review**, **rutas** o **fSpy** se crean los nodos.

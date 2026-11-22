@@ -12,7 +12,14 @@ cuando el proyecto esta conectado.
 import nuke
 import os
 
-SUBMENU = "HTLR · Saman · Samán · Galerías"
+#: Menu del buscador TAB (nuke.menu("Nodes")) donde cuelgan las galerias.
+MENU_PADRE = "Samán"
+
+#: Nombre de respaldo del submenu cuando no hay proyecto detectable.
+SUBMENU = "Proyecto"
+
+#: Ultimo submenu registrado, para quitarlo cuando cambia el proyecto.
+_ultimo_submenu = None
 EXTENSIONES = (".gizmo", ".nk")
 
 
@@ -57,6 +64,44 @@ def actualizar_desde_nodo_rutas(n=None):
     from SamanTools import rutas_unico
 
     return rutas_unico.sincronizar_entorno(n)
+
+
+def _menu_padre():
+    """El menu Saman del buscador TAB, o el propio menu Nodes si no existe."""
+    menu_nodos = nuke.menu("Nodes")
+    try:
+        padre = menu_nodos.findItem(MENU_PADRE)
+    except Exception:
+        padre = None
+    return padre if padre is not None else menu_nodos
+
+
+def nombre_submenu():
+    """Nombre del submenu de galerias: el proyecto activo, o `SUBMENU`."""
+    try:
+        return _nombre_proyecto() or SUBMENU
+    except Exception:
+        return SUBMENU
+
+
+def _marcar_submenu(nombre):
+    """Recuerda el submenu registrado para poder quitarlo despues."""
+    global _ultimo_submenu
+    _ultimo_submenu = nombre
+
+
+def _quitar_submenu(padre):
+    """Borra de `padre` el submenu de galerias anterior, si sigue ahi."""
+    global _ultimo_submenu
+    for nombre in {_ultimo_submenu, nombre_submenu()}:
+        if not nombre:
+            continue
+        try:
+            if nombre in [item.name() for item in padre.items()]:
+                padre.removeItem(nombre)
+        except Exception:
+            pass
+    _ultimo_submenu = None
 
 
 def _es_archivo_valido(ruta_archivo):
@@ -138,11 +183,11 @@ def cargar_scripts_proyecto():
     Devuelve True si cargo algo, False si no hay ruta/herramientas.
     """
     ruta = obtener_ruta_scripts()
-    menu_nodos = nuke.menu("Nodes")
+    padre = _menu_padre()
 
-    # Siempre eliminar el submenu anterior, haya o no ruta disponible.
-    if SUBMENU in [item.name() for item in menu_nodos.items()]:
-        menu_nodos.removeItem(SUBMENU)
+    # Siempre eliminar el submenu anterior, haya o no ruta disponible: si el
+    # proyecto cambio, el submenu viejo se llama distinto al nuevo.
+    _quitar_submenu(padre)
 
     if not ruta:
         # Sin Lucid / sin proyecto activo: submenu ya limpio, nada que cargar.
@@ -155,7 +200,7 @@ def cargar_scripts_proyecto():
         # La carpeta existe pero no tiene .gizmo/.nk: nada que registrar.
         return False
 
-    submenu = menu_nodos.addMenu(SUBMENU)
+    submenu = padre.addMenu(nombre_submenu())
 
     # Agrupa los gizmos en subcategorias dentro del submenu del proyecto:
     # 'Galerías' (assets de compra) y 'Herramientas' (Breakdown, Review, etc.).
@@ -176,4 +221,6 @@ def cargar_scripts_proyecto():
                 etiqueta,
                 "nuke.createNode('{}')".format(nombre_nodo),
             )
+
+    _marcar_submenu(nombre_submenu())
     return True

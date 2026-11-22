@@ -358,92 +358,48 @@ def instalar():
 
     menu = nuke.menu("Nuke").addMenu("SamanTools")
 
-    # --- Acerca de: versión y contacto, siempre a la vista ---
-    menu.addCommand(
-        "Acerca de SamanTools...",
-        _acerca_de,
-    )
-    # Actualizar SamanTools se inserta aquí por bootstrap (posición 1, justo
-    # después de "Acerca de"), SOLO si hay checkout instalado.
+    # v3: el menú SamanTools queda en TRES cosas. "Acerca de" es el único ítem
+    # propio; "Actualizar SamanTools" (index 1) y "Desinstalar SamanTools..."
+    # los agrega bootstrap/menu.py sobre este mismo menú.
+    menu.addCommand("Acerca de SamanTools...", _acerca_de)
 
-    # Breakdown directo en la raíz (herramienta estrella, un solo clic).
-    menu.addCommand(
-        "Breakdown",
-        _insertar_breakdown,
-    )
-
-    # fSpy directo en la raíz: es un nodo de trabajo, no una utilidad.
-    menu.addCommand(
-        "fSpy (cámara desde foto)",
-        _insertar_fspy,
-        icon=_ruta_icono("fSpy.svg"),
-    )
-
-    # --- Categoría: Salud ---
-    # v3 no expone panel de comentarios ni diagnóstico de red: los cinco nodos
-    # son la herramienta y Salud queda como mantenimiento local del plugin.
-    sub_salud = menu.addMenu("Salud")
-    sub_salud.addCommand(
-        "Verificar Salud del Plugin...",
-        _verificar_salud,
-    )
-    sub_salud.addCommand(
-        "Escanear Scripts del Proyecto",
-        _escanear_scripts_proyecto,
-    )
-    sub_salud.addCommand(
-        "Limpiar knobs volátiles",
-        _limpiar_knobs_volatiles,
-    )
-    sub_salud.addCommand(
-        "Limpiar knobs volátiles en carpeta...",
-        _limpiar_knobs_volatiles_carpeta,
-    )
-
-    # Carga automatica si el proyecto ya esta disponible al arrancar.
-    proyecto_tools.cargar_scripts_proyecto()
-
-    # --- Registro en el buscador de Nodos (Tab) ---
-    # Un .gizmo con raiz NoOp no se indexa solo en el buscador;
-    # registrarlo en el menu Nodes lo hace buscable con Tab.
-    # El nombre del submenu contiene los alias del proyecto (HTLR/Saman/Saman)
-    # para que escribir cualquiera de ellos en el buscador muestre las herramientas.
-    # NOTA: proyecto.py usa el submenu "HTLR · Saman · Samán · Galerías" (con
-    # removeItem propio) para las herramientas dinamicas del proyecto; este submenu
-    # "HTLR · Saman · Samán" es para las herramientas FIJAS y no debe borrarse.
+    # --- Buscador de Nodos (TAB): un solo ícono Samán con los cinco nodos ---
+    # Los cinco son autocontenidos: se insertan pegando su .gizmo y no necesitan
+    # ningún otro comando suelto en los menús.
     menu_nodos = nuke.menu("Nodes")
+    try:
+        menu_saman = menu_nodos.addMenu("Samán", icon=_ruta_icono("Saman.svg"))
+    except TypeError:
+        # Nuke viejo no acepta icon en addMenu: el menú funciona igual, sin ícono.
+        menu_saman = menu_nodos.addMenu("Samán")
 
-    # fSpy es herramienta del toolkit, no del proyecto HTLR: va en la raíz del
-    # menú Nodes (el que alimenta el buscador TAB), no dentro del submenú de proyecto.
-    menu_nodos.addCommand(
-        "fSpy (cámara desde foto)",
-        _insertar_fspy,
-        icon=_ruta_icono("fSpy.svg"),
-    )
-
-    menu_saman = menu_nodos.addMenu("HTLR · Saman · Samán")
-
-    # Subcategoría dentro del buscador: Insertar Nodo
-    sub_nodos_nodos = menu_saman.addMenu("Insertar Nodo")
-    sub_nodos_nodos.addCommand(
-        "Rutas (Rutas VFX)",
+    menu_saman.addCommand(
+        "Rutas (rutas VFX)",
         _insertar_rutas,
     )
-    if _componente_disponible("review"):
-        sub_nodos_nodos.addCommand(
-            "Review (Comparación)",
-            _insertar_review,
-        )
-    if _componente_disponible("colorspaces"):
-        sub_nodos_nodos.addCommand(
-            "ColorSpaces (espacio de color)",
-            _insertar_colorspaces,
-        )
-    sub_nodos_nodos.addCommand(
+    menu_saman.addCommand(
         "Breakdown (frames por tabla)",
         _insertar_breakdown,
     )
+    if _componente_disponible("review"):
+        menu_saman.addCommand(
+            "Review (comparación)",
+            _insertar_review,
+        )
+    if _componente_disponible("colorspaces"):
+        menu_saman.addCommand(
+            "ColorSpaces (espacio de color)",
+            _insertar_colorspaces,
+        )
+    menu_saman.addCommand(
+        "fSpy (cámara desde foto)",
+        _insertar_fspy,
+        icon=_ruta_icono("fSpy.svg"),
+    )
 
+    # Galerías del proyecto: proyecto.py las cuelga DENTRO del mismo menú Samán,
+    # en un submenú con el nombre del proyecto activo.
+    proyecto_tools.cargar_scripts_proyecto()
 
     # Inyección del widget FrameManagerTable (lo importa desde el proyecto).
     _inyectar_frame_manager()

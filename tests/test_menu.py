@@ -3,7 +3,9 @@ Tests del menú superior SamanTools y del buscador de Nodos (Tab).
 
 Cubre la reestructuración aprobada: el menú superior se organiza por
 categorías con "Acerca de" directo en la raíz y submenús temáticos
-(Tools / Paneles / Salud). El buscador TAB solo expone "Insertar Nodo"
+v3: el menú SamanTools queda en tres cosas (Acerca de + Actualizar + Desinstalar
+que agrega el bootstrap) y el buscador TAB expone un único menú Samán con los
+cinco nodos.
 (Rutas / Review / Breakdown) — sin Utilidades.
 """
 
@@ -58,46 +60,42 @@ def _nombres_comandos(submenu):
 def test_instalar_crea_estructura_nueva(monkeypatch):
     menu = _instalar(monkeypatch)
 
+    # v3: el menu SamanTools tiene TRES cosas. "Acerca de" es el unico item
+    # propio; "Actualizar SamanTools" y "Desinstalar SamanTools..." los agrega
+    # bootstrap/menu.py sobre este mismo menu.
     saman = _submenu_de(menu, "SamanTools")
     assert saman is not None, "Falta el submenu 'SamanTools'"
-
-    # Raíz: "Acerca de" y "Breakdown" como comandos directos. (Actualizar/
-    # Desinstalar los agrega bootstrap/menu.py, no este módulo.)
-    nombres_comandos = _nombres_comandos(saman)
-    assert "Acerca de SamanTools..." in nombres_comandos
-    assert "Breakdown" in nombres_comandos
-    assert "Cambiar ColorSpace..." not in nombres_comandos
-
-    # v3: los cinco nodos son la herramienta y no hay submenú de herramientas
-    # sueltas. Panel de Comentarios y Diagnóstico de Red salieron de la
-    # superficie (S5); sus módulos siguen en el repositorio.
-    nombres_submenus = [getattr(sub, "_nombre", None) for sub in saman.items()]
-    assert nombres_submenus == ["Salud"]
-    assert "Tools" not in nombres_submenus
-    assert "Paneles (En construcción)" not in nombres_submenus
-    assert "Configuración" not in nombres_submenus
-    assert "Composición" not in nombres_submenus
-    assert "VFXFlow" not in nombres_submenus
-    assert "Sistema / Configuración" not in nombres_submenus
-    assert "fSpy (cámara desde foto)" in nombres_comandos
-
-    salud = _submenu_de(saman, "Salud")
-    nombres_salud = _nombres_comandos(salud)
-    assert "Diagnóstico de Red" not in nombres_salud
-    assert "Verificar Salud del Plugin..." in nombres_salud
-    assert "Escanear Scripts del Proyecto" in nombres_salud
-    assert "Limpiar knobs volátiles" in nombres_salud
-    assert "Limpiar knobs volátiles en carpeta..." in nombres_salud
+    assert _nombres_comandos(saman) == ["Acerca de SamanTools..."]
+    assert [getattr(sub, "_nombre", None) for sub in saman.items()] == []
 
 
-def test_instalar_no_registra_changecolorspace_en_nodes(monkeypatch):
+def test_el_buscador_tab_expone_un_solo_icono_saman_con_los_cinco_nodos(monkeypatch):
     menu = _instalar(monkeypatch)
 
-    menu_saman = _submenu_de(menu, "HTLR · Saman · Samán")
-    assert menu_saman is not None, "Falta el submenu 'HTLR · Saman · Samán' del buscador Tab"
+    submenus = [getattr(sub, "_nombre", None) for sub in menu.items()]
+    assert submenus.count("Samán") == 1
+    assert "HTLR · Saman · Samán" not in submenus
+    assert "Insertar Nodo" not in submenus
+    assert "Salud" not in submenus
+    assert "Tools" not in submenus
 
-    nombres_submenus = [getattr(sub, "_nombre", None) for sub in menu_saman.items()]
-    assert "Utilidades" not in nombres_submenus
+    saman = _submenu_de(menu, "Samán")
+    assert saman is not None, "Falta el submenu 'Samán' del buscador Tab"
+    assert saman.icon and saman.icon.endswith("Saman.svg"), (
+        "el menu Saman debe llevar el icono del estudio"
+    )
+    assert _nombres_comandos(saman) == [
+        "Rutas (rutas VFX)",
+        "Breakdown (frames por tabla)",
+        "Review (comparación)",
+        "ColorSpaces (espacio de color)",
+        "fSpy (cámara desde foto)",
+    ]
+
+
+def test_ningun_nodo_se_registra_fuera_del_menu_saman(monkeypatch):
+    menu = _instalar(monkeypatch)
+    saman = _submenu_de(menu, "Samán")
 
     def _comandos_recursivos(sub):
         for name, _cmd in sub.commands:
@@ -106,16 +104,16 @@ def test_instalar_no_registra_changecolorspace_en_nodes(monkeypatch):
             for name in _comandos_recursivos(hijo):
                 yield name
 
-    assert not any("ChangeColorspace" in name for name in _comandos_recursivos(menu_saman)), (
-        "ChangeColorspace no debe registrarse en el buscador Tab"
-    )
-
-    insertar = _submenu_de(menu_saman, "Insertar Nodo")
-    assert insertar is not None, "Falta el submenu 'Insertar Nodo' en el buscador Tab"
-    nombres_cmd = _nombres_comandos(insertar)
-    assert "Rutas (Rutas VFX)" in nombres_cmd
-    assert "Review (Comparación)" in nombres_cmd
-    assert "Breakdown (frames por tabla)" in nombres_cmd
+    fuera = set(_comandos_recursivos(menu)) - set(_comandos_recursivos(saman))
+    assert not any("ChangeColorspace" in name for name in fuera)
+    for nombre in (
+        "Rutas (rutas VFX)",
+        "Breakdown (frames por tabla)",
+        "Review (comparación)",
+        "ColorSpaces (espacio de color)",
+        "fSpy (cámara desde foto)",
+    ):
+        assert nombre not in fuera, "el nodo se registra solo dentro de Saman"
 
 
 def test_verificar_salud_mensaje(monkeypatch):
