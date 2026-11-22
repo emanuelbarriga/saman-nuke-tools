@@ -38,10 +38,11 @@ Toolkit global de Nuke para el estudio **Samán Estudio**:
 |---|---|
 | `bootstrap/menu.py` | El `menu.py` del artista (copiado a `~/.nuke`). Mantenimiento: **auto-update con `git pull --ff-only` en cada arranque** (push automático), alerta de update, botones Actualizar/Desinstalar, auto-sincronización del bootstrap mismo. **Nunca depende del código del repo** (funciona aunque el repo esté roto). |
 | `menu.py` (raíz) | Carga real: `sys.path`, `pluginAddPath`, `registro.instalar()`. Se ejecuta vía `exec` desde el bootstrap. |
-| `SamanTools/registro.py` | Construye el menú SamanTools (Acerca / Breakdown / fSpy / Tools / Paneles / Salud) + buscador TAB (Rutas/Review/Breakdown/fSpy). En el arranque, `_componente_disponible` determina si puede consumir `rutas_global.py` para aplicar la configuración global, sin exponer una UI. |
+| `SamanTools/registro.py` | Construye el menú SamanTools (Acerca / Breakdown / fSpy / Salud) + buscador TAB (Rutas/Review/ColorSpaces/Breakdown/fSpy). En el arranque engancha la política de nodo único (`rutas_unico.aplicar_politica_al_cargar`) vía `nuke.addOnScriptLoad`; `_componente_disponible` limita cada entrada al componente declarado en el dist. |
 | `SamanTools/proyecto.py` | Carga dinámica de galerías/gizmos del proyecto (`{PYTHON_COMP}/Scripts`). |
-| `SamanTools/rutas.py` | Lógica del nodo ÚNICO Rutas (`crear_o_reutilizar` — menú y TAB usan la misma vía, máximo 1 por proyecto, `_enfocar_nodo` navega al nodo existente + abre propiedades), recomendación de usuario según SO, visibilidad por usuario activo, y ahora dividido en `aplicar_proyecto` (cambiar proyecto / variables) + `refrescar_fuentes` (recarga de Reads a demanda, `forzar=True`) — el botón del nodo ofrece "Cambiar Proyecto" y "Refrescar Fuentes". |
-| `SamanTools/rutas_global.py` | Persistencia de la configuración global de rutas en `~/.config/saman/rutas_global.json` y aplicación de `PYTHON_*`; lo consume el hook de arranque de `registro.py`, no es un panel de UI. |
+| `SamanTools/rutas_unico.py` | **La política de un solo nodo de rutas por proyecto.** Detecta los nodos por knobs (`es_nodo_rutas`, nunca por nombre), distingue versión actual de anterior (`nodo_ver`), elige superviviente por contenido (`elegir_superviviente`), fusiona estado sin perder claves (`fusionar_dbs`), escribe antes de borrar y pide una sola confirmación (`aplicar_politica_al_cargar`, el hook de carga). `crear_o_actualizar` es la acción de menú: crea, reutiliza o actualiza en el lugar conservando estado y posición. `sincronizar_entorno` ejecuta el motor embebido del nodo (`rutas_engine('sync')`) para que abrir un comp resuelva las `PYTHON_*`. No importa `nuke` al tope. |
+| `SamanTools/rutas.py` | Lógica del nodo Rutas **v1**, retirada de la superficie en 3.0.0 (sigue en el repositorio como referencia de la migración). |
+| `SamanTools/rutas_global.py` | Shim del panel global de rutas, **fuera de la superficie** desde 3.0.0: la política de nodo único lo reemplaza. |
 | `SamanTools/fspy_core.py` | Lector de proyectos `.fspy` (formato oficial) + matemática de cámara: focal relativa, FOV, matriz 4x4, escala, y extracción de la imagen embebida. Puro stdlib, NO importa nuke; testeado en `tests/test_fspy_core.py` con un `.fspy` sintético. |
 | `SamanTools/fspy.py` | Panel `fSpy` (NoOp): lee el `.fspy`, muestra la calibración y crea `fSpy_cam` (Camera con focal/aperturas/matriz exacta), `fSpy_cube` (referencia en el origen) y `fSpy_read` con la **foto embebida** que el `.fspy` lleva adentro, extraída a `~/.nuke/fspy_cache` y nombrada por contenido (sha1). Botón «Abrir en fSpy…» lanza la app con el mismo archivo para corregir y volver a leer. Los generados van JUNTO al panel, en su contexto. Usa el icono `SamanTools/fSpy.svg` en los menús SamanTools y Nodes. |
 | `SamanTools/entorno.py` | Detección de SO, ruta base por SO (`/Volumes/wupm/2026`, `L:/2026`, `/mnt/wupm/2026`) y estado de la unidad `wupm` con timeout (mount muerto no cuelga Nuke). Puro stdlib, NO importa nuke. |
@@ -95,7 +96,7 @@ Estos bugs se corrigieron; **no reintroducirlos**:
 
 Ver `VERSIONING.md`. Resumen:
 
-- Fuente única: `SamanTools/__init__.py` → `__version__ = "2.0.0"` (SemVer).
+- Fuente única: `SamanTools/__init__.py` → `__version__ = "3.0.0"` (SemVer).
 - Reglas: PATCH = fix; MINOR = función compatible; MAJOR = incompatibilidad.
 - Release: bump `__version__` → commit → `git tag v<version>` → `git push origin main --tags`.
 - El tag debe coincidir con `__version__` (lo verifica `verificar_salud.py`).
@@ -104,7 +105,7 @@ Ver `VERSIONING.md`. Resumen:
 
 ## 6. Calidad y cobertura
 
-Suite pytest en `tests/` (745 tests PASS, verificados con `python3.13` + PySide6 6.12) + stub de `nuke` en `conftest.py`.
+Suite pytest en `tests/` (836 tests PASS, verificados con `python3.14` + PySide6 6.12) + stub de `nuke` en `conftest.py`.
 
 La cobertura exacta NO se declara a mano: `verificar_salud.py` la reporta real en
 cada corrida (módulos puros `entorno.py`/`rutas.py`/`cambiar_colorspace.py`/
@@ -122,7 +123,11 @@ aceptable — UI Nuke sin lógica pura testeable).
 - `es_nodo_rutas()` identifica por `UsuarioActivo` + `TO_VFX_SERVER_*` (NO por
   `RutaActual`, eliminado en v1.1.2). El "versionado" del nodo lo define
   `KNOBS_VERSION_ACTUAL` en `rutas.py`.
-- `Rutas.gizmo` es un ESPEJO exacto del bloque `NoOp` de `Rutas.nk`; al tocar el
+- `Rutas.gizmo` es **autocontenido** desde 3.0.0: su motor vive en el knob oculto
+  `Cerebro_Python` y no importa nada de `SamanTools`; `Rutas.nk` queda fuera de la
+  superficie. El knob `nodo_ver` marca la versión del nodo y `rutas_unico` lo usa
+  para decidir si un nodo es actual. Antes de 3.0.0 era un ESPEJO exacto del bloque
+  `NoOp` de `Rutas.nk`; al tocar el
   nodo, regenerarlo y verificar `diff`.
 - Al eliminar un knob del nodo: buscar TODAS las llamadas `n["knob"]`. El stub de
   tests NO atrapa knobs inexistentes (`NodoFake.__getitem__` devuelve un

@@ -111,8 +111,12 @@ class TestObtenerRutaScripts:
         assert proyecto.obtener_ruta_scripts() == str(comp / "Scripts")
 
 
-def _nodo_rutas_con_proyecto(proyecto_valor):
-    """NodoFake con knobs 'UsuarioActivo', 'RutaActual' y 'string'."""
+def _nodo_rutas_v1(proyecto_valor):
+    """NodoFake con la forma vieja ('UsuarioActivo' + 'RutaActual').
+
+    Lo conserva solo el test que prueba que `_nombre_proyecto` YA NO lee esos
+    knobs: el nodo de rutas v3 (RutasV2) no los declara.
+    """
     nodo = nuke.NodoFake(cls="Rutas", nombre="Rutas1")
     nodo.knobs_d["UsuarioActivo"] = nuke.KnobFake("ARTIST")
     nodo.knobs_d["RutaActual"] = nuke.KnobFake("ruta")
@@ -135,12 +139,32 @@ class TestGetComp:
 
 
 class TestNombreProyecto:
-    def test_con_nodo_lee_knob_string(self):
-        nuke._estado["nodos"] = [_nodo_rutas_con_proyecto("  HTLR  ")]
+    def test_delega_en_rutas_unico(self, monkeypatch):
+        # 3.0.0: el nombre lo resuelve la politica del nodo unico, no proyecto.py.
+        from SamanTools import rutas_unico
+
+        monkeypatch.setattr(
+            rutas_unico, "proyecto_activo", lambda: "HTLR", raising=False
+        )
+        assert proyecto._nombre_proyecto() == "HTLR"
+
+    def test_ignora_knobs_del_nodo_v1(self, monkeypatch):
+        from SamanTools import rutas_unico
+
+        monkeypatch.setattr(
+            rutas_unico, "proyecto_activo", lambda: "Nuevo", raising=False
+        )
+        nuke._estado["nodos"] = [_nodo_rutas_v1("  HTLR  ")]
         try:
-            assert proyecto._nombre_proyecto() == "HTLR"
+            assert proyecto._nombre_proyecto() == "Nuevo"
         finally:
             nuke._estado["nodos"] = []
+
+    def test_sin_proyecto_cae_a_proyecto(self, monkeypatch):
+        from SamanTools import rutas_unico
+
+        monkeypatch.setattr(rutas_unico, "proyecto_activo", lambda: "", raising=False)
+        assert proyecto._nombre_proyecto() == "Proyecto"
 
     def test_sin_nodos_proyecto_por_defecto(self):
         nuke._estado["nodos"] = []
@@ -148,19 +172,36 @@ class TestNombreProyecto:
 
 
 class TestActualizarDesdeNodoRutas:
-    def test_delega_en_rutas_actualizar(self, monkeypatch):
-        from SamanTools import rutas
+    def test_delega_en_rutas_unico_sincronizar_entorno(self, monkeypatch):
+        from SamanTools import rutas_unico
 
         llamadas = []
 
-        def _espia(nodo):
+        def _espia(nodo=None):
             llamadas.append(nodo)
             return True
 
-        monkeypatch.setattr(rutas, "actualizar", _espia)
-        nodo = _nodo_rutas_con_proyecto("HTLR")
+        monkeypatch.setattr(
+            rutas_unico, "sincronizar_entorno", _espia, raising=False
+        )
+        nodo = nuke.NodoFake(cls="Rutas", nombre="Rutas1")
         assert proyecto.actualizar_desde_nodo_rutas(nodo) is True
         assert llamadas == [nodo]
+
+    def test_sin_nodo_delega_none(self, monkeypatch):
+        from SamanTools import rutas_unico
+
+        llamadas = []
+
+        def _espia(nodo=None):
+            llamadas.append(nodo)
+            return True
+
+        monkeypatch.setattr(
+            rutas_unico, "sincronizar_entorno", _espia, raising=False
+        )
+        assert proyecto.actualizar_desde_nodo_rutas() is True
+        assert llamadas == [None]
 
 
 class TestCargarScriptsProyecto:

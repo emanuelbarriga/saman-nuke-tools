@@ -1,7 +1,7 @@
 # saman-nuke-tools
 
 Herramientas globales de Nuke para el estudio (multiplataforma: macOS, Windows, Linux).
-Versión actual: **2.0.0**. Incluye los nodos **Breakdown**, **Review**, **Rutas**, **fSpy** y el menú **SamanTools** (ChangeColorspace).
+Versión actual: **3.0.0**. Publica exactamente cinco nodos —**Rutas**, **Breakdown**, **Review**, **ColorSpaces** y **fSpy**—, todos autocontenidos, más el menú **SamanTools** y el bootstrap de actualización.
 
 > **Antes de tocar el código**: lee [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) —
 > decisiones de diseño, flujo de actualización, errores históricos y reglas operativas.
@@ -17,17 +17,20 @@ saman-nuke-tools/
 ├── SamanTools/
 │   ├── registro.py          # registra menú superior + buscador TAB
 │   ├── proyecto.py          # carga dinámica de galerías del proyecto
-│   ├── rutas.py             # variables PYTHON_COMP/FROM/TO
-│   ├── rutas_global.py      # config global aplicada por el hook de arranque
-│   ├── fspy.py / fspy_core.py
+│   ├── rutas_unico.py       # UN nodo de rutas por proyecto: detecta, fusiona y actualiza
+│   ├── componentes.py       # manifiesto único de la distribución
 │   ├── fSpy.svg             # icono de fSpy
-│   ├── cambiar_colorspace.py
-│   ├── frame_manager.py     # widget Qt del nodo Breakdown (tabla de frames)
+│   ├── frame_manager.py     # widget Qt heredado (sólo lista blanca de limpieza)
 │   ├── nodos/
+│   │   ├── Rutas.gizmo      # rutas VFX dinámicas (motor embebido)
 │   │   ├── Breakdown.gizmo  # VFX breakdown (tabla de frames + capas)
 │   │   ├── Review.gizmo     # comparación side-by-side
-│   │   ├── Rutas.gizmo
-│   │   └── Rutas.nk
+│   │   ├── ColorSpaces.gizmo# clasifica Reads por espacio de color
+│   │   └── fSpy.gizmo       # cámara calibrada desde una foto
+│   │
+│   │   (v1: rutas.py, rutas_global.py, cambiar_colorspace.py, fspy.py,
+│   │    fspy_core.py, breakdown_datos.py y nodos/Rutas.nk siguen en el
+│   │    repositorio y en el historial, pero no integran la superficie v3.)
 ├── setup_artista.sh         # instalador autocontenido macOS/Linux
 ├── setup_artista.bat        # instalador Windows
 ├── install.sh / install.bat # (legacy: copia a ~/.nuke)
@@ -175,8 +178,8 @@ Las skills de OpenCode/Claude usadas por el estudio viven versionadas en
 ## Cómo se verifica
 
 Tras reiniciar Nuke:
-- Aparece el menú **SamanTools** con **Acerca de**, **Breakdown**, **fSpy** y **Actualizar** directos; los submenús son **Tools** (Cambiar ColorSpace), **Paneles (En construcción)** (Panel de Comentarios con `Ctrl+Alt+C`) y **Salud** (Diagnóstico de Red, Verificar Salud, Escanear Scripts, Limpiar knobs). **Desinstalar** queda al final (mantenimiento).
-- `rutas_global.py` conserva la configuración global de rutas en `~/.config/saman/rutas_global.json`. El hook de arranque de `registro.py` la consume, mediante `_componente_disponible`, para aplicar `PYTHON_TO_VFX/COMP/FROM_VFX`; no es una interfaz de usuario. El nodo Rutas sigue siendo la herramienta para configurar rutas en el comp.
+- Aparece el menú **SamanTools** con **Acerca de**, **Breakdown** y **fSpy** directos, el submenú **Salud** (Verificar Salud, Escanear Scripts, Limpiar knobs) y **Actualizar/Desinstalar** al final. No hay submenú de herramientas sueltas: los cinco nodos son la herramienta.
+- `rutas_unico.py` garantiza **un solo nodo de rutas por proyecto**: al abrir un comp detecta los nodos por sus knobs (nunca por nombre), fusiona los duplicados dejando uno y empuja las `PYTHON_*` de ese nodo para que los Reads dinámicos resuelvan sin tocar nada. Con un nodo de versión anterior no migra solo: la actualización es la acción explícita del menú, que conserva el estado y la posición del nodo.
 - fSpy usa el icono `SamanTools/fSpy.svg` en el menú SamanTools y en el menú Nodes.
 - En el buscador (TAB), escribiendo **breakdown**, **review**, **rutas** o **fSpy** se crean los nodos.
 

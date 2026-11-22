@@ -1,274 +1,293 @@
 set cut_paste_input [stack 0]
-version 17.1 v1
 push $cut_paste_input
 Group {
- name Breakdown
- label "Para Review"
- selected true
- xpos 313
- ypos -77
- addUserKnob {20 User l Breakdown}
- addUserKnob {1 frame_data l "" +STARTLINE +INVISIBLE}
- addUserKnob {3 datos_ver l "Version de datos" +INVISIBLE}
- addUserKnob {1 TXT l "" +INVISIBLE}
- addUserKnob {26 sep l "" +STARTLINE}
- addUserKnob {52 table_ui l "" -STARTLINE T __import__('frame_manager').FrameManagerKnob()}
- addUserKnob {22 Agregar l "+ Agregar" T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.agregar()" +STARTLINE}
- addUserKnob {22 Eliminar -STARTLINE T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.eliminar()"}
- addUserKnob {22 Arriba l ▲ -STARTLINE T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.subir()"}
- addUserKnob {22 Abajo l ▼ -STARTLINE T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.bajar()"}
- addUserKnob {22 Generar -STARTLINE T "from frame_manager import FrameManagerTable\nt = FrameManagerTable.instancia(nuke.thisNode())\nif t: t.generar()"}
- addUserKnob {26 Espacio l " " T "  "}
- addUserKnob {3 Desfase t "Desfaza en tiempo real todos los frames generados."}
- addUserKnob {26 Espacio_1 l "  " -STARTLINE T "    "}
- addUserKnob {6 VerTexto l "Ver Overlay Texto" -STARTLINE}
- VerTexto true
- addUserKnob {26 Sep_datos l "" +STARTLINE}
- addUserKnob {3 N l "Cantidad de filas" +INVISIBLE}
- N 3
- addUserKnob {3 F_1 l "Frame 1" +INVISIBLE}
- F_1 10
- addUserKnob {3 L_1 l "Capas 1" +INVISIBLE}
- addUserKnob {3 F_2 l "Frame 2" +INVISIBLE}
- F_2 20
- addUserKnob {3 L_2 l "Capas 2" +INVISIBLE}
- L_2 1
- addUserKnob {3 F_3 l "Frame 3" +INVISIBLE}
- F_3 30
- addUserKnob {3 L_3 l "Capas 3" +INVISIBLE}
- addUserKnob {3 F_4 l "Frame 4" +INVISIBLE}
- addUserKnob {3 L_4 l "Capas 4" +INVISIBLE}
- addUserKnob {3 F_5 l "Frame 5" +INVISIBLE}
- addUserKnob {3 L_5 l "Capas 5" +INVISIBLE}
- addUserKnob {3 F_6 l "Frame 6" +INVISIBLE}
- addUserKnob {3 L_6 l "Capas 6" +INVISIBLE}
- addUserKnob {3 F_7 l "Frame 7" +INVISIBLE}
- addUserKnob {3 L_7 l "Capas 7" +INVISIBLE}
- addUserKnob {3 F_8 l "Frame 8" +INVISIBLE}
- addUserKnob {3 L_8 l "Capas 8" +INVISIBLE}
- addUserKnob {3 F_9 l "Frame 9" +INVISIBLE}
- addUserKnob {3 L_9 l "Capas 9" +INVISIBLE}
- addUserKnob {3 F_10 l "Frame 10" +INVISIBLE}
- addUserKnob {3 L_10 l "Capas 10" +INVISIBLE}
- addUserKnob {3 F_11 l "Frame 11" +INVISIBLE}
- addUserKnob {3 L_11 l "Capas 11" +INVISIBLE}
- addUserKnob {3 F_12 l "Frame 12" +INVISIBLE}
- addUserKnob {3 L_12 l "Capas 12" +INVISIBLE}
- addUserKnob {3 F_13 l "Frame 13" +INVISIBLE}
- addUserKnob {3 L_13 l "Capas 13" +INVISIBLE}
- addUserKnob {3 F_14 l "Frame 14" +INVISIBLE}
- addUserKnob {3 L_14 l "Capas 14" +INVISIBLE}
- addUserKnob {3 F_15 l "Frame 15" +INVISIBLE}
- addUserKnob {3 L_15 l "Capas 15" +INVISIBLE}
- addUserKnob {3 F_16 l "Frame 16" +INVISIBLE}
- addUserKnob {3 L_16 l "Capas 16" +INVISIBLE}
- addUserKnob {3 F_17 l "Frame 17" +INVISIBLE}
- addUserKnob {3 L_17 l "Capas 17" +INVISIBLE}
- addUserKnob {3 F_18 l "Frame 18" +INVISIBLE}
- addUserKnob {3 L_18 l "Capas 18" +INVISIBLE}
- addUserKnob {3 F_19 l "Frame 19" +INVISIBLE}
- addUserKnob {3 L_19 l "Capas 19" +INVISIBLE}
- addUserKnob {3 F_20 l "Frame 20" +INVISIBLE}
- addUserKnob {3 L_20 l "Capas 20" +INVISIBLE}
- addUserKnob {3 F_21 l "Frame 21" +INVISIBLE}
- addUserKnob {3 L_21 l "Capas 21" +INVISIBLE}
- addUserKnob {3 F_22 l "Frame 22" +INVISIBLE}
- addUserKnob {3 L_22 l "Capas 22" +INVISIBLE}
- addUserKnob {3 F_23 l "Frame 23" +INVISIBLE}
- addUserKnob {3 L_23 l "Capas 23" +INVISIBLE}
- addUserKnob {3 F_24 l "Frame 24" +INVISIBLE}
- addUserKnob {3 L_24 l "Capas 24" +INVISIBLE}
- addUserKnob {3 F_25 l "Frame 25" +INVISIBLE}
- addUserKnob {3 L_25 l "Capas 25" +INVISIBLE}
- addUserKnob {3 F_26 l "Frame 26" +INVISIBLE}
- addUserKnob {3 L_26 l "Capas 26" +INVISIBLE}
- addUserKnob {3 F_27 l "Frame 27" +INVISIBLE}
- addUserKnob {3 L_27 l "Capas 27" +INVISIBLE}
- addUserKnob {3 F_28 l "Frame 28" +INVISIBLE}
- addUserKnob {3 L_28 l "Capas 28" +INVISIBLE}
- addUserKnob {3 F_29 l "Frame 29" +INVISIBLE}
- addUserKnob {3 L_29 l "Capas 29" +INVISIBLE}
- addUserKnob {3 F_30 l "Frame 30" +INVISIBLE}
- addUserKnob {3 L_30 l "Capas 30" +INVISIBLE}
- addUserKnob {3 F_31 l "Frame 31" +INVISIBLE}
- addUserKnob {3 L_31 l "Capas 31" +INVISIBLE}
- addUserKnob {3 F_32 l "Frame 32" +INVISIBLE}
- addUserKnob {3 L_32 l "Capas 32" +INVISIBLE}
- addUserKnob {20 Columnas l Columnas}
- addUserKnob {26 col_ayuda l "" T "Cantidad de columnas de la tabla. Frame es siempre la primera columna."}
- addUserKnob {3 Cantidad l "Cantidad de columnas" R 0 8}
- Cantidad 2
- addUserKnob {1 Col_1_nombre l "Columna 1"}
- Col_1_nombre Muzzle
- addUserKnob {4 Col_1_tipo l "" -STARTLINE M {Tilde Texto Numero}}
- addUserKnob {1 Col_2_nombre l "Columna 2"}
- Col_2_nombre Nota
- addUserKnob {4 Col_2_tipo l "" -STARTLINE M {Tilde Texto Numero}}
- Col_2_tipo Texto
- addUserKnob {1 Col_3_nombre l "Columna 3"}
- addUserKnob {4 Col_3_tipo l "" -STARTLINE M {Tilde Texto Numero}}
- addUserKnob {1 Col_4_nombre l "Columna 4"}
- addUserKnob {4 Col_4_tipo l "" -STARTLINE M {Tilde Texto Numero}}
- addUserKnob {1 Col_5_nombre l "Columna 5"}
- addUserKnob {4 Col_5_tipo l "" -STARTLINE M {Tilde Texto Numero}}
- addUserKnob {1 Col_6_nombre l "Columna 6"}
- addUserKnob {4 Col_6_tipo l "" -STARTLINE M {Tilde Texto Numero}}
- addUserKnob {1 Col_7_nombre l "Columna 7"}
- addUserKnob {4 Col_7_tipo l "" -STARTLINE M {Tilde Texto Numero}}
- addUserKnob {1 Col_8_nombre l "Columna 8"}
- addUserKnob {4 Col_8_tipo l "" -STARTLINE M {Tilde Texto Numero}}
- addUserKnob {26 col_nota l "" T "Cambiar el tipo no borra datos: los oculta. Si volves al tipo anterior, reaparecen."}
- addUserKnob {22 Aplicar_columnas l "Aplicar columnas" T "from frame_manager import aplicar_columnas\naplicar_columnas(nuke.thisNode())"}
+name Breakdown
+tile_color 0x191919ff
+label "Para Review\nV01"
+selected true
+xpos 4956
+ypos 4800
+addUserKnob {20 User l Breakdown}
+addUserKnob {1 frame_data l "" +STARTLINE +INVISIBLE}
+addUserKnob {3 datos_ver l "Version de datos" +INVISIBLE}
+addUserKnob {1 TXT l "" -STARTLINE +INVISIBLE}
+TXT "\{\"1\": \{\"2\": \"10\", \"3\": \"Agregar Fuego\"\}, \"2\": \{\"2\": \"5\", \"3\": \"Incidencia Luz\"\}, \"3\": \{\"2\": \"3\", \"3\": \"Nada\"\}\}"
+addUserKnob {26 sep l "" +STARTLINE}
+addUserKnob {52 table_ui l "" -STARTLINE T "(exec(__import__('nuke').thisNode().knob('Cerebro_Python').value(), \{\}), __import__('_saman_breakdown2').FrameManagerKnob())\[1]"}
+addUserKnob {22 Agregar l "+ Agregar" T "exec(nuke.thisNode().knob('Cerebro_Python').value(), \{\})\n__import__('_saman_breakdown2').boton(nuke.thisNode(), 'agregar')" +STARTLINE}
+addUserKnob {22 Eliminar -STARTLINE T "exec(nuke.thisNode().knob('Cerebro_Python').value(), \{\})\n__import__('_saman_breakdown2').boton(nuke.thisNode(), 'eliminar')"}
+addUserKnob {22 Arriba l ▲ -STARTLINE T "exec(nuke.thisNode().knob('Cerebro_Python').value(), \{\})\n__import__('_saman_breakdown2').boton(nuke.thisNode(), 'subir')"}
+addUserKnob {22 Abajo l ▼ -STARTLINE T "exec(nuke.thisNode().knob('Cerebro_Python').value(), \{\})\n__import__('_saman_breakdown2').boton(nuke.thisNode(), 'bajar')"}
+addUserKnob {22 Generar -STARTLINE T "exec(nuke.thisNode().knob('Cerebro_Python').value(), \{\})\n__import__('_saman_breakdown2').boton(nuke.thisNode(), 'generar')"}
+addUserKnob {26 Espacio l " " T "  "}
+addUserKnob {3 Desfase t "Desfaza en tiempo real todos los frames generados."}
+addUserKnob {26 Espacio_1 l "  " -STARTLINE T "    "}
+addUserKnob {6 VerTexto l "Ver Overlay Texto" -STARTLINE}
+VerTexto true
+addUserKnob {26 Espacio_2 l " " T "  "}
+addUserKnob {26 text l Créditos T "Samán Estudio SAS. emanuel.barriga@samanestudio.com"}
+addUserKnob {3 N l "Cantidad de filas" +INVISIBLE}
+N 3
+addUserKnob {3 F_1 l "Frame 1" +INVISIBLE}
+F_1 10
+addUserKnob {3 L_1 l "Capas 1" +INVISIBLE}
+L_1 1
+addUserKnob {3 F_2 l "Frame 2" +INVISIBLE}
+F_2 20
+addUserKnob {3 L_2 l "Capas 2" +INVISIBLE}
+L_2 1
+addUserKnob {3 F_3 l "Frame 3" +INVISIBLE}
+F_3 30
+addUserKnob {3 L_3 l "Capas 3" +INVISIBLE}
+L_3 1
+addUserKnob {3 F_4 l "Frame 4" +INVISIBLE}
+addUserKnob {3 L_4 l "Capas 4" +INVISIBLE}
+addUserKnob {3 F_5 l "Frame 5" +INVISIBLE}
+addUserKnob {3 L_5 l "Capas 5" +INVISIBLE}
+addUserKnob {3 F_6 l "Frame 6" +INVISIBLE}
+addUserKnob {3 L_6 l "Capas 6" +INVISIBLE}
+addUserKnob {3 F_7 l "Frame 7" +INVISIBLE}
+addUserKnob {3 L_7 l "Capas 7" +INVISIBLE}
+addUserKnob {3 F_8 l "Frame 8" +INVISIBLE}
+addUserKnob {3 L_8 l "Capas 8" +INVISIBLE}
+addUserKnob {3 F_9 l "Frame 9" +INVISIBLE}
+addUserKnob {3 L_9 l "Capas 9" +INVISIBLE}
+addUserKnob {3 F_10 l "Frame 10" +INVISIBLE}
+addUserKnob {3 L_10 l "Capas 10" +INVISIBLE}
+addUserKnob {3 F_11 l "Frame 11" +INVISIBLE}
+addUserKnob {3 L_11 l "Capas 11" +INVISIBLE}
+addUserKnob {3 F_12 l "Frame 12" +INVISIBLE}
+addUserKnob {3 L_12 l "Capas 12" +INVISIBLE}
+addUserKnob {3 F_13 l "Frame 13" +INVISIBLE}
+addUserKnob {3 L_13 l "Capas 13" +INVISIBLE}
+addUserKnob {3 F_14 l "Frame 14" +INVISIBLE}
+addUserKnob {3 L_14 l "Capas 14" +INVISIBLE}
+addUserKnob {3 F_15 l "Frame 15" +INVISIBLE}
+addUserKnob {3 L_15 l "Capas 15" +INVISIBLE}
+addUserKnob {3 F_16 l "Frame 16" +INVISIBLE}
+addUserKnob {3 L_16 l "Capas 16" +INVISIBLE}
+addUserKnob {3 F_17 l "Frame 17" +INVISIBLE}
+addUserKnob {3 L_17 l "Capas 17" +INVISIBLE}
+addUserKnob {3 F_18 l "Frame 18" +INVISIBLE}
+addUserKnob {3 L_18 l "Capas 18" +INVISIBLE}
+addUserKnob {3 F_19 l "Frame 19" +INVISIBLE}
+addUserKnob {3 L_19 l "Capas 19" +INVISIBLE}
+addUserKnob {3 F_20 l "Frame 20" +INVISIBLE}
+addUserKnob {3 L_20 l "Capas 20" +INVISIBLE}
+addUserKnob {3 F_21 l "Frame 21" +INVISIBLE}
+addUserKnob {3 L_21 l "Capas 21" +INVISIBLE}
+addUserKnob {3 F_22 l "Frame 22" +INVISIBLE}
+addUserKnob {3 L_22 l "Capas 22" +INVISIBLE}
+addUserKnob {3 F_23 l "Frame 23" +INVISIBLE}
+addUserKnob {3 L_23 l "Capas 23" +INVISIBLE}
+addUserKnob {3 F_24 l "Frame 24" +INVISIBLE}
+addUserKnob {3 L_24 l "Capas 24" +INVISIBLE}
+addUserKnob {3 F_25 l "Frame 25" +INVISIBLE}
+addUserKnob {3 L_25 l "Capas 25" +INVISIBLE}
+addUserKnob {3 F_26 l "Frame 26" +INVISIBLE}
+addUserKnob {3 L_26 l "Capas 26" +INVISIBLE}
+addUserKnob {3 F_27 l "Frame 27" +INVISIBLE}
+addUserKnob {3 L_27 l "Capas 27" +INVISIBLE}
+addUserKnob {3 F_28 l "Frame 28" +INVISIBLE}
+addUserKnob {3 L_28 l "Capas 28" +INVISIBLE}
+addUserKnob {3 F_29 l "Frame 29" +INVISIBLE}
+addUserKnob {3 L_29 l "Capas 29" +INVISIBLE}
+addUserKnob {3 F_30 l "Frame 30" +INVISIBLE}
+addUserKnob {3 L_30 l "Capas 30" +INVISIBLE}
+addUserKnob {3 F_31 l "Frame 31" +INVISIBLE}
+addUserKnob {3 L_31 l "Capas 31" +INVISIBLE}
+addUserKnob {3 F_32 l "Frame 32" +INVISIBLE}
+addUserKnob {3 L_32 l "Capas 32" +INVISIBLE}
+addUserKnob {20 Columnas}
+addUserKnob {26 col_ayuda l "" -STARTLINE T "Cantidad de columnas de la tabla. Frame es siempre la primera columna."}
+addUserKnob {3 Cantidad l "Cantidad de columnas" R 0 8}
+Cantidad 3
+addUserKnob {1 Col_1_nombre l "Columna 1"}
+Col_1_nombre Muzzle
+addUserKnob {4 Col_1_tipo l "" -STARTLINE M {Tilde Texto Numero}}
+addUserKnob {1 Col_2_nombre l "Columna 2"}
+Col_2_nombre Cantidad
+addUserKnob {4 Col_2_tipo l "" -STARTLINE M {Tilde Texto Numero}}
+Col_2_tipo Numero
+addUserKnob {1 Col_3_nombre l "Columna 3"}
+Col_3_nombre Nota
+addUserKnob {4 Col_3_tipo l "" -STARTLINE M {Tilde Texto Numero}}
+Col_3_tipo Texto
+addUserKnob {1 Col_4_nombre l "Columna 4"}
+addUserKnob {4 Col_4_tipo l "" -STARTLINE M {Tilde Texto Numero}}
+addUserKnob {1 Col_5_nombre l "Columna 5"}
+addUserKnob {4 Col_5_tipo l "" -STARTLINE M {Tilde Texto Numero}}
+addUserKnob {1 Col_6_nombre l "Columna 6"}
+addUserKnob {4 Col_6_tipo l "" -STARTLINE M {Tilde Texto Numero}}
+addUserKnob {1 Col_7_nombre l "Columna 7"}
+addUserKnob {4 Col_7_tipo l "" -STARTLINE M {Tilde Texto Numero}}
+addUserKnob {1 Col_8_nombre l "Columna 8"}
+addUserKnob {4 Col_8_tipo l "" -STARTLINE M {Tilde Texto Numero}}
+addUserKnob {26 col_nota l "" -STARTLINE T "Cambiar el tipo no borra datos: los oculta. Si volves al tipo anterior, reaparecen."}
+addUserKnob {22 Aplicar_columnas l "Aplicar columnas" -STARTLINE T "exec(nuke.thisNode().knob('Cerebro_Python').value(), \{\})\n__import__('_saman_breakdown2').aplicar_columnas(nuke.thisNode())"}
+addUserKnob {52 Cerebro_Python l "" -STARTLINE +INVISIBLE T "\"\"\"Motor Breakdown v2: construye el modulo compartido `_saman_breakdown2`.\n\nVive (embebido) en el knob oculto Cerebro_Python del grupo Breakdown_v2. Igual\nque v1, construye un modulo real en sys.modules para que el knob PyCustom\n(table_ui) y los botones compartan UNA sola instancia de las clases Qt. El\nmodulo se construye una vez por sesion y se reconstruye solo si cambia el\ncontenido embebido (huella sha1).\n\nCambios v2 (S9):\n\n* (a) La clave pasa a `_saman_breakdown2`: un Breakdown v1 y un Breakdown_v2\n  en la misma sesion conviven sin pisarse los modulos.\n* El contenido de `breakdown_datos.py` y `frame_manager.py` viaja embebido como\n  dos strings `repr()` (igual que v1); `build_breakdown.py` reemplaza los\n  tokens `_DATOS_SRC`/`_FRAME_SRC` por esos repr antes de grabar el gizmo. En\n  desarrollo (este archivo cargado directo, tokens intactos) las fuentes se\n  leen del disco, junto a este archivo.\n\nEl knob PyCustom arranca el motor con una sola expresion, porque Nuke evalua\n`T <expr>` y espera el knob como resultado:\n\n    (exec(... Cerebro_Python ...), __import__('_saman_breakdown2').FrameManagerKnob())\[1]\n\"\"\"\n\nimport hashlib\nimport os\nimport sys\nimport types\n\nCLAVE = \"_saman_breakdown2\"\n\n#: breakdown_datos.py, verbatim. El build reemplaza estos tokens por repr().\n_DATOS_SRC = '\"\"\"\\nDatos del nodo Breakdown: filas de frames, mascara de capas y plan del grafo.\\n\\nEste modulo NO importa Nuke ni Qt a proposito: asi la logica se puede probar\\ncon pytest fuera de Nuke y el widget (`frame_manager.py`) se apoya en el.\\n\\nStorage tipado en el grupo (`nodos/Breakdown.gizmo`), todo invisible:\\n\\n    N            Int_Knob  cantidad de filas (1..POOL)\\n    F_<i>        Int_Knob  frame de la fila i\\n    L_<i>        Int_Knob  mascara de capas de la fila i (bits 1, 2, 4, 8, 16)\\n    frame_data   String    JSON legacy: solo se lee para migrar una unica vez\\n\\nLos knobs son nativos (Int), no un blob JSON: editar una celda escribe como\\nmaximo los dos knobs de esa fila y no re-serializa la tabla entera.\\n\"\"\"\\n\\nimport json\\nimport math\\nimport unicodedata\\n\\n#: Capas visuales, en el orden de las columnas de la tabla. Fijas por diseno.\\nCAPAS = (\"brillo\", \"muzzle\", \"humo\", \"impacto\", \"sangre\")\\n\\n#: Mapa capa -> bit dentro del knob `L_<i>`.\\nBITS = \{nombre: 1 << indice for indice, nombre in enumerate(CAPAS)\}\\n\\n#: Mascara con todas las capas encendidas (31 = 1+2+4+8+16).\\nMASCARA_MAX = (1 << len(CAPAS)) - 1\\n\\n#: Filas maximas que el `.gizmo` declara. Mantener sincronizado con el gizmo.\\nPOOL = 32\\n\\n#: Knob con la cantidad de filas.\\nKNOB_FILAS = \"N\"\\n\\n#: Knob del JSON legacy.\\nKNOB_LEGACY = \"frame_data\"\\n\\n#: Knob con la version del formato ya migrado.\\nKNOB_VERSION = \"datos_ver\"\\n\\n#: Version de storage: 1 = filas tipadas; 2 = columnas configurables.\\nVERSION_DATOS = 2\\n\\n#: Tipos de columna admitidos, en el orden del knob Enumeration del `.gizmo`.\\nTIPOS = (\"tilde\", \"texto\", \"numero\")\\n\\n#: Columnas maximas. 8 es el techo del pool de knobs de la pestana Columnas.\\nMAX_COLUMNAS = 8\\n\\n#: Mascara con todas las columnas de tilde encendidas (hasta 8 columnas).\\nMASCARA_COLUMNAS = (1 << MAX_COLUMNAS) - 1\\n\\n#: Knob con la cantidad de columnas de la tabla.\\nKNOB_COLUMNAS = \"Cantidad\"\\n\\n#: Knob con los valores de las columnas de texto y numero.\\nKNOB_TEXTOS = \"TXT\"\\n\\n#: Configuracion que usaban los comps anteriores a las columnas configurables.\\nCOLUMNAS_CANONICAS = \[\\n    \{\"nombre\": nombre.capitalize(), \"tipo\": \"tilde\"\} for nombre in CAPAS\\n]\\n\\n#: Configuracion de un nodo nuevo: una columna de tilde y una de texto.\\nCOLUMNAS_EJEMPLO = \[\\n    \{\"nombre\": \"Muzzle\", \"tipo\": \"tilde\"\},\\n    \{\"nombre\": \"Nota\", \"tipo\": \"texto\"\},\\n]\\n\\n\\ndef knob_frame(indice):\\n    \"\"\"Nombre del knob Int con el frame de la fila `indice` (1..POOL).\"\"\"\\n    return \"F_%d\" % indice\\n\\n\\ndef knob_capas(indice):\\n    \"\"\"Nombre del knob Int con la mascara de tildes de la fila `indice`.\"\"\"\\n    return \"L_%d\" % indice\\n\\n\\ndef knob_col_nombre(slot):\\n    \"\"\"Nombre del knob String con el nombre de la columna `slot`.\"\"\"\\n    return \"Col_%d_nombre\" % slot\\n\\n\\ndef knob_col_tipo(slot):\\n    \"\"\"Nombre del knob Enumeration con el tipo de la columna `slot`.\"\"\"\\n    return \"Col_%d_tipo\" % slot\\n\\n\\ndef bit_de_columna(slot):\\n    \"\"\"Bit de la mascara que corresponde a la columna `slot` (1..8).\"\"\"\\n    return 1 << (int(slot) - 1)\\n\\n\\n# ------------------------------------------------------------------ capas\\n\\n\\ndef codificar_capas(estados):\\n    \"\"\"Convierte `\{capa: bool\}` (o una fila legacy) en una mascara entera.\"\"\"\\n    mascara = 0\\n    for nombre, bit in BITS.items():\\n        if estados.get(nombre):\\n            mascara |= bit\\n    return mascara\\n\\n\\ndef decodificar_capas(mascara):\\n    \"\"\"Convierte una mascara entera en `\{capa: bool\}` con las cinco capas.\\n\\n    Los bits desconocidos se descartan y los conocidos se conservan, para que\\n    una mascara de una version futura no rompa la tabla.\\n    \"\"\"\\n    try:\\n        mascara = int(mascara) & MASCARA_MAX\\n    except (TypeError, ValueError):\\n        mascara = 0\\n    return \{nombre: bool(mascara & bit) for nombre, bit in BITS.items()\}\\n\\n\\ndef normalizar_frame(valor):\\n    \"\"\"Devuelve un frame entero; cualquier valor invalido cae a 0.\"\"\"\\n    try:\\n        return int(round(float(valor)))\\n    except (TypeError, ValueError):\\n        return 0\\n\\n\\n# ----------------------------------------------------------------- grilla\\n\\n\\ndef grilla(cantidad):\\n    \"\"\"Devuelve `(columnas, filas)` de la grilla mas cuadrada que los contenga.\\n\\n    Con cero o un frame devuelve `(1, 1)`; el ContactSheet necesita al menos\\n    una celda para evaluar sus dimensiones.\\n    \"\"\"\\n    cantidad = max(0, int(cantidad))\\n    if cantidad <= 1:\\n        return (1, 1)\\n    columnas = int(math.ceil(math.sqrt(cantidad)))\\n    filas = int(math.ceil(cantidad / float(columnas)))\\n    return (columnas, filas)\\n\\n\\n# --------------------------------------------------------- reconciliacion\\n\\n\\ndef plan_reconciliacion(deseados, existentes):\\n    \"\"\"Decide que indices del grafo interno reusar, crear y borrar.\\n\\n    `deseados` es la cantidad de filas de la tabla; `existentes` son los\\n    indices (1..N) de los que ya tienen FrameHold/Text en el grupo. Reusar lo\\n    que ya esta evita borrar y recrear el grafo en cada Generar.\\n    \"\"\"\\n    deseados = set(range(1, max(0, int(deseados)) + 1))\\n    existentes = set(existentes or ())\\n    return \{\\n        \"reusar\": sorted(deseados & existentes),\\n        \"crear\": sorted(deseados - existentes),\\n        \"sobrantes\": sorted(existentes - deseados),\\n    \}\\n\\n\\n# ------------------------------------------------------- modelo de columnas\\n\\n\\ndef normalizar_tipo(valor):\\n    \"\"\"Devuelve `tilde`, `texto` o `numero` a partir de la etiqueta del knob.\\n\\n    El knob es un Enumeration con las etiquetas `Tilde`, `Texto` y `Numero`;\\n    cualquier valor inesperado cae a `tilde`.\\n    \"\"\"\\n    if not isinstance(valor, str):\\n        return \"tilde\"\\n    limpio = unicodedata.normalize(\"NFKD\", valor)\\n    limpio = limpio.encode(\"ascii\", \"ignore\").decode(\"ascii\").strip().lower()\\n    return limpio if limpio in TIPOS else \"tilde\"\\n\\n\\ndef normalizar_columnas(columnas):\\n    \"\"\"Completa nombres vacios y recorta/padea al maximo de columnas.\"\"\"\\n    resultado = \[]\\n    for indice in range(1, MAX_COLUMNAS + 1):\\n        columna = columnas\[indice - 1] if indice <= len(columnas) else \{\}\\n        if not isinstance(columna, dict):\\n            columna = \{\}\\n        nombre = str(columna.get(\"nombre\", \"\") or \"\").strip()\\n        resultado.append(\\n            \{\\n                \"nombre\": nombre or \"Columna %d\" % indice,\\n                \"tipo\": normalizar_tipo(columna.get(\"tipo\", \"tilde\")),\\n            \}\\n        )\\n    return resultado\\n\\n\\ndef leer_columnas(nodo):\\n    \"\"\"Configuracion de columnas del nodo, ya normalizada y recortada.\"\"\"\\n    cantidad = normalizar_frame(_valor(nodo, KNOB_COLUMNAS, 0))\\n    cantidad = max(0, min(cantidad, MAX_COLUMNAS))\\n    columnas = \[]\\n    for slot in range(1, cantidad + 1):\\n        columnas.append(\\n            \{\\n                \"nombre\": str(_valor(nodo, knob_col_nombre(slot), \"\") or \"\").strip()\\n                or \"Columna %d\" % slot,\\n                \"tipo\": normalizar_tipo(_valor(nodo, knob_col_tipo(slot), \"Tilde\")),\\n            \}\\n        )\\n    return columnas\\n\\n\\ndef escribir_columnas(nodo, columnas):\\n    \"\"\"Escribe `Cantidad` y los knobs de nombre/tipo de cada slot.\\n\\n    Limpia los slots que quedaron fuera de la cantidad nueva, para que un\\n    Enumeration o un nombre viejo no confunda a la proxima lectura.\\n    \"\"\"\\n    columnas = list(columnas)\[:MAX_COLUMNAS]\\n    _escribir_numero(nodo, KNOB_COLUMNAS, len(columnas))\\n\\n    for slot in range(1, MAX_COLUMNAS + 1):\\n        columna = columnas\[slot - 1] if slot <= len(columnas) else None\\n        if columna is None:\\n            _escribir_texto(nodo, knob_col_nombre(slot), \"\")\\n            _escribir_texto(nodo, knob_col_tipo(slot), \"Tilde\")\\n            continue\\n        normal = normalizar_columnas(\[columna])\[0]\\n        _escribir_texto(nodo, knob_col_nombre(slot), normal\[\"nombre\"])\\n        _escribir_texto(nodo, knob_col_tipo(slot), normal\[\"tipo\"].capitalize())\\n\\n\\n# ------------------------------------------------- valores de texto/numero\\n\\n\\ndef leer_textos(nodo):\\n    \"\"\"Valores de las columnas de texto/numero: `\{fila: \{slot: str\}\}`.\\n\\n    Un `TXT` vacio, corrupto o con una forma inesperada devuelve `\{\}` sin\\n    lanzar excepcion: la tabla arranca sin textos y no se pierde nada mas.\\n    \"\"\"\\n    crudo = _valor(nodo, KNOB_TEXTOS, \"\")\\n    if not crudo:\\n        return \{\}\\n    try:\\n        crudo = json.loads(crudo)\\n    except (TypeError, ValueError):\\n        return \{\}\\n    if not isinstance(crudo, dict):\\n        return \{\}\\n\\n    textos = \{\}\\n    for fila, valores in crudo.items():\\n        if not isinstance(valores, dict):\\n            continue\\n        limpios = \{\}\\n        for slot, valor in valores.items():\\n            if valor in (None, \"\"):\\n                continue\\n            limpios\[normalizar_frame(slot)] = str(valor)\\n        if limpios:\\n            textos\[normalizar_frame(fila)] = limpios\\n    return textos\\n\\n\\ndef escribir_textos(nodo, textos):\\n    \"\"\"Serializa los textos omitiendo vacios y sin reescribir si no cambio.\"\"\"\\n    limpios = \{\}\\n    for fila in sorted(textos or \{\}):\\n        valores = textos\[fila] or \{\}\\n        fila_limpia = \{\\n            str(normalizar_frame(slot)): str(valor)\\n            for slot, valor in valores.items()\\n            if valor not in (None, \"\")\\n        \}\\n        if fila_limpia:\\n            limpios\[str(normalizar_frame(fila))] = fila_limpia\\n\\n    texto = json.dumps(limpios, sort_keys=True) if limpios else \"\"\\n    _escribir_texto(nodo, KNOB_TEXTOS, texto)\\n\\n\\ndef valor_celda(fila, textos, indice, slot, tipo):\\n    \"\"\"Valor de una celda segun el tipo de su columna.\\n\\n    Los tildes salen de la mascara de la fila; texto y numero, de `textos`.\\n    \"\"\"\\n    tipo = normalizar_tipo(tipo)\\n    if tipo == \"tilde\":\\n        mascara = normalizar_frame(fila.get(\"capas\", 0))\\n        return bool(mascara & bit_de_columna(slot))\\n    return (textos.get(normalizar_frame(indice)) or \{\}).get(normalizar_frame(slot), \"\")\\n\\n\\ndef escribir_celda(nodo, indice, slot, valor):\\n    \"\"\"Escribe una sola celda. Camino caliente de la tabla.\\n\\n    Un booleano va a la mascara `L_<i>` (un solo knob); cualquier otro valor\\n    va al `TXT` compartido, que se reescribe entero pero solo al confirmar.\\n    \"\"\"\\n    indice = normalizar_frame(indice)\\n    slot = normalizar_frame(slot)\\n    if not (1 <= indice <= POOL and 1 <= slot <= MAX_COLUMNAS):\\n        return\\n\\n    if isinstance(valor, bool):\\n        mascara = normalizar_frame(_valor(nodo, knob_capas(indice), 0))\\n        bit = bit_de_columna(slot)\\n        nueva = (mascara | bit) if valor else (mascara & ~bit)\\n        _escribir_numero(nodo, knob_capas(indice), nueva & MASCARA_COLUMNAS)\\n        return\\n\\n    textos = leer_textos(nodo)\\n    fila = dict(textos.get(indice) or \{\})\\n    texto = \"\" if valor is None else str(valor)\\n    if texto == \"\":\\n        fila.pop(slot, None)\\n    else:\\n        fila\[slot] = texto\\n    if fila:\\n        textos\[indice] = fila\\n    else:\\n        textos.pop(indice, None)\\n    escribir_textos(nodo, textos)\\n\\n\\n# --------------------------------------------------------------- legacy\\n\\n\\ndef filas_desde_legacy(texto):\\n    \"\"\"Convierte el JSON viejo (`frame_data`) en filas del storage tipado.\\n\\n    Acepta solo una lista de objetos; un texto vacio, un JSON corrupto o una\\n    estructura inesperada devuelven una lista vacia sin lanzar excepcion.\\n    No recorta al pool: quien decide que hacer con el excedente es la\\n    migracion, que conserva el JSON como respaldo.\\n    \"\"\"\\n    if not texto:\\n        return \[]\\n    try:\\n        crudo = json.loads(texto)\\n    except (TypeError, ValueError):\\n        return \[]\\n    if not isinstance(crudo, list):\\n        return \[]\\n\\n    filas = \[]\\n    for fila in crudo:\\n        if not isinstance(fila, dict):\\n            continue\\n        filas.append(\\n            \{\\n                \"frame\": normalizar_frame(fila.get(\"frame\", 0)),\\n                \"capas\": codificar_capas(fila),\\n            \}\\n        )\\n    return filas\\n\\n\\n# ------------------------------------------------------------ I/O de nodo\\n#\\n# Estas funciones solo usan `nodo.knobs()`, `knob.value()` y\\n# `knob.setValue()`: sirven con un nodo de Nuke y con un doble de prueba.\\n\\n\\ndef _knob(nodo, nombre):\\n    try:\\n        return nodo.knobs().get(nombre)\\n    except Exception:\\n        return None\\n\\n\\ndef _valor(nodo, nombre, defecto=0):\\n    knob = _knob(nodo, nombre)\\n    if knob is None:\\n        return defecto\\n    try:\\n        return knob.value()\\n    except Exception:\\n        return defecto\\n\\n\\ndef _escribir_numero(nodo, nombre, valor):\\n    \"\"\"Escribe un knob Int solo si cambia; evita ruido en el undo.\"\"\"\\n    knob = _knob(nodo, nombre)\\n    if knob is None:\\n        return False\\n    valor = normalizar_frame(valor)\\n    try:\\n        if normalizar_frame(knob.value()) == valor:\\n            return False\\n    except Exception:\\n        pass\\n    knob.setValue(valor)\\n    return True\\n\\n\\ndef _escribir_texto(nodo, nombre, valor):\\n    knob = _knob(nodo, nombre)\\n    if knob is None:\\n        return False\\n    try:\\n        if knob.value() == valor:\\n            return False\\n    except Exception:\\n        pass\\n    knob.setValue(valor)\\n    return True\\n\\n\\ndef leer_filas(nodo):\\n    \"\"\"Devuelve `\[\{\"frame\": int, \"capas\": int\}, ...]` desde el storage tipado.\"\"\"\\n    total = max(0, min(normalizar_frame(_valor(nodo, KNOB_FILAS, 0)), POOL))\\n    filas = \[]\\n    for indice in range(1, total + 1):\\n        filas.append(\\n            \{\\n                \"frame\": normalizar_frame(_valor(nodo, knob_frame(indice), 0)),\\n                \"capas\": normalizar_frame(_valor(nodo, knob_capas(indice), 0))\\n                & MASCARA_COLUMNAS,\\n            \}\\n        )\\n    return filas\\n\\n\\ndef escribir_fila(nodo, indice, fila):\\n    \"\"\"Escribe una sola fila. Camino caliente: editar una celda de la tabla.\"\"\"\\n    _escribir_numero(nodo, knob_frame(indice), fila.get(\"frame\", 0))\\n    _escribir_numero(\\n        nodo, knob_capas(indice), int(fila.get(\"capas\", 0)) & MASCARA_COLUMNAS\\n    )\\n\\n\\ndef escribir_filas(nodo, filas):\\n    \"\"\"Escribe todas las filas y limpia los slots que quedaron sin uso.\"\"\"\\n    filas = list(filas)\[:POOL]\\n    previo = min(normalizar_frame(_valor(nodo, KNOB_FILAS, 0)), POOL)\\n\\n    _escribir_numero(nodo, KNOB_FILAS, len(filas))\\n    for indice, fila in enumerate(filas, 1):\\n        escribir_fila(nodo, indice, fila)\\n\\n    for indice in range(len(filas) + 1, max(previo, len(filas)) + 1):\\n        _escribir_numero(nodo, knob_frame(indice), 0)\\n        _escribir_numero(nodo, knob_capas(indice), 0)\\n\\n\\ndef legacy_parseable(texto):\\n    \"\"\"True si `texto` es un JSON con forma de lista de filas.\"\"\"\\n    if not texto:\\n        return False\\n    try:\\n        crudo = json.loads(texto)\\n    except (TypeError, ValueError):\\n        return False\\n    return isinstance(crudo, list)\\n\\n\\ndef migrar_legacy(nodo):\\n    \"\"\"Lleva el nodo a `VERSION_DATOS`, sin perder nada por el camino.\\n\\n    Ramas (S17):\\n\\n    * `datos_ver` ausente / 0 con `frame_data` parseable: comp del gizmo\\n      original. Se vuelcan las filas y se instalan las 5 columnas canonicas\\n      (sus mascaras ya usan los mismos bits). Si el legacy no entra entero en\\n      el pool, el texto original queda intacto como respaldo.\\n    * `datos_ver` ausente / 0 sin legacy: nodo nuevo. No se toca nada: se\\n      respetan las columnas de ejemplo y las filas que shipea el `.gizmo`.\\n    * `datos_ver` 1: comps de la version intermedia, con las 5 capas fijas en\\n      las mascaras. Se instalan las columnas canonicas y no se tocan filas.\\n    * `datos_ver` >= 2: nada.\\n\\n    Devuelve True si escribio algo.\\n    \"\"\"\\n    version = normalizar_frame(_valor(nodo, KNOB_VERSION, 0))\\n    if version >= VERSION_DATOS:\\n        return False\\n\\n    cambio = False\\n    if version == 0:\\n        texto = _valor(nodo, KNOB_LEGACY, \"\")\\n        if legacy_parseable(texto):\\n            filas = filas_desde_legacy(texto)\\n            escribir_filas(nodo, filas)\\n            escribir_columnas(nodo, COLUMNAS_CANONICAS)\\n            cambio = True\\n            if len(filas) <= POOL:\\n                _escribir_texto(nodo, KNOB_LEGACY, \"\")\\n    elif version == 1:\\n        escribir_columnas(nodo, COLUMNAS_CANONICAS)\\n        cambio = True\\n\\n    _escribir_numero(nodo, KNOB_VERSION, VERSION_DATOS)\\n    return cambio\\n\\n\\ndef legacy_excedente(nodo):\\n    \"\"\"Filas del legacy que no entran en el pool (0 si entran todas).\\n\\n    Se consulta despues de `migrar_legacy` para avisar al artista cuando el\\n    JSON original quedo conservado como respaldo.\\n    \"\"\"\\n    return max(0, len(filas_desde_legacy(_valor(nodo, KNOB_LEGACY, \"\"))) - POOL)\\n'\n\n#: frame_manager.py con los cambios S9b/S9c. El build reemplaza por repr().\n_FRAME_SRC = '\"\"\"\\nFrameManagerTable - widget PySide del gizmo Breakdown.\\n\\nUn QTableWidget que edita los knobs tipados del grupo (ver `breakdown_datos`:\\n`N`, `F_<i>`, `L_<i>`) y reconstruye el grafo interno FrameHold/Text ->\\nContactSheet cuando se pulsa \"Generar\".\\n\\nEl grupo lo instancia via un knob PyCustom (tipo 52):\\n\\n    addUserKnob \{52 table_ui l \"\" -STARTLINE T __import__(\\'frame_manager\\').FrameManagerKnob()\}\\n\\nLos botones del grupo (python_button, tipo 22) llaman a la instancia viva:\\n\\n    from frame_manager import FrameManagerTable\\n    t = FrameManagerTable.instancia(nuke.thisNode())\\n    if t: t.generar()\\n\\nTres criterios de eficiencia que sostiene este modulo:\\n\\n* Editar una celda escribe como maximo los dos knobs Int de esa fila; no se\\n  re-serializa la tabla entera (antes era un JSON completo por cada tecla).\\n* \"Generar\" reconcilia el grafo interno: reusa los FrameHold/Text que ya\\n  existen, crea solo los faltantes y borra solo los sobrantes.\\n* `resMult` del ContactSheet se crea si falta y nunca se reescribe: el valor\\n  elegido por el artista sobrevive a cada Generar.\\n\"\"\"\\n\\nimport weakref\\n\\nimport nuke\\n\\ndatos = __datos__\\n\\ntry:\\n    from PySide2 import QtWidgets, QtCore\\n\\n    # PySide2: los enums cuelgan directo de Qt (Qt.AlignCenter, Qt.Checked).\\n    _ALINEACION_CENTRO = QtCore.Qt.AlignCenter\\n    _CHECK = QtCore.Qt.Checked\\n    _UNCHECK = QtCore.Qt.Unchecked\\nexcept ImportError:\\n    from PySide6 import QtWidgets, QtCore\\n\\n    # PySide6/Nuke 14+: enums con namespace explicito.\\n    _ALINEACION_CENTRO = QtCore.Qt.AlignmentFlag.AlignCenter\\n    _CHECK = QtCore.Qt.CheckState.Checked\\n    _UNCHECK = QtCore.Qt.CheckState.Unchecked\\n\\n# WeakValueDictionary: la instancia se libera cuando el knob cerrado deja\\n# de referenciarla -> sin fugas al eliminar/renombrar el nodo.\\n# S9b: se registra por id(widget), no por node.name(): dos nodos con el mismo\\n# nombre en grupos distintos (o un nodo renombrado) ya no se pisan entre si;\\n# instancia() resuelve por node.fullName() y devuelve la mas reciente.\\n_INSTANCES = weakref.WeakValueDictionary()\\n\\n#: Nodos internos que el grupo siempre conserva.\\n_NODOS_BASE = (\"Input1\", \"Dot1\", \"ContactSheetAuto\", \"Crop1\", \"Reformat2\", \"Output1\")\\n\\n#: Separacion horizontal entre ramas generadas, en el DAG.\\n_PASO_X = 180\\n\\n#: Milisegundos de espera antes de volcar una celda de texto/numero.\\n_ESPERA_TEXTOS_MS = 350\\n\\n#: Color de tile del ContactSheetAuto.\\n_TILE_COLOR = 0xFF69F7FF\\n\\n\\nclass FrameManagerTable(QtWidgets.QTableWidget):\\n    \"\"\"Tabla editable de frames y columnas configurables (tilde/texto/numero).\"\"\"\\n\\n    def __init__(self, node):\\n        super(FrameManagerTable, self).__init__()\\n        self.node = node\\n        self.columnas = datos.leer_columnas(node)\\n        _INSTANCES\[id(self)] = self\\n\\n        # Las celdas de texto y numero se escriben al confirmar, no en cada\\n        # tecla: un unico temporizador coalesce la escritura del knob TXT.\\n        self._timer_textos = QtCore.QTimer(self)\\n        self._timer_textos.setSingleShot(True)\\n        self._timer_textos.setInterval(_ESPERA_TEXTOS_MS)\\n        self._timer_textos.timeout.connect(self._volcar_textos)\\n\\n        self.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)\\n        self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)\\n        self.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)\\n        self.setMinimumHeight(180)\\n\\n        self.cargar_datos()\\n        self.cellChanged.connect(self.on_cell_changed)\\n\\n    # ---------------------------------------------------------------- API\\n\\n    @classmethod\\n    def instancia(cls, node):\\n        \"\"\"Devuelve el widget vivo mas reciente cuyo `node.fullName()` coincide (S9b).\\n\\n        Antes se registraba y buscaba por `node.name()`: dos nodos con el mismo\\n        nombre en grupos distintos compartian entrada y un nodo renombrado\\n        quedaba huerfano. Ahora se compara `fullName()` (unico por sesion) y,\\n        si hay varios widgets vivos para el mismo nodo, gana el ultimo creado\\n        (el orden de insercion de `_INSTANCES` lo decide). Un nodo borrado\\n        lanza ValueError al pedir `fullName()`: se saltea.\\n        \"\"\"\\n        if not node:\\n            return None\\n        try:\\n            objetivo = node.fullName()\\n        except ValueError:\\n            return None\\n        for widget in reversed(list(_INSTANCES.values())):\\n            nodo_widget = getattr(widget, \"node\", None)\\n            if nodo_widget is None:\\n                continue\\n            try:\\n                if nodo_widget.fullName() == objetivo:\\n                    return widget\\n            except ValueError:\\n                continue\\n        return None\\n\\n    def agregar(self):\\n        if self.rowCount() >= datos.POOL:\\n            nuke.message(\\n                \"El Breakdown admite hasta %d frames.\" % datos.POOL\\n            )\\n            return\\n\\n        row = self.rowCount()\\n        frame = 10\\n        if row > 0:\\n            anterior = self.item(row - 1, 0)\\n            if anterior is not None:\\n                frame = datos.normalizar_frame(anterior.text()) + 10\\n\\n        self.blockSignals(True)\\n        try:\\n            self.insertRow(row)\\n            self._escribir_celda_frame(row, frame)\\n            for slot, columna in enumerate(self.columnas, start=1):\\n                self.setItem(row, slot, self._item_para(columna\[\"tipo\"], None))\\n        finally:\\n            self.blockSignals(False)\\n\\n        self.selectRow(row)\\n        self.guardar_filas()\\n\\n    def eliminar(self):\\n        current_row = self.currentRow()\\n        if current_row >= 0:\\n            self.removeRow(current_row)\\n            self.guardar_filas()\\n\\n    def subir(self):\\n        row = self.currentRow()\\n        if row > 0:\\n            self._swap_rows(row, row - 1)\\n            self.selectRow(row - 1)\\n            self.guardar_filas()\\n\\n    def bajar(self):\\n        row = self.currentRow()\\n        if 0 <= row < self.rowCount() - 1:\\n            self._swap_rows(row, row + 1)\\n            self.selectRow(row + 1)\\n            self.guardar_filas()\\n\\n    def generar(self):\\n        self.guardar_filas()\\n        # Undo agrupado: Ctrl+Z revierte todo el cambio sin corromper el DAG.\\n        # Nota: esta version de Nuke no acepta un argumento de nombre en el\\n        # constructor de nuke.Undo(); se instancia sin argumentos.\\n        with nuke.Undo():\\n            sincronizar_grafo(self.node)\\n\\n    # ------------------------------------------------------------ internos\\n\\n    @staticmethod\\n    def _celda_check(estado):\\n        chk = QtWidgets.QTableWidgetItem()\\n        chk.setFlags(\\n            QtCore.Qt.ItemIsUserCheckable\\n            | QtCore.Qt.ItemIsEnabled\\n            | QtCore.Qt.ItemIsSelectable\\n        )\\n        chk.setCheckState(estado)\\n        return chk\\n\\n    def _construir_columnas(self):\\n        \"\"\"Arma las cabeceras desde la configuracion de la pestana Columnas.\"\"\"\\n        cabeceras = \[\"Frame\"] + \[columna\[\"nombre\"] for columna in self.columnas]\\n        self.setColumnCount(len(cabeceras))\\n        self.setHorizontalHeaderLabels(cabeceras)\\n\\n    def _item_para(self, tipo, valor):\\n        \"\"\"Item de tabla segun el tipo de columna.\"\"\"\\n        if tipo == \"tilde\":\\n            return self._celda_check(_CHECK if valor else _UNCHECK)\\n        if tipo == \"numero\":\\n            return QtWidgets.QTableWidgetItem(_formato_numero(valor))\\n        return QtWidgets.QTableWidgetItem(\"\" if valor is None else str(valor))\\n\\n    def _escribir_celda_frame(self, row, frame):\\n        item = QtWidgets.QTableWidgetItem(str(frame))\\n        item.setTextAlignment(_ALINEACION_CENTRO)\\n        self.setItem(row, 0, item)\\n\\n    def _swap_rows(self, r1, r2):\\n        self.blockSignals(True)\\n        try:\\n            for col in range(self.columnCount()):\\n                item1 = self.takeItem(r1, col)\\n                item2 = self.takeItem(r2, col)\\n                self.setItem(r1, col, item2)\\n                self.setItem(r2, col, item1)\\n        finally:\\n            self.blockSignals(False)\\n\\n    def _fila(self, row):\\n        \"\"\"Una fila como `\{\"frame\": int, \"capas\": mascara\}` (solo tildes).\"\"\"\\n        item_frame = self.item(row, 0)\\n        frame = datos.normalizar_frame(item_frame.text()) if item_frame else 0\\n\\n        mascara = 0\\n        for slot, columna in enumerate(self.columnas, start=1):\\n            if columna\[\"tipo\"] != \"tilde\":\\n                continue\\n            celda = self.item(row, slot)\\n            if celda is not None and celda.checkState() == _CHECK:\\n                mascara |= datos.bit_de_columna(slot)\\n        return \{\"frame\": frame, \"capas\": mascara\}\\n\\n    def _textos(self):\\n        \"\"\"`\{fila: \{slot: valor\}\}` con las celdas de texto y numero.\"\"\"\\n        textos = \{\}\\n        for row in range(self.rowCount()):\\n            for slot, columna in enumerate(self.columnas, start=1):\\n                if columna\[\"tipo\"] == \"tilde\":\\n                    continue\\n                celda = self.item(row, slot)\\n                valor = celda.text().strip() if celda is not None else \"\"\\n                if valor:\\n                    textos.setdefault(row + 1, \{\})\[slot] = valor\\n        return textos\\n\\n    def _texto_guardado(self, row, slot):\\n        return (datos.leer_textos(self.node).get(row + 1) or \{\}).get(slot, \"\")\\n\\n    # ------------------------------------------------------- persistencia\\n\\n    def cargar_datos(self):\\n        self.blockSignals(True)\\n        try:\\n            self.setRowCount(0)\\n            migrado = datos.migrar_legacy(self.node)\\n            if migrado:\\n                self._avisar_excedente()\\n            # La migracion pudo cambiar la configuracion: se relee siempre.\\n            self.columnas = datos.leer_columnas(self.node)\\n            self._construir_columnas()\\n\\n            textos = datos.leer_textos(self.node)\\n            for row_idx, fila in enumerate(datos.leer_filas(self.node)):\\n                self.insertRow(row_idx)\\n                self._escribir_celda_frame(row_idx, fila\[\"frame\"])\\n                for slot, columna in enumerate(self.columnas, start=1):\\n                    valor = datos.valor_celda(\\n                        fila, textos, row_idx + 1, slot, columna\[\"tipo\"]\\n                    )\\n                    self.setItem(row_idx, slot, self._item_para(columna\[\"tipo\"], valor))\\n        finally:\\n            self.blockSignals(False)\\n\\n    def _avisar_excedente(self):\\n        \"\"\"Avisa una sola vez si el JSON legacy no entro entero en el pool.\"\"\"\\n        excedente = datos.legacy_excedente(self.node)\\n        if not excedente:\\n            return\\n        nuke.message(\\n            \"El Breakdown guardaba %d filas y la tabla admite %d. Se migraron \"\\n            \"las primeras %d y las demas quedaron intactas en el knob \"\\n            \"frame_data del nodo: nada se perdio.\"\\n            % (excedente + datos.POOL, datos.POOL, datos.POOL)\\n        )\\n\\n    def guardar_filas(self):\\n        datos.escribir_filas(self.node, \[self._fila(r) for r in range(self.rowCount())])\\n        self._volcar_textos()\\n\\n    def _volcar_textos(self):\\n        \"\"\"Escribe `TXT` una sola vez, revirtiendo numeros invalidos (S18).\"\"\"\\n        revertir = \[]\\n        for row in range(self.rowCount()):\\n            for slot, columna in enumerate(self.columnas, start=1):\\n                if columna\[\"tipo\"] != \"numero\":\\n                    continue\\n                celda = self.item(row, slot)\\n                texto = celda.text().strip() if celda is not None else \"\"\\n                if texto and not _es_numero(texto):\\n                    revertir.append((celda, self._texto_guardado(row, slot)))\\n        if revertir:\\n            self.blockSignals(True)\\n            try:\\n                for celda, valor in revertir:\\n                    celda.setText(_formato_numero(valor))\\n            finally:\\n                self.blockSignals(False)\\n        datos.escribir_textos(self.node, self._textos())\\n\\n    def aplicar_columnas(self):\\n        \"\"\"Relee la pestana Columnas y reconstruye la tabla.\"\"\"\\n        self._timer_textos.stop()\\n        self.cargar_datos()\\n\\n    def hideEvent(self, event):\\n        # Ultima red: lo tipeado se confirma aunque el panel se cierre antes\\n        # de que venza el temporizador.\\n        self._timer_textos.stop()\\n        self._volcar_textos()\\n        super(FrameManagerTable, self).hideEvent(event)\\n\\n    def guardar_fila(self, row):\\n        if 0 <= row < self.rowCount():\\n            datos.escribir_fila(self.node, row + 1, self._fila(row))\\n\\n    def on_cell_changed(self, row, col):\\n        if col == 0:\\n            self.guardar_fila(row)\\n            # Live update no destructivo: solo el FrameHold de esa fila.\\n            self.actualizar_frame_en_vivo(row)\\n            return\\n        if not (1 <= col <= len(self.columnas)):\\n            return\\n\\n        tipo = self.columnas\[col - 1]\[\"tipo\"]\\n        if tipo == \"tilde\":\\n            celda = self.item(row, col)\\n            datos.escribir_celda(\\n                self.node,\\n                row + 1,\\n                col,\\n                celda is not None and celda.checkState() == _CHECK,\\n            )\\n            return\\n        # Texto y numero: escritura demorada, un solo knob para toda la tabla.\\n        self._timer_textos.start()\\n\\n    def actualizar_frame_en_vivo(self, row):\\n        \"\"\"Cambia la expresion firstFrame solo del FrameHold de esa fila.\\n\\n        Operacion ultraligera: no crea ni borra nodos, y si esa rama todavia\\n        no se genero no hace nada.\\n        \"\"\"\\n        if not (0 <= row < self.rowCount()):\\n            return\\n        frame = self._fila(row)\[\"frame\"]\\n        with self.node:\\n            fh = nuke.toNode(\"FrameHold_Auto_%d\" % (row + 1))\\n            if fh:\\n                _expresion_si_cambia(\\n                    fh\[\"firstFrame\"], \"%d + parent.Desfase\" % frame\\n                )\\n\\n\\nclass FrameManagerKnob(object):\\n    \"\"\"Contenedor exigido por el knob PyCustom (addUserKnob tipo 52) de Nuke.\\n\\n    Nuke instancia la clase dada en `T <expr>` y llama a `makeUI()` para\\n    obtener el widget. Si Nuke pasa el nombre del nodo como primer argumento\\n    se captura como fallback; en caso contrario se usa nuke.thisNode().\\n    \"\"\"\\n\\n    def __init__(self, *args, **kwargs):\\n        self._nodo = None\\n        if args and isinstance(args\[0], str):\\n            try:\\n                self._nodo = nuke.toNode(args\[0])\\n            except Exception:\\n                self._nodo = None\\n\\n    def makeUI(self):\\n        nodo = self._nodo or nuke.thisNode()\\n        return FrameManagerTable(nodo)\\n\\n\\n# ------------------------------------------------- generacion del DAG\\n\\n\\ndef boton(nodo, accion):\\n    \"\"\"Despachador de los botones del grupo (S9c).\\n\\n    Cada boton hace primero `exec(... Cerebro_Python ...)` (barato: el loader\\n    esta cacheado por huella) y luego llama aca. Si el panel esta cerrado no\\n    hay tabla viva y no se hace nada, pero nunca muere con\\n    ModuleNotFoundError porque el exec ya garantizo `_saman_breakdown2`.\\n    \"\"\"\\n    tabla = FrameManagerTable.instancia(nodo)\\n    if tabla is None:\\n        return\\n    getattr(tabla, accion)()\\n\\n\\ndef aplicar_columnas(nodo):\\n    \"\"\"Reconstruye la tabla si el panel esta abierto (boton del grupo).\"\"\"\\n    tabla = FrameManagerTable.instancia(nodo)\\n    if tabla is not None:\\n        tabla.aplicar_columnas()\\n\\n\\ndef sincronizar_grafo(nodo):\\n    \"\"\"Reconcilia el grafo interno del grupo con las filas del storage.\\n\\n    Funcion de modulo (no metodo) para poder ejercitarla sin Qt, y para que\\n    el contexto de grupo (`with nodo:`) resuelva los nombres relativos de\\n    FrameHold/Text. El llamador ya envuelve la operacion en `nuke.Undo()`.\\n    \"\"\"\\n    with nodo:\\n        datos.migrar_legacy(nodo)\\n        filas = datos.leer_filas(nodo)\\n        total = len(filas)\\n\\n        dot = nuke.toNode(\"Dot1\")\\n        if dot is None:\\n            dot = nuke.nodes.Dot(name=\"Dot1\")\\n\\n        cs = nuke.toNode(\"ContactSheetAuto\")\\n        if cs is None:\\n            cs = nuke.nodes.ContactSheet(name=\"ContactSheetAuto\")\\n\\n        plan = datos.plan_reconciliacion(total, _ramas_existentes())\\n\\n        for indice in plan\[\"sobrantes\"]:\\n            _borrar_rama(indice)\\n\\n        _limpiar_intrusos(nodo, set(range(1, total + 1)))\\n        _recortar_entradas(cs, total)\\n\\n        base_x = dot.xpos() - 100\\n        base_y = dot.ypos() + 100\\n        for indice in sorted(plan\[\"reusar\"] + plan\[\"crear\"]):\\n            rama_x = base_x + (indice - 1) * _PASO_X\\n            _sincronizar_rama(indice, filas\[indice - 1], dot, rama_x, base_y)\\n\\n        _configurar_contactsheet(cs, total)\\n        _conectar_entradas(cs, total)\\n\\n\\ndef _ramas_existentes():\\n    \"\"\"Indices que ya tienen FrameHold y Text completos en el grupo.\"\"\"\\n    indices = set()\\n    for indice in range(1, datos.POOL + 1):\\n        if nuke.toNode(\"FrameHold_Auto_%d\" % indice) and nuke.toNode(\\n            \"Text_Auto_%d\" % indice\\n        ):\\n            indices.add(indice)\\n    return indices\\n\\n\\ndef _borrar_rama(indice):\\n    for plantilla in (\"FrameHold_Auto_%d\", \"Text_Auto_%d\"):\\n        nodo = nuke.toNode(plantilla % indice)\\n        if nodo:\\n            nuke.delete(nodo)\\n\\n\\n# --------------------------------------------------------------- helpers\\n#\\n# Escriben un knob solo cuando el valor cambia: menos evaluaciones del DAG y\\n# un undo con una entrada por cambio real.\\n\\n\\ndef _escribir_si_cambia(knob, valor):\\n    try:\\n        if knob.value() == valor:\\n            return False\\n    except Exception:\\n        pass\\n    knob.setValue(valor)\\n    return True\\n\\n\\ndef _expresion_actual(knob):\\n    \"\"\"Expresion vigente de un knob, o None si no esta animado.\\n\\n    `Array_Knob` de esta version de Nuke no expone `expression()`; el script\\n    serializado de un knob animado es `\{\"<expr>\"\}`, asi que se lee de ahi.\\n    \"\"\"\\n    try:\\n        if not knob.isAnimated():\\n            return None\\n        texto = knob.toScript()\\n    except Exception:\\n        return None\\n    if texto.startswith(\\'\{\"\\') and texto.endswith(\\'\"\}\\'):\\n        return texto\[2:-2]\\n    return None\\n\\n\\ndef _expresion_si_cambia(knob, expresion):\\n    if _expresion_actual(knob) == expresion:\\n        return False\\n    knob.setExpression(expresion)\\n    return True\\n\\n\\ndef _sincronizar_rama(indice, fila, dot, xpos, ypos):\\n    \"\"\"Crea o actualiza el par FrameHold/Text de una fila.\"\"\"\\n    nombre_fh = \"FrameHold_Auto_%d\" % indice\\n    nombre_txt = \"Text_Auto_%d\" % indice\\n\\n    fh = nuke.toNode(nombre_fh)\\n    creado = fh is None\\n    if creado:\\n        fh = nuke.nodes.FrameHold(name=nombre_fh, xpos=xpos, ypos=ypos)\\n    if fh.input(0) is None or fh.input(0).name() != dot.name():\\n        fh.setInput(0, dot)\\n    _expresion_si_cambia(fh\[\"firstFrame\"], \"%d + parent.Desfase\" % fila\[\"frame\"])\\n\\n    txt = nuke.toNode(nombre_txt)\\n    if txt is None:\\n        txt = nuke.nodes.Text2(name=nombre_txt, xpos=xpos, ypos=ypos + 80)\\n        # La caja y la justificacion se fijan solo al crear: asi un ajuste\\n        # manual del artista sobre el Text existente no se pisa al regenerar.\\n        txt\[\"box\"].setExpression(\"0\", 0)\\n        txt\[\"box\"].setExpression(\"0\", 1)\\n        txt\[\"box\"].setExpression(\"input.width\", 2)\\n        txt\[\"box\"].setExpression(\"input.height\", 3)\\n        txt\[\"xjustify\"].setValue(\"left\")\\n        txt\[\"yjustify\"].setValue(\"top\")\\n\\n    _escribir_si_cambia(txt\[\"message\"], \"Frame: \[value %s.firstFrame]\" % nombre_fh)\\n    _expresion_si_cambia(txt\[\"disable\"], \"!parent.VerTexto\")\\n    if txt.input(0) is None or txt.input(0).name() != fh.name():\\n        txt.setInput(0, fh)\\n\\n\\ndef _es_numero(texto):\\n    try:\\n        float(texto)\\n        return True\\n    except (TypeError, ValueError):\\n        return False\\n\\n\\ndef _formato_numero(valor):\\n    \"\"\"Presenta un numero sin `.0` sobrante y sin romper valores raros.\"\"\"\\n    texto = \"\" if valor is None else str(valor).strip()\\n    if texto == \"\":\\n        return \"\"\\n    try:\\n        numero = float(texto)\\n    except (TypeError, ValueError):\\n        return texto\\n    return str(int(numero)) if numero == int(numero) else repr(numero)\\n\\n\\ndef _padre(nodo):\\n    \"\"\"Grupo que contiene a `nodo`.\\n\\n    `parent()` es la API vigente; `pparent()` existio en otras versiones. Se\\n    prueban las dos para no repetir el error de la version anterior, donde\\n    `pparent()` no existia, la excepcion se tragaba y la limpieza no borraba\\n    nunca nada.\\n    \"\"\"\\n    for atributo in (\"parent\", \"pparent\"):\\n        metodo = getattr(nodo, atributo, None)\\n        if metodo is None:\\n            continue\\n        try:\\n            return metodo()\\n        except Exception:\\n            continue\\n    return None\\n\\n\\ndef _limpiar_intrusos(grupo, deseados):\\n    \"\"\"Borra nodos internos que no pertenecen al Breakdown.\\n\\n    `nuke.allNodes()` ya esta acotado al contexto del grupo, y ademas se\\n    compara `_padre(nodo) is grupo`: nunca se toca un nodo del comp del\\n    artista, aunque comparta grupo contenedor.\\n    \"\"\"\\n    permitidos = set(_NODOS_BASE)\\n    for indice in deseados:\\n        permitidos.add(\"FrameHold_Auto_%d\" % indice)\\n        permitidos.add(\"Text_Auto_%d\" % indice)\\n\\n    for nodo in nuke.allNodes():\\n        if _padre(nodo) is not grupo:\\n            continue\\n        if nodo.name() not in permitidos:\\n            nuke.delete(nodo)\\n\\n\\ndef _recortar_entradas(cs, total):\\n    \"\"\"Deja el ContactSheet con exactamente `total` entradas.\\n\\n    ContactSheet no tiene knob `inputs`: el numero de entradas lo fija la\\n    ultima conexion, asi que desconectar desde el final es lo unico que lo\\n    encoge. Crecer no hace falta: `setInput` agrega entradas solo.\\n    \"\"\"\\n    while cs.inputs() > total:\\n        cs.setInput(cs.inputs() - 1, None)\\n\\n\\ndef _configurar_contactsheet(cs, total):\\n    _escribir_si_cambia(cs\[\"tile_color\"], _TILE_COLOR)\\n    _escribir_si_cambia(cs\[\"center\"], True)\\n    _escribir_si_cambia(cs\[\"roworder\"], \"TopBottom\")\\n\\n    if \"resMult\" not in cs.knobs():\\n        res_mult = nuke.Float_Knob(\"resMult\", \"Resolution Multiplier\")\\n        res_mult.setRange(0.1, 2)\\n        cs.addKnob(res_mult)\\n        cs\[\"resMult\"].setValue(1.0)\\n\\n    columnas, filas = datos.grilla(total)\\n    _escribir_si_cambia(cs\[\"columns\"], columnas)\\n    _escribir_si_cambia(cs\[\"rows\"], filas)\\n    _expresion_si_cambia(cs\[\"width\"], \"input.width*columns*resMult\")\\n    _expresion_si_cambia(cs\[\"height\"], \"input.height*rows*resMult\")\\n\\n\\ndef _conectar_entradas(cs, total):\\n    \"\"\"Conecta cada Text ya sincronizado a su entrada del ContactSheet.\"\"\"\\n    for indice in range(1, total + 1):\\n        txt = nuke.toNode(\"Text_Auto_%d\" % indice)\\n        if txt is None:\\n            continue\\n        actual = cs.input(indice - 1)\\n        if actual is None or actual.name() != txt.name():\\n            cs.setInput(indice - 1, txt)\\n'\n\n\ndef _fuentes():\n    \"\"\"Devuelve `(datos_src, frame_src)`.\n\n    En el gizmo el build ya reemplazo los tokens por los `repr()` de los\n    archivos, asi que se devuelven tal cual. En desarrollo (tokens intactos)\n    se leen del disco; `__file__` solo existe cuando este modulo se importa\n    como archivo, nunca cuando el knob lo exec-ea.\n    \"\"\"\n    datos_src = _DATOS_SRC\n    frame_src = _FRAME_SRC\n    if datos_src == \"__DATOS_SRC__\" or frame_src == \"__FRAME_SRC__\":\n        aqui = os.path.dirname(os.path.abspath(__file__))\n        with open(os.path.join(aqui, \"breakdown_datos.py\"), encoding=\"utf-8\") as fh:\n            datos_src = fh.read()\n        with open(os.path.join(aqui, \"frame_manager.py\"), encoding=\"utf-8\") as fh:\n            frame_src = fh.read()\n    return datos_src, frame_src\n\n\ndef _huella():\n    datos_src, frame_src = _fuentes()\n    return hashlib.sha1((datos_src + frame_src).encode(\"utf-8\")).hexdigest()\n\n\ndef construir():\n    \"\"\"Devuelve el modulo compartido, construyendolo solo si falta o cambio.\"\"\"\n    datos_src, frame_src = _fuentes()\n    huella = hashlib.sha1((datos_src + frame_src).encode(\"utf-8\")).hexdigest()\n    modulo = sys.modules.get(CLAVE)\n    if modulo is not None and getattr(modulo, \"huella\", None) == huella:\n        return modulo\n\n    datos = types.ModuleType(CLAVE + \".datos\")\n    # compile() con nombre de archivo: los tracebacks dicen \"<breakdown_datos>\"\n    # y numeran las lineas del archivo original, no del knob.\n    exec(compile(datos_src, \"<breakdown_datos>\", \"exec\"), datos.__dict__)\n\n    frame = types.ModuleType(CLAVE)\n    frame.__dict__\[\"__datos__\"] = datos\n    exec(compile(frame_src, \"<frame_manager>\", \"exec\"), frame.__dict__)\n\n    frame.datos = datos\n    frame.huella = huella\n    sys.modules\[CLAVE] = frame\n    return frame\n\n\n# Efecto de modulo deliberado: al exec-ear el motor, el modulo queda registrado\n# en sys.modules. Es lo unico que permite que el knob PyCustom y los botones\n# hagan __import__('_saman_breakdown2') sin ningun paso previo. Si se quita\n# esta llamada, la expresion de table_ui muere con ModuleNotFoundError y la\n# tabla no se construye (el panel queda sin la grilla de frames).\nconstruir()\n"}
 }
- Input {
-  inputs 0
-  name Input1
-  xpos -504
-  ypos 186
- }
- Dot {
-  name Dot1
-  xpos -470
-  ypos 226
- }
-set N8fa63a00 [stack 0]
- FrameHold {
-  firstFrame {{"30 + parent.Desfase"}}
-  name FrameHold_Auto_3
- }
- Text2 {
-  font_size_toolbar 100
-  font_width_toolbar 100
-  font_height_toolbar 100
-  message "Frame: \[value FrameHold_Auto_3.firstFrame]"
-  old_message {
-   {70 114 97 109 101 58 32 51 48}
-  }
-  old_expression_markers {
-   {7 8}
-  }
-  box {{0} {0} {input.width} {input.height}}
-  transforms {
-   {0 2}
-  }
-  autofit_bbox false
-  group_animations {
-   {0}
-   imported:
-   0
-   selected:
-   0
-   items:
-   "root transform/"
-  }
-  animation_layers {
-   {1 11 1024 778 0 0 1 1 0 0 0 0}
-  }
-  name Text_Auto_3
-  disable {{!parent.VerTexto}}
- }
-push $N8fa63a00
- FrameHold {
-  firstFrame {{"20 + parent.Desfase"}}
-  name FrameHold_Auto_2
- }
- Text2 {
-  font_size_toolbar 100
-  font_width_toolbar 100
-  font_height_toolbar 100
-  message "Frame: \[value FrameHold_Auto_2.firstFrame]"
-  old_message {
-   {70 114 97 109 101 58 32 50 48}
-  }
-  old_expression_markers {
-   {7 8}
-  }
-  box {{0} {0} {input.width} {input.height}}
-  transforms {
-   {0 2}
-  }
-  autofit_bbox false
-  group_animations {
-   {0}
-   imported:
-   0
-   selected:
-   0
-   items:
-   "root transform/"
-  }
-  animation_layers {
-   {1 11 1024 778 0 0 1 1 0 0 0 0}
-  }
-  name Text_Auto_2
-  disable {{!parent.VerTexto}}
- }
-push $N8fa63a00
- FrameHold {
-  firstFrame {{"10 + parent.Desfase"}}
-  name FrameHold_Auto_1
- }
- Text2 {
-  font_size_toolbar 100
-  font_width_toolbar 100
-  font_height_toolbar 100
-  message "Frame: \[value FrameHold_Auto_1.firstFrame]"
-  old_message {
-   {70 114 97 109 101 58 32 49 48}
-  }
-  old_expression_markers {
-   {7 8}
-  }
-  box {{0} {0} {input.width} {input.height}}
-  transforms {
-   {0 2}
-  }
-  autofit_bbox false
-  group_animations {
-   {0}
-   imported:
-   0
-   selected:
-   0
-   items:
-   "root transform/"
-  }
-  animation_layers {
-   {1 11 1024 778 0 0 1 1 0 0 0 0}
-  }
-  name Text_Auto_1
-  disable {{!parent.VerTexto}}
- }
- ContactSheet {
-  inputs 3
-  width {{input.width*columns*resMult}}
-  height {{input.height*rows*resMult}}
-  rows 2
-  columns 2
-  center true
-  roworder TopBottom
-  name ContactSheetAuto
-  tile_color 0xff69f7ff
-  xpos -504
-  ypos 411
-  addUserKnob {20 Settings}
-  addUserKnob {7 resMult l "Resolution Multiplier" R 0.1 2}
-  resMult 1
- }
- Crop {
-  box {0 0 {parent.ContactSheetAuto.width} {parent.ContactSheetAuto.height}}
-  name Crop1
-  xpos -504
-  ypos 435
- }
- Reformat {
-  name Reformat2
-  xpos -504
-  ypos 468
- }
- Output {
-  name Output1
-  xpos -504
-  ypos 568
- }
+Input {
+inputs 0
+name Input1
+xpos -504
+ypos 186
+}
+Dot {
+name Dot1
+xpos -470
+ypos 226
+}
+set Ncc3b3700 [stack 0]
+FrameHold {
+firstFrame {{"30 + parent.Desfase"}}
+name FrameHold_Auto_3
+xpos -504
+ypos 345
+}
+Text2 {
+font_size_toolbar 100
+font_width_toolbar 100
+font_height_toolbar 100
+message "Frame: \[value FrameHold_Auto_3.firstFrame]"
+old_message {
+{70 114 97 109 101 58 32 51 48}
+}
+old_expression_markers {
+{7 8}
+}
+box {0 0 {input.width} {input.height}}
+transforms {
+{0 2}
+}
+autofit_bbox false
+group_animations {
+{0}
+imported:
+0
+selected:
+0
+items:
+"root transform/"
+}
+animation_layers {
+{1 11 1024 778 0 0 1 1 0 0 0 0}
+}
+name Text_Auto_3
+xpos -254
+ypos 470
+disable {{!parent.VerTexto}}
+}
+push $Ncc3b3700
+FrameHold {
+firstFrame {{"20 + parent.Desfase"}}
+name FrameHold_Auto_2
+xpos -254
+ypos 345
+}
+Text2 {
+font_size_toolbar 100
+font_width_toolbar 100
+font_height_toolbar 100
+message "Frame: \[value FrameHold_Auto_2.firstFrame]"
+old_message {
+{70 114 97 109 101 58 32 50 48}
+}
+old_expression_markers {
+{7 8}
+}
+box {0 0 {input.width} {input.height}}
+transforms {
+{0 2}
+}
+autofit_bbox false
+group_animations {
+{0}
+imported:
+0
+selected:
+0
+items:
+"root transform/"
+}
+animation_layers {
+{1 11 1024 778 0 0 1 1 0 0 0 0}
+}
+name Text_Auto_2
+xpos -4
+ypos 470
+disable {{!parent.VerTexto}}
+}
+push $Ncc3b3700
+FrameHold {
+firstFrame {{"10 + parent.Desfase"}}
+name FrameHold_Auto_1
+xpos -4
+ypos 345
+}
+Text2 {
+font_size_toolbar 100
+font_width_toolbar 100
+font_height_toolbar 100
+message "Frame: \[value FrameHold_Auto_1.firstFrame]"
+old_message {
+{70 114 97 109 101 58 32 49 48}
+}
+old_expression_markers {
+{7 8}
+}
+box {0 0 {input.width} {input.height}}
+transforms {
+{0 2}
+}
+autofit_bbox false
+group_animations {
+{0}
+imported:
+0
+selected:
+0
+items:
+"root transform/"
+}
+animation_layers {
+{1 11 1024 778 0 0 1 1 0 0 0 0}
+}
+name Text_Auto_1
+xpos 246
+ypos 470
+disable {{!parent.VerTexto}}
+}
+ContactSheet {
+inputs 3
+width {{input.width*columns*resMult}}
+height {{input.height*rows*resMult}}
+rows 2
+columns 2
+center true
+roworder TopBottom
+name ContactSheetAuto
+tile_color 0xff69f7ff
+xpos -504
+ypos 411
+addUserKnob {20 Settings}
+addUserKnob {7 resMult l "Resolution Multiplier" R 0.1 2}
+resMult 1
+}
+Crop {
+box {0 0 {parent.ContactSheetAuto.width} {parent.ContactSheetAuto.height}}
+name Crop1
+xpos -504
+ypos 435
+}
+Reformat {
+name Reformat2
+xpos -504
+ypos 468
+}
+Output {
+name Output1
+xpos -504
+ypos 568
+}
 end_group

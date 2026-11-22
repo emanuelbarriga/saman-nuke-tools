@@ -178,15 +178,15 @@ def test_escanear_scripts_vacio(monkeypatch):
     assert "No se encontraron scripts" in mensaje
 
 
-def test_insertar_rutas_llama_crear_o_reutilizar(monkeypatch):
-    from SamanTools import rutas
+def test_insertar_rutas_llama_crear_o_actualizar(monkeypatch):
+    from SamanTools import rutas_unico
 
     llamadas = []
 
     def _espia():
         llamadas.append(True)
 
-    monkeypatch.setattr(rutas, "crear_o_reutilizar", _espia)
+    monkeypatch.setattr(rutas_unico, "crear_o_actualizar", _espia)
     registro._insertar_rutas()
     assert llamadas == [True]
 

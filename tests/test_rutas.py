@@ -279,34 +279,44 @@ class TestAplicarVariablesDesdeNodo:
 
 
 class TestHookDeCarga:
-    """registro.instalar() deja el hook enganchado (y no lo duplica)."""
+    """registro.instalar() deja el hook de política enganchado y no lo duplica."""
 
-    def test_registro_engancha_la_funcion_en_script_load(self):
-        from SamanTools import registro
+    def test_registro_engancha_la_politica_en_script_load(self):
+        from SamanTools import registro, rutas_unico
 
         nuke._estado["hooks_carga"] = []
 
         assert registro._registrar_hooks_de_carga() is True
-        assert rutas.aplicar_variables_desde_nodo in nuke._estado["hooks_carga"]
+        assert rutas_unico.aplicar_politica_al_cargar in nuke._estado["hooks_carga"]
 
     def test_registrar_dos_veces_no_duplica_el_hook(self):
-        from SamanTools import registro
+        from SamanTools import registro, rutas_unico
 
         nuke._estado["hooks_carga"] = []
         registro._registrar_hooks_de_carga()
         registro._registrar_hooks_de_carga()
 
         assert (
-            nuke._estado["hooks_carga"].count(rutas.aplicar_variables_desde_nodo) == 1
+            nuke._estado["hooks_carga"].count(rutas_unico.aplicar_politica_al_cargar)
+            == 1
         )
 
-    def test_el_hook_aplica_las_variables_al_cargar_un_script(self):
-        from SamanTools import registro
+    def test_el_hook_sincroniza_el_entorno_al_cargar_un_script(self, monkeypatch):
+        from SamanTools import registro, rutas_unico
 
+        sincronizados = []
+
+        def _espia(nodo=None):
+            sincronizados.append(nodo)
+            return True
+
+        monkeypatch.setattr(rutas_unico, "sincronizar_entorno", _espia)
         nuke._estado["hooks_carga"] = []
         registro._registrar_hooks_de_carga()
         nuke._estado["nodos"] = [_nodo_rutas()]
 
         nuke._disparar_script_load()
 
-        assert sys.modules["__main__"].PYTHON_COMP == "/vol/COMP"
+        assert len(sincronizados) == 1, (
+            "abrir un comp debe dejar las PYTHON_* resueltas sin tocar el nodo"
+        )

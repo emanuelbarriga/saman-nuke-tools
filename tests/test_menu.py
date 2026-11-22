@@ -68,31 +68,22 @@ def test_instalar_crea_estructura_nueva(monkeypatch):
     assert "Breakdown" in nombres_comandos
     assert "Cambiar ColorSpace..." not in nombres_comandos
 
-    # Submenús temáticos: sin "Configuración" ni estructura vieja.
+    # v3: los cinco nodos son la herramienta y no hay submenú de herramientas
+    # sueltas. Panel de Comentarios y Diagnóstico de Red salieron de la
+    # superficie (S5); sus módulos siguen en el repositorio.
     nombres_submenus = [getattr(sub, "_nombre", None) for sub in saman.items()]
-    assert "Tools" in nombres_submenus
-    assert "Paneles (En construcción)" in nombres_submenus
-    assert "Salud" in nombres_submenus
+    assert nombres_submenus == ["Salud"]
+    assert "Tools" not in nombres_submenus
+    assert "Paneles (En construcción)" not in nombres_submenus
     assert "Configuración" not in nombres_submenus
     assert "Composición" not in nombres_submenus
     assert "VFXFlow" not in nombres_submenus
     assert "Sistema / Configuración" not in nombres_submenus
-
-    tools = _submenu_de(saman, "Tools")
-    assert "Cambiar ColorSpace..." in _nombres_comandos(tools)
-    assert "Breakdown" not in _nombres_comandos(tools)
-
-    paneles = _submenu_de(saman, "Paneles (En construcción)")
-    # El panel global de rutas se retiro: el nodo Rutas es la unica via.
-    # El submenu se conserva por el Panel de Comentarios.
-    assert "Panel de Rutas" not in _nombres_comandos(paneles)
-    assert "Panel de Comentarios" in _nombres_comandos(paneles)
-    # Atajo Ctrl+Alt+C registrado en "Panel de Comentarios".
-    assert ("Panel de Comentarios", "Ctrl+Alt+C") in paneles.shortcuts
+    assert "fSpy (cámara desde foto)" in nombres_comandos
 
     salud = _submenu_de(saman, "Salud")
     nombres_salud = _nombres_comandos(salud)
-    assert "Diagnóstico de Red" in nombres_salud
+    assert "Diagnóstico de Red" not in nombres_salud
     assert "Verificar Salud del Plugin..." in nombres_salud
     assert "Escanear Scripts del Proyecto" in nombres_salud
     assert "Limpiar knobs volátiles" in nombres_salud

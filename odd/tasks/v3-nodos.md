@@ -25,11 +25,11 @@ Solo entran los cinco nodos; todo lo demás queda fuera de la superficie de inst
 
 | ID | Specs | Qué | Ruta | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S3-S11 | Módulo de política de nodo único: detección, versión, fusión, hook de carga. Con tests. | `SamanTools/rutas_unico.py`, `tests/test_rutas_unico.py` | C1 |
-| T2 | S2 | Instalar los cinco gizmos rehechos como los cinco nodos del release. | `SamanTools/nodos/` | C2 |
-| T3 | S5, S6, S12 | Retirar de la superficie los componentes fuera de alcance y declarar los cinco nodos. | `SamanTools/componentes.py` | C2 |
-| T4 | S6 | Registrar el hook de política en el bootstrap. | `SamanTools/registro.py`, `tests/test_menu.py` | C2 |
-| T5 | S13, S14 | Versión 3.0.0 y documentación al estado real. | `SamanTools/__init__.py`, `README.md`, `docs/ARQUITECTURA.md` | C2 |
+| T1 | S3-S11 | Módulo de política de nodo único: detección, versión, fusión, hook de carga. Con tests. | `SamanTools/rutas_unico.py`, `tests/test_rutas_unico.py` | `94c275a` |
+| T2 | S2 | Instalar los cinco gizmos rehechos como los cinco nodos del release. | `SamanTools/nodos/` | release |
+| T3 | S5, S6, S12 | Retirar de la superficie los componentes fuera de alcance y declarar los cinco nodos. | `SamanTools/componentes.py` | release |
+| T4 | S6 | Registrar el hook de política en el bootstrap. | `SamanTools/registro.py`, `tests/test_menu.py` | release |
+| T5 | S13, S14 | Versión 3.0.0 y documentación al estado real. | `SamanTools/__init__.py`, `README.md`, `docs/ARQUITECTURA.md` | release |
 | T6 | S14 | Suite completa y `build_dist` en verde; riesgo y review nativo. | — | — |
 
 ## Log
@@ -41,3 +41,6 @@ Solo entran los cinco nodos; todo lo demás queda fuera de la superficie de inst
 - **L5** — Decisión del humano: soporte «Bootstrap mínimo en menu.py».
 - **L6** — Decisión del humano: duplicados «Fusionar y dejar uno».
 - **L7** — Evidencia: `ColorSpaces` es el único nodo realmente nuevo; los otros cuatro ya existían como asset en `SamanTools/nodos/`. `rutas_global.py` queda fuera: era un shim cuyo retiro estaba planificado y nunca se ejecutó (`odd/tasks/rutas-nodo.md:27-29`).
+- **L8** — Evidencia de la instalación (T2): los cinco gizmos rehechos habían perdido arreglos del 2.0.0 que la suite pinneaba. Se re-aplicaron: `Breakdown.gizmo` ya no serializa `datos_ver 2` (S17: un comp arrancaba creyéndose migrado), y `Review.gizmo` ya no arrastra `render_settings_schema` ni `monitorOutNDISenderName` del Viewer. La grilla de columnas y los nombres fijos del Breakdown se conservan con otra forma (`N` + `F_i`/`L_i` + `COLUMNAS_CANONICAS`, mismos `_NODOS_BASE`), así que se actualizó el test a ese contrato en vez de darlo por perdido.
+- **L9** — Evidencia de la entrega: suite completa `836 passed` (`python3.14` + PySide6 6.12) y `python3 -m SamanTools.build_dist` → `dist/samantools` con 10 módulos. El gate del build encontró una dependencia real que había que cortar: `proyecto.py` importaba el módulo v1 `rutas.py`; ahora lee el proyecto y sincroniza el entorno por `rutas_unico`.
+- **L10** — Fuera de alcance, sin tocar: `skills/saman-render-launcher/` y la captura de pantalla sin seguimiento quedaron sin versionar; no integran este release.

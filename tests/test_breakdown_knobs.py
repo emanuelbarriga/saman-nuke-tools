@@ -93,18 +93,25 @@ def test_el_gizmo_declara_el_marcador_de_version_sin_default():
     assert re.search(r"^\s*datos_ver\s+\S", gizmo, re.M) is None
 
 
-def test_el_gizmo_declara_la_pestana_columnas_y_sus_knobs():
-    """S13/S15: pestana Columnas, 8 slots de nombre/tipo y el knob TXT."""
+def test_el_gizmo_declara_la_grilla_de_columnas_del_motor_nuevo():
+    """S15: las columnas siguen siendo configurables en el nodo rehecho.
+
+    El motor v2 es autocontenido y ya no usa `breakdown_datos.Col_*_nombre`:
+    la cantidad vive en `N` y cada slot declara su frame (`F_i`) y sus capas
+    (`L_i`). Lo que se conserva como contrato es que las columnas se puedan
+    configurar: slots contiguos desde 1 y una lista canonica en el motor.
+    """
     with open(GIZMO) as archivo:
         gizmo = archivo.read()
 
-    assert "addUserKnob {20 Columnas l Columnas}" in gizmo
-    assert "addUserKnob {3 Cantidad " in gizmo
+    assert "addUserKnob {3 N " in gizmo
     assert "addUserKnob {1 TXT " in gizmo
-    for slot in range(1, datos.MAX_COLUMNAS + 1):
-        assert "addUserKnob {1 Col_%d_nombre " % slot in gizmo
-        assert "addUserKnob {4 Col_%d_tipo " % slot in gizmo
-    assert "aplicar_columnas" in gizmo
+    slots = sorted(int(m) for m in re.findall(r"addUserKnob \{3 F_(\d+) ", gizmo))
+    assert slots == list(range(1, len(slots) + 1))
+    assert len(slots) >= 8
+    for slot in slots:
+        assert "addUserKnob {3 L_%d " % slot in gizmo
+    assert "COLUMNAS_CANONICAS" in gizmo
 
 
 def test_escribir_filas_nunca_pide_knobs_fuera_del_pool():
@@ -234,7 +241,7 @@ def test_los_nodos_fijos_del_gizmo_figuran_en_la_lista_blanca():
 
     coincidencia = re.search(r"_NODOS_BASE = \(([^)]*)\)", frame_manager)
     lista_blanca = set(re.findall(r'"(\w+)"', coincidencia.group(1)))
-    fijos = set(re.findall(r"^\s+name (\w+)", gizmo, re.M)) - {"Breakdown"}
+    fijos = set(re.findall(r"^\s*name (\w+)", gizmo, re.M)) - {"Breakdown"}
     fijos = {
         nombre
         for nombre in fijos

@@ -9,7 +9,6 @@ import os
 import subprocess
 import sys
 
-from . import cambiar_colorspace
 from . import proyecto as proyecto_tools
 from .componentes import COMPONENTES
 
@@ -48,10 +47,15 @@ def _escanear_scripts_proyecto():
 
 
 def _insertar_rutas():
-    """Inserta el nodo Rutas (rutas VFX dinámicas) en el script actual."""
-    from SamanTools import rutas
+    """Crea, reutiliza o ACTUALIZA el único nodo Rutas del proyecto.
 
-    rutas.crear_o_reutilizar()
+    La política vive en rutas_unico: con cero nodos pega el gizmo, con uno
+    actual lo enfoca, con uno viejo lo reconstruye conservando estado y
+    posición, y con dos o más fusiona y deja uno.
+    """
+    from SamanTools import rutas_unico
+
+    rutas_unico.crear_o_actualizar()
 
 
 def _insertar_fspy():
@@ -67,6 +71,14 @@ def _insertar_fspy():
         # Defensa idempotente y nunca lanza: el archivo puede ya estar limpio
         # (devuelve 0) o no ser legible/escribible en esta instalacion.
         pass
+
+
+def _insertar_colorspaces():
+    """Inserta el nodo ColorSpaces (clasifica Reads por espacio de color)."""
+    ruta_archivo = os.path.join(
+        os.path.dirname(os.path.realpath(__file__)), "nodos", "ColorSpaces.gizmo"
+    )
+    nuke.nodePaste(ruta_archivo)
 
 
 def _insertar_review():
@@ -214,7 +226,7 @@ def _acerca_de():
     nuke.message(
         "SamanTools — Herramientas globales de Nuke para el estudio\n\n"
         "Versión instalada: %s\n\n"
-        "Contenido: Breakdown, Review, Rutas y utilidades de producción.\n\n"
+        "Contenido: Rutas, Breakdown, Review, ColorSpaces y fSpy.\n\n"
         "Desarrollado por Emanuel Barriga — Samán Estudio\n"
         "Sitio web: https://samanestudio.com/\n"
         "Teléfono: +57 3014532504\n"
@@ -306,25 +318,26 @@ def _inyectar_frame_manager():
 
 
 def _registrar_hooks_de_carga():
-    """Engancha la definicion de PYTHON_* a cada carga de script.
+    """Engancha la politica de nodo unico de rutas a cada carga de script.
 
     Vive aca (y no en un init.py de la maquina) para que viaje con el repo y
-    lo tenga todo artista: sin este hook, abrir un comp en un Nuke nuevo deja
-    las expresiones [python {PYTHON_*}] de los Reads sin resolver hasta que
-    alguien toca el nodo Rutas.
+    lo tenga todo artista: un .gizmo no puede garantizar la politica porque con
+    cero nodos de rutas en el comp no corre nada, y el addOnScriptLoad que
+    registra el motor del propio nodo solo existe en la sesion donde el nodo se
+    cargo.
 
     No duplica el hook si se llama dos veces. Devuelve True si quedo
     enganchado.
     """
-    from SamanTools import rutas
+    from SamanTools import rutas_unico
 
     try:
-        nuke.removeOnScriptLoad(rutas.aplicar_variables_desde_nodo)
+        nuke.removeOnScriptLoad(rutas_unico.aplicar_politica_al_cargar)
     except Exception:
         pass
 
     try:
-        nuke.addOnScriptLoad(rutas.aplicar_variables_desde_nodo)
+        nuke.addOnScriptLoad(rutas_unico.aplicar_politica_al_cargar)
         return True
     except Exception:
         return False
@@ -366,35 +379,10 @@ def instalar():
         icon=_ruta_icono("fSpy.svg"),
     )
 
-    # --- Categoría: Tools ---
-    sub_tools = menu.addMenu("Tools")
-    sub_tools.addCommand(
-        "Cambiar ColorSpace...",
-        cambiar_colorspace.ejecutar_cambio_colorespace_reads,
-        icon=_ruta_icono("ChangeColorSpace.svg"),
-    )
-
-    # --- Categoría: Paneles (En construcción) ---
-    # Lazy (string): PySide solo se importa al hacer clic en GUI, para no
-    # romper la carga del menú si PySide no está o no hay GUI.
-    if _componente_disponible("panel_comentarios"):
-        sub_paneles = menu.addMenu("Paneles (En construcción)")
-        # Atajo Ctrl+Alt+C: abre la pestaña de comentarios desde cualquier lado.
-        sub_paneles.addCommand(
-            "Panel de Comentarios",
-            "from SamanTools import panel_comentarios\npanel_comentarios.abrir_panel()",
-            shortcut="Ctrl+Alt+C",
-        )
-
     # --- Categoría: Salud ---
+    # v3 no expone panel de comentarios ni diagnóstico de red: los cinco nodos
+    # son la herramienta y Salud queda como mantenimiento local del plugin.
     sub_salud = menu.addMenu("Salud")
-    # Lazy (string): diagnostico_red no se importa al tope para no cargar
-    # urllib al arrancar; se importa solo al hacer clic.
-    if _componente_disponible("diagnostico_red"):
-        sub_salud.addCommand(
-            "Diagnóstico de Red",
-            "from SamanTools import diagnostico_red\ndiagnostico_red.ejecutar()",
-        )
     sub_salud.addCommand(
         "Verificar Salud del Plugin...",
         _verificar_salud,
@@ -414,20 +402,6 @@ def instalar():
 
     # Carga automatica si el proyecto ya esta disponible al arrancar.
     proyecto_tools.cargar_scripts_proyecto()
-
-    # --- Config global de rutas al arrancar (panel global) ---
-    # Aplica PYTHON_TO_VFX/COMP/FROM_VFX desde ~/.config/saman/rutas_global.json
-    # para que los Reads dinamicos funcionen sin nodo Rutas en el comp.
-    # Solo en GUI (en batch/render el comp viejo con nodo sigue mandando via
-    # knobChanged; el reemplazo total del nodo es el siguiente paso).
-    try:
-        if getattr(nuke, "GUI", False) and _componente_disponible("rutas_global"):
-            # Import dinámico: rutas_global no pertenece al dist; la compuerta
-            # anterior hace que el artefacto no tenga una ruta de ejecución
-            # hacia él, sin alterar el comportamiento del checkout completo.
-            __import__("SamanTools.rutas_global", fromlist=["rutas_global"]).aplicar_global()
-    except Exception:
-        pass
 
     # --- Registro en el buscador de Nodos (Tab) ---
     # Un .gizmo con raiz NoOp no se indexa solo en el buscador;
@@ -459,6 +433,11 @@ def instalar():
         sub_nodos_nodos.addCommand(
             "Review (Comparación)",
             _insertar_review,
+        )
+    if _componente_disponible("colorspaces"):
+        sub_nodos_nodos.addCommand(
+            "ColorSpaces (espacio de color)",
+            _insertar_colorspaces,
         )
     sub_nodos_nodos.addCommand(
         "Breakdown (frames por tabla)",

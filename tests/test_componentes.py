@@ -3,12 +3,14 @@
 from SamanTools.componentes import COMPONENTES
 
 
-def test_manifiesto_declara_exactamente_los_siete_componentes_pedidos():
+def test_manifiesto_declara_los_cinco_nodos_y_el_soporte_del_release():
+    """S2/S5: cinco nodos, más soporte de menú, actualización y proyecto."""
     assert {componente["id"] for componente in COMPONENTES} == {
-        "fspy",
-        "colorspace",
         "rutas",
         "breakdown",
+        "review",
+        "colorspaces",
+        "fspy",
         "acerca_de",
         "actualizacion",
         "nodos_proyecto",

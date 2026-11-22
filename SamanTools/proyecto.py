@@ -32,26 +32,31 @@ def obtener_ruta_scripts():
 
 
 def _nombre_proyecto():
-    """Lee el knob 'Proyecto' del nodo Rutas del script actual, si existe."""
-    for n in nuke.allNodes():
-        if "UsuarioActivo" in n.knobs() and "RutaActual" in n.knobs():
-            if "string" in n.knobs():
-                p = n["string"].value().strip()
-                if p:
-                    return p
-    return "Proyecto"
+    """Nombre del proyecto activo para el submenu; 'Proyecto' si no hay.
+
+    3.0.0: lo resuelve la politica del nodo unico de rutas (`rutas_unico`),
+    que detecta el nodo por knobs y no por nombre. Import perezoso para que
+    este modulo se importe fuera de Nuke.
+    """
+    from SamanTools import rutas_unico
+
+    return rutas_unico.proyecto_activo() or "Proyecto"
 
 
 def actualizar_desde_nodo_rutas(n=None):
     """
-    Lee usuario/rutas del nodo Rutas, actualiza PYTHON_* en __main__
-    y re-escanea los scripts del proyecto.
+    Aplica el estado del nodo de rutas: es la version explicita para el boton
+    Actualizar, que no depende de que el knobChanged se dispare al hacer
+    setValue con el mismo valor.
 
-    Es la version explicita para el boton Actualizar: no depende de que
-    el knobChanged se dispare al hacer setValue con el mismo valor.
+    3.0.0: el trabajo lo hace el motor del nodo de rutas actual
+    (`rutas_unico.sincronizar_entorno`), que reemplaza al nodo v1. Se conserva
+    el nombre publico porque lo llaman el menu y el boton. Import perezoso
+    para que este modulo se importe fuera de Nuke.
     """
-    from SamanTools import rutas
-    return rutas.actualizar(n)
+    from SamanTools import rutas_unico
+
+    return rutas_unico.sincronizar_entorno(n)
 
 
 def _es_archivo_valido(ruta_archivo):
