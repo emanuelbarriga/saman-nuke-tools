@@ -621,6 +621,57 @@ def _seleccionar(nodo):
         pass
 
 
+def _centro_de_la_vista():
+    """(x, y) del centro visible del Node Graph, o None si no se puede leer.
+
+    `nuke.center()` devuelve el centro del display del grupo, que es
+    exactamente la forma que `nuke.zoom()` acepta como centro del DAG: son
+    coordenadas de nodo, las mismas de `xpos`/`ypos`.
+    """
+    try:
+        import nuke
+
+        centro = nuke.center()
+    except Exception:
+        return None
+    if not centro:
+        return None
+    try:
+        return (int(centro[0]), int(centro[1]))
+    except Exception:
+        return None
+
+
+def _mover_al_centro_de_la_vista(nodo):
+    """Pone `nodo` en el centro de lo que el usuario está mirando.
+
+    Devuelve True si lo movió. En headless no hay vista que respetar.
+    """
+    if nodo is None or _en_headless():
+        return False
+    centro = _centro_de_la_vista()
+    if centro is None:
+        return False
+    return _restaurar_posicion(nodo, centro)
+
+
+def _mostrar_en_la_vista(nodo):
+    """Trae el nodo al centro de la vista en vez de llevar la vista al nodo.
+
+    Es lo contrario de `_enfocar`: no hace zoom ni pan (no toca
+    `zoomToFitSelected`), mueve el nodo al centro visible y abre su panel.
+    """
+    movido = _mover_al_centro_de_la_vista(nodo)
+    _seleccionar(nodo)
+    abrir = getattr(nodo, "showControlPanel", None) if nodo is not None else None
+    if abrir is not None:
+        try:
+            abrir()
+        except Exception:
+            pass
+    return movido
+
+
 def _enfocar(nodo):
     """Selecciona, centra el Node Graph y abre el panel del nodo (rutas.py:676)."""
     _seleccionar(nodo)
@@ -1163,12 +1214,15 @@ def crear_o_actualizar(ruta_gizmo=None):
     if len(nodos) == 1:
         nodo = nodos[0]
         if es_version_actual(nodo):
-            _enfocar(nodo)
+            # El nodo viene al centro de lo que el usuario está mirando: no se
+            # mueve la vista, se mueve el nodo.
+            _mostrar_en_la_vista(nodo)
             return _resultado(
                 "unico",
                 1,
                 _nombre(nodo),
-                "El nodo de rutas ya está en la versión actual: se reutiliza.",
+                "El nodo de rutas ya está en la versión actual: se reutiliza "
+                "y se trae al centro de la vista.",
             )
         return _actualizar_nodo_viejo(nodo, ruta_gizmo)
 

@@ -1145,3 +1145,46 @@ class TestCrearOActualizar:
             for linea in f:
                 assert not linea.startswith("import nuke")
                 assert not linea.startswith("from nuke ")
+
+
+class TestNodoAlCentroDeLaVista:
+    """S4: si el nodo de rutas ya existe, el nodo viene a la vista del usuario."""
+
+    def _preparar(self, monkeypatch, centro):
+        actual = _nodo_v2("Actual")
+        actual.setXYpos(900, 900)
+        _escena([actual])
+        pastes, preguntas = [], []
+        _instalar_paste(monkeypatch, lambda ruta: _nodo_v2("Pegado"), pastes)
+        _instalar_ask(monkeypatch, True, preguntas)
+        nuke._estado["centro_vista"] = centro
+        nuke._estado["zoom_to_fit"] = []
+        return actual, pastes, preguntas
+
+    def test_lo_trae_al_centro_de_la_vista_sin_panear(self, monkeypatch):
+        actual, pastes, preguntas = self._preparar(monkeypatch, [1200, -340])
+
+        r = ru.crear_o_actualizar()
+
+        assert r["accion"] == "unico"
+        assert (actual.xpos(), actual.ypos()) == (1200, -340), (
+            "el nodo se mueve al centro visible (nuke.center)"
+        )
+        assert nuke._estado["zoom_to_fit"] == [], "no se debe mover la vista"
+        assert pastes == [] and preguntas == []
+        assert actual.enfocado == 1, "el panel del nodo se abre igual"
+
+    def test_sin_centro_legible_conserva_la_posicion(self, monkeypatch):
+        actual, _, _ = self._preparar(monkeypatch, [])
+
+        ru.crear_o_actualizar()
+
+        assert (actual.xpos(), actual.ypos()) == (900, 900)
+
+    def test_en_headless_no_mueve_el_nodo(self, monkeypatch):
+        actual, _, _ = self._preparar(monkeypatch, [1200, -340])
+        monkeypatch.setattr(ru, "_en_headless", lambda: True)
+
+        ru.crear_o_actualizar()
+
+        assert (actual.xpos(), actual.ypos()) == (900, 900)

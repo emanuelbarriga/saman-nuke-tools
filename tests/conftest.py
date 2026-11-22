@@ -215,6 +215,31 @@ def _instalar_stub_nuke():
     nuke.ask = ask
     nuke.pluginAddPath = pluginAddPath
     nuke.nodePaste = nodePaste
+
+    # --- vista del Node Graph (nuke.center / nuke.zoom / zoomToFitSelected) ---
+    def center():
+        """Centro visible del DAG; nuke.center() lo devuelve como [x, y].
+
+        Ausente en `_estado` = vista centrada en el origen (caso normal de los
+        tests). Puesto a `[]` simula un centro ilegible.
+        """
+        if "centro_vista" in estado:
+            return list(estado["centro_vista"])
+        return [0, 0]
+
+    def zoom(*a, **k):
+        estado.setdefault("zoom_llamadas", [])
+        if not a:
+            return estado.get("zoom", 1.0)
+        estado["zoom_llamadas"].append(a)
+        return estado.get("zoom", 1.0)
+
+    def zoomToFitSelected():
+        estado.setdefault("zoom_to_fit", []).append(True)
+
+    nuke.center = center
+    nuke.zoom = zoom
+    nuke.zoomToFitSelected = zoomToFitSelected
     # --- hooks de ScriptLoad: los usa rutas.aplicar_variables_desde_nodo ---
     estado["hooks_carga"] = []
 
