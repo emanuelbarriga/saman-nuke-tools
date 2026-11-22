@@ -30,7 +30,7 @@ Solo entran los cinco nodos; todo lo demás queda fuera de la superficie de inst
 | T3 | S5, S6, S12 | Retirar de la superficie los componentes fuera de alcance y declarar los cinco nodos. | `SamanTools/componentes.py` | release |
 | T4 | S6 | Registrar el hook de política en el bootstrap. | `SamanTools/registro.py`, `tests/test_menu.py` | release |
 | T5 | S13, S14 | Versión 3.0.0 y documentación al estado real. | `SamanTools/__init__.py`, `README.md`, `docs/ARQUITECTURA.md` | release |
-| T6 | S14 | Suite completa y `build_dist` en verde; riesgo y review nativo. | — | — |
+| T6 | S14 | Suite completa y `build_dist` en verde; riesgo y review nativo. | — | verificado |
 
 ## Log
 
@@ -44,3 +44,6 @@ Solo entran los cinco nodos; todo lo demás queda fuera de la superficie de inst
 - **L8** — Evidencia de la instalación (T2): los cinco gizmos rehechos habían perdido arreglos del 2.0.0 que la suite pinneaba. Se re-aplicaron: `Breakdown.gizmo` ya no serializa `datos_ver 2` (S17: un comp arrancaba creyéndose migrado), y `Review.gizmo` ya no arrastra `render_settings_schema` ni `monitorOutNDISenderName` del Viewer. La grilla de columnas y los nombres fijos del Breakdown se conservan con otra forma (`N` + `F_i`/`L_i` + `COLUMNAS_CANONICAS`, mismos `_NODOS_BASE`), así que se actualizó el test a ese contrato en vez de darlo por perdido.
 - **L9** — Evidencia de la entrega: suite completa `836 passed` (`python3.14` + PySide6 6.12) y `python3 -m SamanTools.build_dist` → `dist/samantools` con 10 módulos. El gate del build encontró una dependencia real que había que cortar: `proyecto.py` importaba el módulo v1 `rutas.py`; ahora lee el proyecto y sincroniza el entorno por `rutas_unico`.
 - **L10** — Fuera de alcance, sin tocar: `skills/saman-render-launcher/` y la captura de pantalla sin seguimiento quedaron sin versionar; no integran este release.
+- **L11** — Review nativo: el slice completo frenó con `lens_context_budget_exceeded` (3356 líneas × 4 lentes). Partido según lo que pide el provider: el commit de release (`db4e69e`) evaluó `reviewDue: false` (riesgo medio, `under_budget`, sin autoridad creada); el commit de la política (`94c275a`), aislado en un worktree y con dos lentes, quedó con el consentimiento del host **rechazado para ese candidato** (`lineage_created: false`, `mutation_performed: false`, nada que abandonar ni reparar). El mismo candidato no se reintentó.
+- **L12** — Verificador independiente: **no se lanzó**, por la restricción del humano de usar solo modelos de opencode go. Queda declarado como no disponible, nunca como aprobado. La verificación que sí se ejecutó es la del slice completo (836 tests, `py_compile`, `build_dist`) más la lectura directa del orden escritura→borrado en `_actualizar_nodo_viejo` y en el hook de fusión: si el estado no se escribe, no se borra nada.
+- **L13** — Slices: 2365 líneas en `94c275a` y 991 en `db4e69e`, muy por encima de las ~400 de un slice cómodo. El límite de review del provider ya lo confirmó; la forma de publicación (PR encadenado) queda como decisión del humano.
