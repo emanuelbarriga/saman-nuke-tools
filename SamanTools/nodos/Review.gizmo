@@ -25,6 +25,7 @@ addUserKnob {22 setInput3 l "Input 1" t "Sets the Switch to input 2" -STARTLINE 
 addUserKnob {22 setInput2 l "Input 2" t "Sets the Switch to input 1" -STARTLINE T nuke.thisNode().node('Switch1').knob('which').setValue(1)}
 addUserKnob {22 setDiferente l Diferente t "Sets the Switch to input 4 (Difference)" -STARTLINE T nuke.thisNode().node('Switch1').knob('which').setValue(4)}
 addUserKnob {22 swapInputs l "Invertir 1<->2" t "Intercambia la posición de Input 1 e Input 2" -STARTLINE T "g = nuke.thisNode()\nval = 1 - int(g.node('Switch_Swap1').knob('which').value())\ng.node('Switch_Swap1').knob('which').setValue(val)\ng.node('Switch_Swap2').knob('which').setValue(val)"}
+addUserKnob {26 creditos l Créditos T "Samán Estudio SAS. emanuel.barriga@samanestudio.com"}
 addUserKnob {41 which +INVISIBLE T Switch1.which}
 }
 Input {
