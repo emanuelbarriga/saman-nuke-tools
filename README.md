@@ -195,3 +195,13 @@ los `.gizmo` — usan expresiones `\[python {PYTHON_...}]` dinámicas.
 
 - Nuke 15+ (los enums PySide6 del widget Breakdown requieren Nuke 14+).
 - Git.
+
+## Licencia
+
+MIT — ver [`LICENSE`](LICENSE). Podés usar, modificar y redistribuir SamanTools,
+incluso dentro de proyectos cerrados, conservando el aviso de copyright.
+
+Es una herramienta interna de Samán Estudio publicada tal cual: las rutas por
+defecto (`/Volumes/wupm/2026`, `L:/2026`, `/mnt/wupm/2026`) y los nombres de
+proyecto del submenú Samán son los del estudio. Si la usás fuera, configurá tus
+propias rutas y proyectos.
