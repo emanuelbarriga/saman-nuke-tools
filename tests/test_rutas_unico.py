@@ -996,11 +996,8 @@ class TestCrearOActualizar:
         assert r["accion"] == "unico"
         assert r["nodos"] == 1
         assert r["superviviente"] == "Actual"
-        assert pastes == [] and preguntas == []
-        # El unico borrado es el nodo descartable que se crea para leer el cursor
-        # (S15); el nodo real del comp no se toca.
-        assert len(eventos) == 1, "solo se borra el descartable del cursor"
-        assert all(nombre != "Actual" for (_, nombre) in eventos)
+        # El comp no se toca: ni nodos descartables ni borrados (S15, 3.2.2).
+        assert pastes == [] and preguntas == [] and eventos == []
         assert actual.knobs_d["db_json"].value() == antes
         assert actual.enfocado == 1
 
@@ -1151,59 +1148,92 @@ class TestCrearOActualizar:
                 assert not linea.startswith("from nuke ")
 
 
+class _Punto:
+    """Punto de escena falso (QPointF): sólo expone x()/y()."""
+
+    def __init__(self, x, y):
+        self._x, self._y = x, y
+
+    def x(self):
+        return self._x
+
+    def y(self):
+        return self._y
+
+
+class _DagFalso:
+    """QGraphicsView del Node Graph falso: mapea el cursor a un punto fijo."""
+
+    def __init__(self, punto):
+        self._punto = punto
+
+    def mapFromGlobal(self, pos):
+        return pos
+
+    def mapToScene(self, punto):
+        return self._punto
+
+
 class TestNodoBajoElCursor:
     """S15: si el nodo ya existe, aparece bajo el cursor como un nodo nuevo."""
 
-    def _preparar(self, monkeypatch, cursor=(4321, 8765)):
+    def _preparar(self, monkeypatch, punto=(4321, 8765), dag=True):
         actual = _nodo_v2("Actual")
         actual.setXYpos(900, 900)
         _escena([actual])
         nuke._estado.pop("centro_vista", None)
-        pastes, preguntas = [], []
+        nuke._estado["zoom_to_fit"] = []
+        nuke._estado["undo"] = []
+        pastes, preguntas, eventos = [], [], []
         _instalar_paste(monkeypatch, lambda ruta: _nodo_v2("Pegado"), pastes)
         _instalar_ask(monkeypatch, True, preguntas)
-        eventos = []
         _instalar_delete(monkeypatch, eventos)
-        nuke._estado["zoom_to_fit"] = []
-        descartables = []
+        creados = []
+        monkeypatch.setattr(
+            nuke,
+            "createNode",
+            lambda *a, **k: creados.append(a) or _nodo_v2("X"),
+            raising=False,
+        )
+        widget = _DagFalso(_Punto(*punto)) if dag else None
+        monkeypatch.setattr(ru, "_widget_del_dag", lambda: widget)
+        monkeypatch.setattr(ru, "_cursor_global", lambda: object())
+        return actual, pastes, preguntas, eventos, creados
 
-        def _crear(*a, **k):
-            if cursor is None:
-                raise RuntimeError("sin DAG")
-            nodo = _nodo_v2("Descartable")
-            nodo.setXYpos(*cursor)
-            descartables.append(nodo)
-            return nodo
-
-        monkeypatch.setattr(nuke, "createNode", _crear, raising=False)
-        return actual, pastes, preguntas, eventos, descartables
-
-    def test_aparece_bajo_el_cursor_como_un_nodo_nuevo(self, monkeypatch):
-        actual, pastes, preguntas, eventos, descartables = self._preparar(monkeypatch)
+    def test_aparece_bajo_el_cursor_sin_tocar_el_comp(self, monkeypatch):
+        actual, pastes, preguntas, eventos, creados = self._preparar(monkeypatch)
 
         r = ru.crear_o_actualizar()
 
         assert r["accion"] == "unico"
         assert (actual.xpos(), actual.ypos()) == (4321, 8765), (
-            "el nodo se mueve a donde nace un nodo nuevo: el cursor"
+            "el nodo se mueve a donde está el mouse"
         )
         assert nuke._estado["zoom_to_fit"] == [], "no se debe mover la vista"
+        # Regresión del cierre de Nuke: nada de nodos descartables ni borrados.
+        assert creados == [], "no se crea ningún nodo para leer el cursor"
+        assert eventos == [], "no se borra nada en el comp"
         assert pastes == [] and preguntas == []
         assert actual.enfocado == 1, "el panel del nodo se abre igual"
-        assert len(descartables) == 1, "se crea UN nodo descartable para leer el cursor"
-        assert ("delete", "Descartable") in eventos, "el descartable se borra siempre"
-        assert all(n is not descartables[0] for n in nuke._estado["nodos"])
 
-    def test_sin_cursor_cae_al_centro_de_la_vista(self, monkeypatch):
-        actual, __, ___, ____, _____ = self._preparar(monkeypatch, cursor=None)
+    def test_no_toca_el_undo_de_nuke(self, monkeypatch):
+        """Regresión: Undo/EndUndo desbalanceados cerraban Nuke."""
+        self._preparar(monkeypatch)
+
+        ru.crear_o_actualizar()
+
+        assert nuke._estado["undo"] == [], "no se abre ni cierra undo a mano"
+
+    def test_sin_widget_del_dag_cae_al_centro_de_la_vista(self, monkeypatch):
+        actual = self._preparar(monkeypatch, dag=False)[0]
         nuke._estado["centro_vista"] = [1200, -340]
 
         ru.crear_o_actualizar()
 
         assert (actual.xpos(), actual.ypos()) == (1200, -340)
 
-    def test_sin_cursor_ni_centro_conserva_la_posicion(self, monkeypatch):
-        actual = self._preparar(monkeypatch, cursor=None)[0]
+    def test_sin_dag_ni_centro_conserva_la_posicion(self, monkeypatch):
+        actual = self._preparar(monkeypatch, dag=False)[0]
         nuke._estado["centro_vista"] = []
 
         ru.crear_o_actualizar()

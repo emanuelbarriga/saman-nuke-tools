@@ -240,6 +240,34 @@ def _instalar_stub_nuke():
     nuke.center = center
     nuke.zoom = zoom
     nuke.zoomToFitSelected = zoomToFitSelected
+
+    # --- undo instrumentado (regresión: Undo/EndUndo desbalanceados cerraban
+    # Nuke al insertar un segundo nodo de rutas). Las llamadas se registran en
+    # estado["undo"] para que un test pueda exigir que NO se use.
+    estado.setdefault("undo", [])
+
+    def _undo(*a, **k):
+        estado.setdefault("undo", []).append(("Undo", a))
+
+    def _undo_name(n=None):
+        estado.setdefault("undo", []).append(("Undo.name", n))
+
+    def _undo_begin(n=None):
+        estado.setdefault("undo", []).append(("Undo.begin", n))
+
+    def _undo_end():
+        estado.setdefault("undo", []).append(("Undo.end", None))
+
+    def _end_undo():
+        estado.setdefault("undo", []).append(("EndUndo", None))
+
+    _undo.name = _undo_name
+    _undo.begin = _undo_begin
+    _undo.end = _undo_end
+    nuke.Undo = _undo
+    nuke.EndUndo = _end_undo
+    nuke.beginUndo = _undo_begin
+    nuke.endUndo = _undo_end
     # --- hooks de ScriptLoad: los usa rutas.aplicar_variables_desde_nodo ---
     estado["hooks_carga"] = []
 

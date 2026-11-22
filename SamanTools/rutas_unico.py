@@ -537,30 +537,20 @@ def _puede_recibir_estado(nodo):
 
 
 def _iniciar_undo(nombre):
-    """Abre un grupo de undo si Nuke lo permite. Devuelve True si lo abrió."""
-    try:
-        import nuke
+    """No abre ningún grupo de undo, a propósito.
 
-        nuke.Undo()
-        try:
-            nuke.Undo.name(nombre)
-        except Exception:
-            pass
-        return True
-    except Exception:
-        return False
+    Nuke ya agrupa el comando de menú en un solo paso. La versión anterior
+    llamaba a `nuke.Undo()` y a `nuke.EndUndo()` sin balance: no abría un grupo
+    propio y cerraba el que Nuke había abierto para el comando, dejando el stack
+    de undo inconsistente. Eso cerraba Nuke al insertar un segundo nodo de
+    rutas. Se conserva la función para no tocar los llamadores.
+    """
+    return False
 
 
 def _cerrar_undo(abierto):
-    """Cierra el grupo de undo abierto por _iniciar_undo. Nunca lanza."""
-    if not abierto:
-        return
-    try:
-        import nuke
-
-        nuke.EndUndo()
-    except Exception:
-        pass
+    """No cierra nada: ver `_iniciar_undo`. Nunca lanza."""
+    return
 
 
 def _preguntar(texto):
@@ -642,33 +632,88 @@ def _centro_de_la_vista():
         return None
 
 
-def _posicion_del_cursor():
-    """(x, y) donde Nuke pondría un nodo nuevo: el cursor del Node Graph.
+def _widget_del_dag():
+    """El widget Qt del Node Graph (un QGraphicsView), o None.
 
-    Nuke no expone el cursor del DAG por API —no hay `nuke.mousePosition` ni
-    equivalente—, pero un nodo nuevo sí nace justo en el cursor: se crea uno
-    descartable, se lee su posición y se borra. Es el workaround estándar de la
-    comunidad. Devuelve None si no se pudo.
+    Se busca por `objectName()`, que empieza con "DAG." (Nuke numera el widget
+    según cuántas ventanas de Node Graph haya abiertas), recorriendo el árbol de
+    widgets sin recursión profunda.
+    """
+    try:
+        try:
+            from PySide6 import QtWidgets
+        except ImportError:
+            from PySide2 import QtWidgets
+    except Exception:
+        return None
+    try:
+        pendientes = list(QtWidgets.QApplication.topLevelWidgets())
+    except Exception:
+        return None
+
+    vistos = set()
+    while pendientes:
+        widget = pendientes.pop()
+        if id(widget) in vistos:
+            continue
+        vistos.add(id(widget))
+        try:
+            nombre = widget.objectName() or ""
+        except Exception:
+            nombre = ""
+        if nombre.startswith("DAG."):
+            return widget
+        try:
+            hijos = widget.children()
+        except Exception:
+            continue
+        for hijo in hijos:
+            try:
+                if hijo.isWidgetType():
+                    pendientes.append(hijo)
+            except Exception:
+                continue
+    return None
+
+
+def _cursor_global():
+    """Posición global del mouse, o None."""
+    try:
+        try:
+            from PySide6 import QtGui
+        except ImportError:
+            from PySide2 import QtGui
+    except Exception:
+        return None
+    try:
+        return QtGui.QCursor.pos()
+    except Exception:
+        return None
+
+
+def _posicion_del_cursor():
+    """(x, y) en coordenadas de nodo bajo el mouse del Node Graph, o None.
+
+    Se mapea el cursor global al QGraphicsView del DAG: `mapToScene` devuelve
+    coordenadas de escena, que son exactamente las de `xpos`/`ypos`. **No se
+    crea ni se borra ningún nodo**: la versión anterior creaba un `NoOp`
+    descartable para leer su posición y lo borraba, y eso cerraba Nuke al
+    insertar un segundo nodo de rutas.
     """
     if _en_headless():
         return None
+    dag = _widget_del_dag()
+    cursor = _cursor_global()
+    if dag is None or cursor is None:
+        return None
     try:
-        import nuke
-
-        descartable = nuke.createNode("NoOp")
+        escena = dag.mapToScene(dag.mapFromGlobal(cursor))
     except Exception:
         return None
-    if descartable is None:
-        return None
     try:
-        return _posicion(descartable)
-    finally:
-        try:
-            import nuke
-
-            nuke.delete(descartable)
-        except Exception:
-            pass
+        return (int(escena.x()), int(escena.y()))
+    except Exception:
+        return None
 
 
 def _posicion_de_insercion():
